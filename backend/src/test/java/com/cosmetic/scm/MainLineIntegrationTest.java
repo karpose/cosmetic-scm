@@ -5,6 +5,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.math.BigDecimal;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 
 import com.cosmetic.scm.demo.DemoDataLoader;
@@ -12,6 +15,9 @@ import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.inventory.Batch;
 import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.inventory.InventoryService;
+import com.cosmetic.scm.master.PartnerRepository;
+import com.cosmetic.scm.master.WarehouseRepository;
+import com.cosmetic.scm.sales.SalesService;
 import com.cosmetic.scm.dashboard.DashboardService;
 import com.cosmetic.scm.trace.TraceService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -44,6 +50,12 @@ class MainLineIntegrationTest {
     TraceService trace;
     @Autowired
     DashboardService dashboard;
+    @Autowired
+    SalesService sales;
+    @Autowired
+    PartnerRepository partners;
+    @Autowired
+    WarehouseRepository warehouses;
 
     @Test
     void demoMainLineIsConsistent() {
@@ -54,7 +66,7 @@ class MainLineIntegrationTest {
 
         Batch released = batches.findAll().stream()
                 .filter(b -> b.getBatchNo().startsWith("A3-") && b.getStatus() == BatchStatus.RELEASED)
-                .findFirst().orElseThrow();
+                .min(Comparator.comparing(Batch::getId)).orElseThrow();
         assertThat(inventory.onHand(released.getId())).isEqualByComparingTo("6950");
 
         TraceService.TraceView t = trace.trace(released.getBatchNo());
@@ -65,13 +77,32 @@ class MainLineIntegrationTest {
     }
 
     @Test
+    void customerShelfLifeThresholdSkipsOldBatch() {
+        Batch old = batches.findAll().stream()
+                .filter(b -> b.getBatchNo().startsWith("A3-") && b.getStatus() == BatchStatus.RELEASED)
+                .min(Comparator.comparing(Batch::getMfgDate)).orElseThrow();
+        Long main = warehouses.findAll().stream().filter(w -> "WH-MAIN".equals(w.getCode())).findFirst().orElseThrow().getId();
+        List<SalesService.SoLineReq> lines = List.of(new SalesService.SoLineReq(old.getItemId(), new BigDecimal("100")));
+
+        SalesService.AllocLineView jd = sales.preview(new SalesService.SoReq(
+                partners.findByCode("CUS-JD").orElseThrow().getId(), main, lines)).lines().get(0);
+        assertThat(jd.excludedQty()).isEqualByComparingTo("1000");
+        assertThat(jd.picks()).noneMatch(p -> p.batchNo().equals(old.getBatchNo()));
+
+        SalesService.AllocLineView tm = sales.preview(new SalesService.SoReq(
+                partners.findByCode("CUS-TM").orElseThrow().getId(), main, lines)).lines().get(0);
+        assertThat(tm.excludedQty()).isZero();
+        assertThat(tm.picks().get(0).batchNo()).isEqualTo(old.getBatchNo());
+    }
+
+    @Test
     void apiRequiresLogin() throws Exception {
         mvc.perform(get("/api/dashboard")).andExpect(status().isUnauthorized());
     }
 
     @Test
     void onlyQualitySafetyOfficerCanMarketRelease() throws Exception {
-        Batch pending = batches.findByStatusInOrderByIdDesc(java.util.List.of(BatchStatus.PENDING_RELEASE)).get(0);
+        Batch pending = batches.findByStatusInOrderByIdDesc(List.of(BatchStatus.PENDING_RELEASE)).get(0);
         String body = json.writeValueAsString(Map.of(
                 "decision", "RELEASED", "reportNo", "QC-T", "note", "test", "oemReleaseReviewed", true,
                 "inspectionPassed", true, "recordsComplete", true, "consistentWithFiling", true,

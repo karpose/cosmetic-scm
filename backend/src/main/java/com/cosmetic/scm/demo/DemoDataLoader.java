@@ -187,6 +187,17 @@ public class DemoDataLoader implements ApplicationRunner {
                 new ExtMaterialReq(gly.getId(), "HC-GL-EXT-01", new BigDecimal("7.5")),
                 new ExtMaterialReq(phe.getId(), "YX-PE-EXT-08", new BigDecimal("1.2"))))));
 
+        // ---------- 一批 14 个月前生产的老精华液（剩余效期约 61%）：京东 ≥67% 会排除它，天猫 ≥50% 会优先用它 ----------
+        MoView mo0 = as("prod1", () -> production.create(new CreateMoReq(a3.id(), serum.getId(), new BigDecimal("1000"), t.minusDays(425))));
+        as("prod1", () -> production.issue(mo0.id()));
+        MoView done0 = as("prod1", () -> production.complete(mo0.id(), new CompleteReq(new BigDecimal("1000"), t.minusDays(420),
+                "HC-A-00", main.id(), true, null, List.of(
+                new ExtMaterialReq(gly.getId(), "HC-GL-EXT-00", new BigDecimal("1.5")),
+                new ExtMaterialReq(phe.getId(), "YX-PE-EXT-05", new BigDecimal("0.24"))))));
+        Long fg0 = inventory.batchByNo(done0.outBatchNo()).getId();
+        as("qso1", () -> quality.marketRelease(fg0, new ReleaseReq(Decision.RELEASED, "QC-" + done0.outBatchNo(),
+                "受托厂放行记录及出厂检验报告已审核（示例）", true, true, true, true, 6, "品质部留样室 B-02", DEMO_PASSWORD), qso));
+
         // ---------- 一张部分收货的采购单，产生待检批次 ----------
         PoView po4 = as("purchase1", () -> purchase.create(new CreatePoReq(hc.id(), List.of(line(nia, "20"), line(gly, "50")))));
         PoLineView niaLine = po4.lines().get(0);

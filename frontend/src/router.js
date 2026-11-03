@@ -3,7 +3,7 @@ import { useAuth } from './stores/auth'
 import AppLayout from './layout/AppLayout.vue'
 
 const routes = [
-  { path: '/login', name: 'login', component: () => import('./views/Login.vue'), meta: { public: true } },
+  { path: '/login', name: 'login', component: () => import('./views/Login.vue'), meta: { public: true, title: '登录' } },
   {
     path: '/',
     component: AppLayout,
@@ -38,8 +38,11 @@ router.beforeEach(async (to) => {
     }
   }
   if (to.meta.roles && !auth.hasAny(...to.meta.roles)) return { name: 'dashboard' }
-  document.title = `${to.meta.title || '首页'} · 化妆品批次主线系统`
   return true
+})
+
+router.afterEach((to) => {
+  document.title = `${to.meta.title || '首页'} · 化妆品批次主线系统`
 })
 
 export default router

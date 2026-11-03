@@ -4,6 +4,9 @@ spring:
     username: sa
     password:
     driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate   # 测试时校验实体与 Flyway 表结构一致
 
 scm:
   demo-data: true

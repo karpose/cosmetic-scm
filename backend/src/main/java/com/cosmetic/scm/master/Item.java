@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 
 import com.cosmetic.scm.domain.ItemType;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -45,6 +46,7 @@ public class Item {
 
     private String filingNo;
 
+    @Column(name = "net_g") // 默认命名策略会映射成 netg
     private BigDecimal netG;
 
     private boolean active = true;
