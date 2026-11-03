@@ -40,6 +40,9 @@ scm:
   integration:
     # 电商 ERP 调用 /api/integration/** 时在请求头 X-Api-Key 里带上；留空则关闭对接接口
     api-key: ${SCM_INTEGRATION_API_KEY:}
+  serial:
+    # 一物一码导出给印刷厂时拼在码前面的扫码地址，生产环境改成正式域名，如 https://scm.example.com/v/
+    verify-url-prefix: ${SCM_VERIFY_URL_PREFIX:http://localhost:5173/v/}
 
 logging:
   level:

@@ -82,7 +82,7 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/login").permitAll()
+                        .requestMatchers("/api/auth/login", "/api/health", "/api/public/**").permitAll()
                         .requestMatchers("/api/auth/**").authenticated()
                         .requestMatchers("/api/integration/**").hasRole("INTEGRATION")
                         .requestMatchers("/api/portal/oem/**").hasRole(Role.OEM_PORTAL.name())

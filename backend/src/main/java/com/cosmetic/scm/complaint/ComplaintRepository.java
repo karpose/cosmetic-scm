@@ -1,5 +1,6 @@
 package com.cosmetic.scm.complaint;
 
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 
@@ -14,4 +15,6 @@ public interface ComplaintRepository extends JpaRepository<Complaint, Long> {
     List<Complaint> findByStatus(CaseStatus status);
 
     List<Complaint> findByBatchIdIn(Collection<Long> batchIds);
+
+    List<Complaint> findByReceivedDateGreaterThanEqual(LocalDate from);
 }

@@ -70,8 +70,8 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  ArrowDown, Box, Coin, Connection, DataBoard, Document, Expand, Fold, Goods, Guide, OfficeBuilding, Operation,
-  RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, User, Van, WarningFilled
+  ArrowDown, Box, Coin, Connection, DataAnalysis, DataBoard, Document, Expand, Fold, Goods, Guide, OfficeBuilding,
+  Operation, Postcard, RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, TrendCharts, User, Van, WarningFilled
 } from '@element-plus/icons-vue'
 import { useAuth, PASSWORD_RULE, ROLE_LABELS } from '../stores/auth'
 
@@ -84,10 +84,17 @@ const groups = computed(() => {
   if (auth.hasAny('OEM_PORTAL')) return [{ title: '协同', items: [{ path: '/portal/oem', title: '委托生产协同', icon: OfficeBuilding }] }]
   if (auth.hasAny('DEALER')) return [{ title: '订货', items: [{ path: '/portal/dealer', title: '订货与召回', icon: Shop }] }]
   const list = [
-    { title: '概况', items: [{ path: '/', title: '总览', icon: DataBoard }] },
+    {
+      title: '概况',
+      items: [
+        { path: '/', title: '总览', icon: DataBoard },
+        { path: '/analytics', title: '经营看板', icon: DataAnalysis }
+      ]
+    },
     {
       title: '业务',
       items: [
+        { path: '/planning', title: '补货建议', icon: TrendCharts },
         { path: '/purchase', title: '采购入库', icon: ShoppingCart },
         { path: '/production', title: '生产与委托', icon: Goods },
         { path: '/quality', title: '质量放行', icon: Stamp },
@@ -104,6 +111,7 @@ const groups = computed(() => {
       items: [
         { path: '/trace', title: '批次追溯', icon: Guide },
         { path: '/quality-events', title: '投诉与召回', icon: WarningFilled },
+        { path: '/serials', title: '一物一码', icon: Postcard },
         { path: '/audit', title: '审计日志', icon: Document }
       ]
     },

@@ -22,7 +22,7 @@ public class PasswordGate implements WebMvcConfigurer, HandlerInterceptor {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(this).addPathPatterns("/api/**").excludePathPatterns("/api/auth/**", "/api/integration/**");
+        registry.addInterceptor(this).addPathPatterns("/api/**").excludePathPatterns("/api/auth/**", "/api/integration/**", "/api/public/**", "/api/health");
     }
 
     @Override

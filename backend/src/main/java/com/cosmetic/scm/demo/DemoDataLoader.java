@@ -56,6 +56,7 @@ import com.cosmetic.scm.salesreturn.ReturnService;
 import com.cosmetic.scm.salesreturn.ReturnService.ReturnLineReq;
 import com.cosmetic.scm.salesreturn.ReturnService.ReturnReq;
 import com.cosmetic.scm.security.AppUser;
+import com.cosmetic.scm.serial.SerialService;
 import com.cosmetic.scm.security.UserRepository;
 import com.cosmetic.scm.security.UserService;
 
@@ -96,6 +97,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final OemPortalService oemPortal;
     private final DealerService dealers;
     private final IntegrationService integration;
+    private final SerialService serials;
     private final InventoryService inventory;
     private final TimeProvider time;
 
@@ -254,6 +256,9 @@ public class DemoDataLoader implements ApplicationRunner {
         as("admin", () -> integration.receive(new IntegrationService.PushReq("TMALL", "CUS-TM", null, List.of(
                 new IntegrationService.PushOrder("TM-DEMO-0001", t.atTime(10, 0),
                         List.of(new IntegrationService.PushLine("FG-CRM-002", new BigDecimal("2"))))))));
+
+        // ---------- 第一批精华液生成 20 个一物一码，可在“一物一码”里导出、在扫码页查询 ----------
+        as("qa1", () -> serials.generate(new SerialService.GenerateReq(done1.outBatchNo(), 20)));
 
         // ---------- 自产面霜：已计划，待发料 ----------
         as("prod1", () -> production.create(new CreateMoReq(own.id(), cream.getId(), new BigDecimal("8000"), t.plusDays(7))));

@@ -1,0 +1,3 @@
+# 证书文件放这里（fullchain.pem、privkey.pem），不要提交
+*
+!.gitignore
