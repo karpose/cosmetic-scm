@@ -25,7 +25,8 @@ http.interceptors.response.use(
       if (current.name !== 'login') router.push({ name: 'login', query: { redirect: current.fullPath } })
     }
     if (!err.config?.silent) ElMessage.error(msg)
-    return Promise.reject(new Error(msg))
+    // handled：已经提示过用户，main.js 的全局错误处理不再重复报到控制台
+    return Promise.reject(Object.assign(new Error(msg), { handled: true }))
   }
 )
 

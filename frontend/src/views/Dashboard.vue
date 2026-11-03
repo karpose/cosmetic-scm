@@ -8,8 +8,10 @@
       <el-button :loading="loading" @click="load">刷新</el-button>
     </div>
 
-    <div v-if="data" class="line">
-      <router-link v-for="s in stages" :key="s.k" class="stage" :class="{ hot: s.hot }" :to="s.to">
+    <LoadError v-if="error" :message="error" :loading="loading" @retry="load" />
+
+    <div v-if="data" class="tiles">
+      <router-link v-for="s in stages" :key="s.k" class="tile glass" :class="[s.tone, { hot: s.hot }]" :to="s.to">
         <div class="k">{{ s.k }}</div>
         <div class="v mono">{{ s.v }}</div>
         <div class="d">{{ s.d }}</div>
@@ -55,10 +57,12 @@
 import { computed, onMounted, ref } from 'vue'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
+import LoadError from '../components/LoadError.vue'
 import { fmtTime } from '../utils/format'
 
 const data = ref(null)
 const loading = ref(false)
+const error = ref('')
 
 const stages = computed(() => {
   const c = data.value.counts
@@ -68,17 +72,23 @@ const stages = computed(() => {
     { k: '可用物料', v: c.availableMaterialBatches, d: '个批次', to: '/stock' },
     { k: '生产中', v: c.wipOrders, d: '张生产 / 委托单', to: '/production' },
     { k: '待上市放行', v: c.pendingRelease, d: '个成品批次', to: '/quality', hot: c.pendingRelease > 0 },
-    { k: '近 30 天出库', v: c.shipped30d, d: '张出库单', to: '/sales' }
+    { k: '近 30 天出库', v: c.shipped30d, d: '张出库单', to: '/sales' },
+    { k: '投诉处理中', v: c.openComplaints, d: '件', to: '/quality-events', hot: c.openComplaints > 0, tone: 'warn' },
+    { k: '召回进行中', v: c.openRecalls, d: '个', to: '/quality-events?tab=recalls', hot: c.openRecalls > 0, tone: 'bad' },
+    { k: '退货待处置', v: c.pendingReturns, d: '行', to: '/returns', hot: c.pendingReturns > 0, tone: 'warn' }
   ]
 })
 
 const tagType = (level) => ({ warn: 'warning', info: 'primary', bad: 'danger', muted: 'info' }[level] || 'info')
-const isBatch = (t) => ['QC', 'RELEASE', 'NEAR_EXPIRY'].includes(t.kind)
+const isBatch = (t) => ['QC', 'RELEASE', 'NEAR_EXPIRY', 'RECALL'].includes(t.kind)
 
 async function load() {
   loading.value = true
+  error.value = ''
   try {
     data.value = await http.get('/dashboard')
+  } catch (e) {
+    error.value = e.message
   } finally {
     loading.value = false
   }
@@ -87,23 +97,24 @@ onMounted(load)
 </script>
 
 <style scoped>
-.line { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid var(--el-border-color-light); border-radius: 8px; background: var(--el-bg-color); overflow: hidden; }
-.stage { padding: 14px; border-right: 1px solid var(--el-border-color-lighter); text-decoration: none; color: inherit; min-width: 0; }
-.stage:last-child { border-right: 0; }
-.stage:hover { background: var(--el-fill-color-light); }
-.stage .k, .stage .d { font-size: 12px; color: var(--el-text-color-secondary); }
-.stage .v { font-size: 26px; font-weight: 600; margin: 4px 0 2px; }
-.stage.hot .v { color: var(--el-color-primary); }
-.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.tile { padding: 14px 16px 12px; text-decoration: none; color: inherit; min-width: 0; border-radius: 18px; transition: transform .2s ease, box-shadow .2s ease; }
+.tile:hover { transform: translateY(-2px); box-shadow: var(--lg-highlight), var(--lg-shadow-pop); }
+.tile .k, .tile .d { font-size: 12px; color: var(--el-text-color-secondary); }
+.tile .v { font-size: 30px; font-weight: 650; margin: 6px 0 0; letter-spacing: -0.02em; }
+.tile.hot .v { color: var(--el-color-primary); }
+.tile.warn.hot .v { color: var(--el-color-warning); }
+.tile.bad.hot .v { color: var(--el-color-danger); }
+.tile.hot::before { content: ""; position: absolute; top: 14px; right: 14px; width: 8px; height: 8px; border-radius: 50%; background: currentColor; color: var(--el-color-primary); box-shadow: 0 0 0 4px var(--lg-tint); }
+.tile.warn.hot::before { color: var(--el-color-warning); }
+.tile.bad.hot::before { color: var(--el-color-danger); }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .card-h { display: flex; justify-content: space-between; align-items: center; }
 .list { list-style: none; margin: -8px -20px; padding: 0; }
-.list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 20px; border-bottom: 1px solid var(--el-border-color-lighter); flex-wrap: wrap; }
+.list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 11px 20px; border-bottom: 1px solid var(--lg-hairline); flex-wrap: wrap; transition: background .2s ease; }
+.list li:hover { background: var(--lg-fill); }
 .list li:last-child { border-bottom: 0; }
 .t { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
-@media (max-width: 900px) {
-  .line { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .stage:nth-child(3) { border-right: 0; }
-  .stage:nth-child(-n+3) { border-bottom: 1px solid var(--el-border-color-lighter); }
-  .grid2 { grid-template-columns: minmax(0, 1fr); }
-}
+@media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 520px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .tile .v { font-size: 24px; } }
 </style>

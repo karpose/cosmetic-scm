@@ -24,6 +24,7 @@ import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.TxnType;
+import com.cosmetic.scm.domain.WarehouseKind;
 import com.cosmetic.scm.domain.rules.FefoAllocator;
 import com.cosmetic.scm.inventory.Batch;
 import com.cosmetic.scm.inventory.BatchRepository;
@@ -186,6 +187,9 @@ public class SalesService {
             throw new BizException(customer.getName() + " 不是客户");
         }
         Warehouse wh = lookup.warehouse(req.warehouseId());
+        if (wh.getKind() == WarehouseKind.RETURN) {
+            throw new BizException(wh.getName() + " 存放待处置的退货，不能直接出库；请先由质量人员处置转可售");
+        }
         double minRatio = customer.getMinShelfPct() / 100.0;
         Set<Long> seen = new HashSet<>();
         List<Item> items = new ArrayList<>();

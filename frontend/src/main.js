@@ -8,11 +8,15 @@ import './styles.css'
 import App from './App.vue'
 import router from './router'
 
-createApp(App)
-  .use(createPinia())
-  .use(router)
-  .use(ElementPlus, { locale: zhCn })
-  .mount('#app')
+const app = createApp(App)
+// 接口错误已由 api.js 弹出提示；页面里 try/finally 不再逐个 catch，这里统一吞掉，其它错误照常报出
+app.config.errorHandler = (err) => {
+  if (!err?.handled) console.error(err)
+}
+window.addEventListener('unhandledrejection', (e) => {
+  if (e.reason?.handled) e.preventDefault()
+})
+app.use(createPinia()).use(router).use(ElementPlus, { locale: zhCn }).mount('#app')
 
 // 跟随系统深色模式
 const mq = window.matchMedia('(prefers-color-scheme: dark)')

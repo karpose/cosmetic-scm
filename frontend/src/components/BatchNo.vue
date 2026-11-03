@@ -9,8 +9,8 @@ defineProps({ no: { type: String, default: '' } })
 
 <style scoped>
 .batch {
-  font-size: 12px; font-weight: 600; padding: 1px 6px; border-radius: 4px; text-decoration: none; white-space: nowrap;
-  color: var(--el-text-color-primary); background: var(--el-fill-color-light); border: 1px solid var(--el-border-color-lighter);
+  font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; text-decoration: none; white-space: nowrap;
+  color: var(--el-text-color-primary); background: var(--lg-fill); border: 1px solid var(--lg-stroke); box-shadow: var(--lg-highlight);
 }
 .batch:hover { color: var(--el-color-primary); border-color: var(--el-color-primary); }
 </style>

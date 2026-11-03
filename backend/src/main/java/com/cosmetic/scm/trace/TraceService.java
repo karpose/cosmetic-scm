@@ -32,10 +32,16 @@ import com.cosmetic.scm.production.MfgOrder;
 import com.cosmetic.scm.production.MfgOrderRepository;
 import com.cosmetic.scm.quality.QualityService;
 import com.cosmetic.scm.quality.QualityService.DecisionView;
+import com.cosmetic.scm.recall.Recall;
+import com.cosmetic.scm.recall.RecallRepository;
 import com.cosmetic.scm.sales.SalesOrder;
 import com.cosmetic.scm.sales.SalesOrderRepository;
 import com.cosmetic.scm.sales.SoAllocation;
 import com.cosmetic.scm.sales.SoAllocationRepository;
+import com.cosmetic.scm.salesreturn.SalesReturn;
+import com.cosmetic.scm.salesreturn.SalesReturnLine;
+import com.cosmetic.scm.salesreturn.SalesReturnLineRepository;
+import com.cosmetic.scm.salesreturn.SalesReturnRepository;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -56,6 +62,9 @@ public class TraceService {
     private final MfgOrderRepository mfgOrders;
     private final SoAllocationRepository allocations;
     private final SalesOrderRepository salesOrders;
+    private final SalesReturnRepository returns;
+    private final SalesReturnLineRepository returnLines;
+    private final RecallRepository recalls;
     private final QualityService quality;
     private final MasterLookup lookup;
 
@@ -79,10 +88,18 @@ public class TraceService {
     public record StockAt(String warehouseName, BigDecimal qty) {
     }
 
+    public record ReturnTraceView(String returnNo, String customerName, String batchNo, BigDecimal qty,
+                                  String dispositionLabel, LocalDate returnDate, Long recallId) {
+    }
+
+    public record RecallBrief(Long id, String recallNo, String batchNo, String statusLabel) {
+    }
+
     public record TraceView(BatchView batch, String filingNo, SourceView source, List<UpstreamView> upstream,
                             List<DownstreamMoView> downstreamOrders, List<BatchView> finishedBatches,
                             List<ShipmentView> shipments, List<StockAt> stock, List<DecisionView> decisions,
-                            List<String> affectedBatchNos, long elapsedMs) {
+                            List<String> affectedBatchNos, List<ReturnTraceView> returns, List<RecallBrief> recalls,
+                            long elapsedMs) {
     }
 
     @Transactional(readOnly = true)
@@ -162,6 +179,25 @@ public class TraceService {
             }
         }
 
+        // 退回和召回
+        List<ReturnTraceView> returnViews = new ArrayList<>();
+        List<RecallBrief> recallViews = new ArrayList<>();
+        if (!finishedIds.isEmpty()) {
+            Map<Long, String> fbNos = finished.stream().collect(Collectors.toMap(Batch::getId, Batch::getBatchNo));
+            List<SalesReturnLine> rls = returnLines.findByBatchIdIn(finishedIds);
+            Map<Long, SalesReturn> rm = returns.findAllById(rls.stream().map(SalesReturnLine::getReturnId).distinct().toList())
+                    .stream().collect(Collectors.toMap(SalesReturn::getId, Function.identity()));
+            for (SalesReturnLine l : rls) {
+                SalesReturn r = rm.get(l.getReturnId());
+                returnViews.add(new ReturnTraceView(r.getReturnNo(), pm.get(r.getCustomerId()).getName(),
+                        fbNos.get(l.getBatchId()), l.getQty(), l.getDisposition().getLabel(), r.getReturnDate(),
+                        r.getRecallId()));
+            }
+            for (Recall r : recalls.findByBatchIdIn(finishedIds)) {
+                recallViews.add(new RecallBrief(r.getId(), r.getRecallNo(), fbNos.get(r.getBatchId()), r.getStatus().getLabel()));
+            }
+        }
+
         // 当前库存
         List<StockAt> stock = new ArrayList<>();
         for (Stock s : inventory.stockOfBatch(b.getId())) {
@@ -185,6 +221,6 @@ public class TraceService {
         BatchView self = inventory.toViews(List.of(b)).get(0);
         long ms = (System.nanoTime() - start) / 1_000_000;
         return new TraceView(self, item.getFilingNo(), source, upstream, downstream, finishedViews, shipments, stock,
-                quality.decisionsOf(b.getId()), affected, ms);
+                quality.decisionsOf(b.getId()), affected, returnViews, recallViews, ms);
     }
 }

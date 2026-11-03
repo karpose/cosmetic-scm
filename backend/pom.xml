@@ -20,6 +20,8 @@
     <properties>
         <java.version>17</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- Spring Boot 3.3 自带的 Lombok 1.18.34 在 JDK 27 上编译会崩溃，这里升到支持新 JDK 的版本 -->
+        <lombok.version>1.18.48</lombok.version>
     </properties>
 
     <dependencies>

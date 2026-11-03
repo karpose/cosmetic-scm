@@ -5,13 +5,23 @@
         <h2>主数据</h2>
         <p>物料编码、往来单位资质和 BOM 是整条主线的基础。资质过期的供应商或代工厂会被自动挡在下单之外；BOM 保存时校验禁用和限用原料。</p>
       </div>
-      <el-button v-if="canEdit" type="primary" @click="onAdd">{{ addLabel }}</el-button>
+      <div class="toolbar">
+        <el-button v-if="canEdit && (tab === 'items' || tab === 'partners')" @click="importOpen = true">批量导入</el-button>
+        <el-button v-if="canEdit" type="primary" @click="onAdd">{{ addLabel }}</el-button>
+      </div>
     </div>
 
     <el-card shadow="never" body-style="padding:0 0 4px">
       <el-tabs v-model="tab" class="tabs">
         <el-tab-pane label="物料" name="items">
-          <el-table :data="rd.s.items" empty-text="还没有物料">
+          <div class="filters pad">
+            <el-input v-model="it.keyword.value" placeholder="搜索编码、名称、INCI、备案编号" clearable />
+            <el-select v-model="itemType" placeholder="全部类型" clearable>
+              <el-option v-for="(v, k) in ITEM_TYPE" :key="k" :value="k" :label="v" />
+            </el-select>
+          </div>
+          <LoadError v-if="error" :message="error" @retry="load" />
+          <el-table v-else :data="it.paged.value" empty-text="没有符合条件的物料">
             <el-table-column label="编码" width="140"><template #default="{ row }"><span class="mono">{{ row.code }}</span></template></el-table-column>
             <el-table-column prop="name" label="名称" min-width="160" />
             <el-table-column label="类型" width="70"><template #default="{ row }">{{ ITEM_TYPE[row.itemType] }}</template></el-table-column>
@@ -28,10 +38,17 @@
             <el-table-column label="净含量" width="90"><template #default="{ row }">{{ row.netG ? `${fmtQty(row.netG)} g` : '' }}</template></el-table-column>
             <el-table-column v-if="canEdit" label="" width="80" fixed="right"><template #default="{ row }"><el-button size="small" text @click="openItem(row)">编辑</el-button></template></el-table-column>
           </el-table>
+          <ListPager v-model:page="it.page.value" v-model:size="it.size.value" :total="it.total.value" />
         </el-tab-pane>
 
         <el-tab-pane label="往来单位" name="partners">
-          <el-table :data="rd.s.partners" empty-text="还没有往来单位">
+          <div class="filters pad">
+            <el-input v-model="pt.keyword.value" placeholder="搜索编码、名称、资质编号" clearable />
+            <el-select v-model="partnerKind" placeholder="全部类别" clearable>
+              <el-option v-for="(v, k) in PARTNER_KIND" :key="k" :value="k" :label="v" />
+            </el-select>
+          </div>
+          <el-table :data="pt.paged.value" empty-text="没有符合条件的往来单位">
             <el-table-column label="编码" width="110"><template #default="{ row }"><span class="mono">{{ row.code }}</span></template></el-table-column>
             <el-table-column label="名称" min-width="160">
               <template #default="{ row }">{{ row.name }} <el-tag v-if="row.criticalSupplier" size="small" disable-transitions>关键</el-tag></template>
@@ -58,6 +75,7 @@
             <el-table-column label="效期接收" width="90"><template #default="{ row }">{{ row.kind === 'CUSTOMER' ? `≥ ${row.minShelfPct}%` : '' }}</template></el-table-column>
             <el-table-column v-if="canEdit" label="" width="80" fixed="right"><template #default="{ row }"><el-button size="small" text @click="openPartner(row)">编辑</el-button></template></el-table-column>
           </el-table>
+          <ListPager v-model:page="pt.page.value" v-model:size="pt.size.value" :total="pt.total.value" />
         </el-tab-pane>
 
         <el-tab-pane label="仓库" name="warehouses">
@@ -96,6 +114,8 @@
         </el-tab-pane>
       </el-tabs>
     </el-card>
+
+    <ImportDialog v-model="importOpen" :kind="tab === 'partners' ? 'partners' : 'items'" @done="load" />
 
     <!-- 物料 -->
     <el-dialog v-model="item.visible" :title="item.id ? '编辑物料' : '新增物料'" width="640px">
@@ -218,8 +238,12 @@
 import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElTag } from 'element-plus'
 import http from '../api'
+import ImportDialog from '../components/ImportDialog.vue'
+import ListPager from '../components/ListPager.vue'
+import LoadError from '../components/LoadError.vue'
 import { useAuth } from '../stores/auth'
 import { useRefData } from '../utils/refdata'
+import { textMatch, usePaged } from '../utils/table'
 import { ITEM_TYPE, PARTNER_KIND, WAREHOUSE_KIND, fmtQty } from '../utils/format'
 
 // 合规校验结果标签
@@ -249,10 +273,27 @@ const partner = reactive({ visible: false, saving: false, ...emptyPartner() })
 const wh = reactive({ visible: false, saving: false, code: '', name: '', kind: 'OWN', partnerId: null })
 const bom = reactive({ visible: false, saving: false, fgItemId: null, fgName: '', lines: [], checks: [] })
 const isFactory = computed(() => partner.kind === 'OEM' || partner.kind === 'OWN_FACTORY')
+const importOpen = ref(false)
+const error = ref('')
+const itemType = ref('')
+const partnerKind = ref('')
+const it = usePaged(computed(() => rd.s.items), {
+  match: textMatch('code', 'name', 'inci', 'filingNo'),
+  extra: (r) => !itemType.value || r.itemType === itemType.value
+})
+const pt = usePaged(computed(() => rd.s.partners), {
+  match: textMatch('code', 'name', 'licenseNo', 'contact'),
+  extra: (r) => !partnerKind.value || r.kind === partnerKind.value
+})
 
 async function load() {
-  await rd.load()
-  boms.value = await http.get('/boms')
+  error.value = ''
+  try {
+    await rd.load()
+    boms.value = await http.get('/boms')
+  } catch (e) {
+    error.value = e.message
+  }
 }
 
 function onAdd() {
@@ -361,6 +402,7 @@ onMounted(load)
 
 <style scoped>
 .tabs :deep(.el-tabs__header) { padding: 0 16px; margin-bottom: 0; }
+.pad { padding: 12px 16px 4px; }
 .boms { display: grid; gap: 12px; padding: 16px; }
 .bom-h { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bom-row { display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 8px; margin-bottom: 8px; }

@@ -20,6 +20,7 @@ import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.SourceType;
 import com.cosmetic.scm.domain.TxnType;
+import com.cosmetic.scm.domain.WarehouseKind;
 import com.cosmetic.scm.domain.rules.FefoAllocator;
 import com.cosmetic.scm.domain.rules.ShelfLife;
 import com.cosmetic.scm.master.Item;
@@ -121,6 +122,23 @@ public class InventoryService {
     }
 
     /**
+     * 盘点：锁住结存行后按实盘数量调整，返回差异（实盘 - 账面）。差异为 0 时不写流水。
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public BigDecimal adjustTo(Batch batch, Long warehouseId, BigDecimal counted, String refNo) {
+        if (counted == null || counted.signum() < 0) {
+            throw new BizException("实盘数量不能为负");
+        }
+        BigDecimal book = stocks.lockByBatchAndWarehouse(batch.getId(), warehouseId)
+                .map(Stock::getQty).orElse(BigDecimal.ZERO);
+        BigDecimal delta = counted.subtract(book);
+        if (delta.signum() != 0) {
+            change(batch, warehouseId, delta, TxnType.ADJUST, refNo);
+        }
+        return delta;
+    }
+
+    /**
      * 扣减一组 FEFO 分配结果。执行时再次确认批次仍是“已放行”，防止分配后批次被冻结。
      */
     @Transactional(propagation = Propagation.MANDATORY)
@@ -139,13 +157,16 @@ public class InventoryService {
     /**
      * 按 FEFO 为某物料分配已放行库存。
      *
-     * @param warehouseIds 限定仓库，为空表示不限
+     * @param warehouseIds 限定仓库，为空表示不限（退货隔离区始终排除）
      * @param minRatio     最低剩余效期比例，0~1
      */
     @Transactional(readOnly = true)
     public FefoAllocator.Result allocate(Long itemId, BigDecimal qty, Collection<Long> warehouseIds, double minRatio) {
+        // 退货隔离区的货等待质量处置，任何情况下都不参与分配
+        Map<Long, Warehouse> wm = lookup.warehouseMap();
         List<Stock> rows = stocks.findByItemIdAndQtyGreaterThan(itemId, BigDecimal.ZERO).stream()
                 .filter(s -> warehouseIds == null || warehouseIds.isEmpty() || warehouseIds.contains(s.getWarehouseId()))
+                .filter(s -> wm.get(s.getWarehouseId()).getKind() != WarehouseKind.RETURN)
                 .toList();
         Map<Long, Batch> bm = batches.findAllById(rows.stream().map(Stock::getBatchId).distinct().toList()).stream()
                 .collect(Collectors.toMap(Batch::getId, Function.identity()));

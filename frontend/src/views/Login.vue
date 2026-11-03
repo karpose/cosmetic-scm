@@ -1,6 +1,6 @@
 <template>
   <div class="login">
-    <div class="card">
+    <div class="card glass">
       <div class="head">
         <span class="mark">批</span>
         <div>
@@ -39,6 +39,8 @@ async function submit() {
   try {
     await auth.login(form.username.trim(), form.password)
     router.replace(route.query.redirect || '/')
+  } catch {
+    // 错误已由 api.js 统一提示
   } finally {
     loading.value = false
   }
@@ -47,11 +49,16 @@ async function submit() {
 
 <style scoped>
 .login { min-height: 100%; display: grid; place-items: center; padding: 24px 16px; box-sizing: border-box; }
-.card { width: min(380px, 100%); background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 10px; padding: 28px; box-sizing: border-box; }
-.head { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; }
-.mark { width: 40px; height: 40px; border-radius: 8px; background: var(--el-color-primary); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 18px; flex: none; }
-h1 { font-size: 18px; margin: 0; }
-.head p { margin: 2px 0 0; font-size: 12.5px; }
-.full { width: 100%; margin-top: 4px; }
-.hint { margin: 16px 0 0; }
+.card { width: min(400px, 100%); padding: 32px 30px 26px; box-sizing: border-box; border-radius: 28px; background: var(--lg-surface-raised); -webkit-backdrop-filter: var(--lg-blur-strong); backdrop-filter: var(--lg-blur-strong); }
+.head { display: flex; gap: 14px; align-items: center; margin-bottom: 24px; }
+.mark {
+  width: 46px; height: 46px; border-radius: 14px; flex: none; display: grid; place-items: center;
+  color: #fff; font-weight: 700; font-size: 20px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--el-color-primary) 70%, white), var(--el-color-primary));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 10px 22px -8px var(--el-color-primary);
+}
+h1 { font-size: 20px; margin: 0; letter-spacing: -0.02em; }
+.head p { margin: 4px 0 0; font-size: 12.5px; }
+.full { width: 100%; height: 42px; margin-top: 6px; font-size: 15px; }
+.hint { margin: 18px 0 0; line-height: 1.6; }
 </style>
