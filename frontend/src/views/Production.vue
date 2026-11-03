@@ -1,0 +1,250 @@
+<template>
+  <div class="page">
+    <div class="page-head">
+      <div>
+        <h2>生产与委托</h2>
+        <p>委托代工和自有工厂走同一张单：品牌供料部分按“先到期先出”从自有仓发料，工厂代采部分在完工时登记受托厂的原料批号。完工批次一律进入“待上市放行”。</p>
+      </div>
+      <el-button v-if="canCreate" type="primary" @click="openCreate">新建生产 / 委托单</el-button>
+    </div>
+
+    <el-card shadow="never" body-style="padding:0">
+      <el-table :data="orders" v-loading="loading" empty-text="还没有生产或委托单">
+        <el-table-column label="单号" width="150"><template #default="{ row }"><span class="mono">{{ row.moNo }}</span></template></el-table-column>
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }"><el-tag size="small" :type="row.moType === 'OEM' ? 'primary' : 'info'" disable-transitions>{{ row.moTypeLabel }}</el-tag></template>
+        </el-table-column>
+        <el-table-column prop="factoryName" label="生产方" min-width="140" />
+        <el-table-column prop="fgName" label="成品" min-width="160" />
+        <el-table-column label="计划数量" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.plannedQty) }}</span></template></el-table-column>
+        <el-table-column label="计划日期" width="110"><template #default="{ row }"><span class="mono">{{ row.plannedDate }}</span></template></el-table-column>
+        <el-table-column label="状态" width="90"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /></template></el-table-column>
+        <el-table-column label="产出批次" min-width="170">
+          <template #default="{ row }">
+            <BatchNo :no="row.outBatchNo" />
+            <span v-if="row.yieldPct" class="muted small"> 收率 {{ row.yieldPct }}%</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="" width="210" fixed="right">
+          <template #default="{ row }">
+            <div class="toolbar">
+              <el-button size="small" @click="openDetail(row)">明细</el-button>
+              <el-button v-if="row.status === 'PLANNED' && canOperate" size="small" @click="openDetail(row, 'issue')">发料</el-button>
+              <el-button v-if="row.status === 'ISSUED' && canOperate" size="small" type="primary" @click="openComplete(row)">完工入库</el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- 新建 -->
+    <el-dialog v-model="create.visible" title="新建生产 / 委托单" width="560px">
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="生产方">
+          <el-select id="mo-factory" v-model="create.factoryId" placeholder="选择生产方" style="width:100%">
+            <el-option v-for="p in rd.factories.value" :key="p.id" :value="p.id" :disabled="!p.usable"
+                       :label="`${p.name}（${p.kindLabel}）${p.usable ? '' : ' 资质不可用'}`" />
+          </el-select>
+          <div v-if="factory" class="muted small">许可证：{{ factory.licenseNo || '—' }}{{ factory.licenseScope ? `；许可项目：${factory.licenseScope}` : '' }}。请确认成品类别在许可范围内。</div>
+        </el-form-item>
+        <div class="form-grid">
+          <el-form-item label="成品">
+            <el-select id="mo-fg" v-model="create.fgItemId" placeholder="选择成品" style="width:100%">
+              <el-option v-for="f in rd.finished.value" :key="f.id" :value="f.id" :label="`${f.code} ${f.name}`" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="计划数量"><el-input-number id="mo-qty" v-model="create.plannedQty" :min="1" :precision="0" :controls="false" style="width:100%" /></el-form-item>
+          <el-form-item label="计划日期"><el-date-picker id="mo-date" v-model="create.plannedDate" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button @click="create.visible = false">取消</el-button>
+        <el-button type="primary" :loading="create.saving" @click="submitCreate">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 明细 / 发料预览 -->
+    <el-drawer v-model="detail.visible" :title="detail.data ? `${detail.data.mo.moNo} · ${detail.data.mo.fgName} × ${fmtQty(detail.data.mo.plannedQty)}` : '明细'" size="min(760px, 100%)">
+      <template v-if="detail.data">
+        <el-descriptions :column="2" size="small" border>
+          <el-descriptions-item label="生产方">{{ detail.data.mo.factoryName }}（{{ detail.data.mo.moTypeLabel }}）</el-descriptions-item>
+          <el-descriptions-item label="状态">{{ detail.data.mo.statusLabel }}</el-descriptions-item>
+          <el-descriptions-item v-if="detail.data.mo.actualQty" label="实际产量">{{ fmtQty(detail.data.mo.actualQty) }}（收率 {{ detail.data.mo.yieldPct }}%）</el-descriptions-item>
+          <el-descriptions-item v-if="detail.data.mo.outBatchNo" label="产出批次"><BatchNo :no="detail.data.mo.outBatchNo" /></el-descriptions-item>
+        </el-descriptions>
+        <p v-if="detail.data.mo.status === 'PLANNED'" class="muted small">下表是按“先到期先出”从自有仓已放行库存中预分配的批次，点“确认发料”后才实际扣减。</p>
+        <el-table :data="detail.data.requirements" size="small" style="margin-top:12px">
+          <el-table-column label="物料" min-width="140"><template #default="{ row }">{{ row.itemName }} <div class="muted small mono">{{ row.itemCode }}</div></template></el-table-column>
+          <el-table-column label="供料方式" width="100">
+            <template #default="{ row }"><el-tag size="small" :type="row.supplyMode === 'BRAND' ? 'primary' : 'info'" disable-transitions>{{ row.supplyLabel }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="理论用量" width="120" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.requiredQty) }} {{ row.unit }}</span></template></el-table-column>
+          <el-table-column label="批次" min-width="220">
+            <template #default="{ row }">
+              <template v-if="row.supplyMode === 'BRAND'">
+                <div v-for="p in row.picks" :key="p.batchId + '-' + p.warehouseId">
+                  <BatchNo :no="p.batchNo" /> <span class="mono small">{{ fmtQty(p.qty) }}</span>
+                  <span class="muted small"> 效期 {{ p.expDate || '—' }}</span>
+                </div>
+                <el-tag v-if="Number(row.shortQty) > 0" type="danger" size="small" disable-transitions>缺 {{ fmtQty(row.shortQty) }} {{ row.unit }}</el-tag>
+                <span v-if="!row.picks.length && !(Number(row.shortQty) > 0)" class="muted">—</span>
+              </template>
+              <span v-else-if="row.extBatchNo" class="mono small">受托厂批号 {{ row.extBatchNo }}</span>
+              <span v-else class="muted small">工厂代采，完工时登记批号</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-if="detail.mode === 'issue' && detail.data.mo.status === 'PLANNED'" class="toolbar" style="margin-top:16px;justify-content:flex-end">
+          <el-alert v-if="shortage" type="error" :closable="false" title="有物料可用库存不足，请先收货并完成检验放行。" />
+          <el-button type="primary" :disabled="shortage" :loading="detail.saving" @click="submitIssue">确认发料</el-button>
+        </div>
+      </template>
+    </el-drawer>
+
+    <!-- 完工入库 -->
+    <el-dialog v-model="done.visible" :title="`完工入库：${done.mo?.moNo || ''}`" width="720px">
+      <el-form label-position="top" @submit.prevent>
+        <div class="form-grid">
+          <el-form-item :label="`实际产量（计划 ${fmtQty(done.mo?.plannedQty)}）`"><el-input-number id="cp-qty" v-model="done.actualQty" :min="1" :precision="0" :controls="false" style="width:100%" /></el-form-item>
+          <el-form-item label="生产日期"><el-date-picker id="cp-mfg" v-model="done.mfgDate" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
+          <el-form-item :label="done.mo?.moType === 'OEM' ? '受托厂批号' : '车间批号'"><el-input id="cp-ext" v-model="done.extBatchNo" placeholder="选填" /></el-form-item>
+          <el-form-item label="入库仓">
+            <el-select id="cp-wh" v-model="done.warehouseId" style="width:100%">
+              <el-option v-for="w in doneWarehouses" :key="w.id" :value="w.id" :label="w.name" />
+            </el-select>
+          </el-form-item>
+        </div>
+        <el-form-item v-if="outOfRange" label="物料平衡说明（实际产量超出计划的 95%–102%）">
+          <el-input id="cp-balance" v-model="done.balanceNote" type="textarea" :rows="2" placeholder="说明偏差原因，例如灌装损耗、取样量" />
+        </el-form-item>
+        <el-form-item v-if="done.ext.length" label="工厂代采物料：登记受托厂实际使用的原料批号">
+          <div style="width:100%">
+            <div v-for="x in done.ext" :key="x.itemId" class="line-row">
+              <span>{{ x.itemName }} <span class="muted small">理论 {{ fmtQty(x.requiredQty) }} {{ x.unit }}</span></span>
+              <el-input :id="`cp-xb-${x.itemId}`" v-model="x.extBatchNo" placeholder="受托厂原料批号" />
+              <el-input-number :id="`cp-xq-${x.itemId}`" v-model="x.qty" :min="0" :precision="4" :controls="false" />
+            </div>
+          </div>
+        </el-form-item>
+        <el-checkbox v-if="done.mo?.moType === 'OEM'" id="cp-oemrel" v-model="done.oemReleased">受托厂已完成出厂放行（出厂检验合格，批生产记录已审核）</el-checkbox>
+        <el-alert type="info" :closable="false" style="margin-top:12px" title="成品批号由系统按生产方批号前缀自动生成，状态为“待上市放行”，有效期按成品保质期计算。" />
+      </el-form>
+      <template #footer>
+        <el-button @click="done.visible = false">取消</el-button>
+        <el-button type="primary" :loading="done.saving" @click="submitComplete">确认入库</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import http from '../api'
+import BatchNo from '../components/BatchNo.vue'
+import StatusTag from '../components/StatusTag.vue'
+import { useAuth } from '../stores/auth'
+import { useRefData } from '../utils/refdata'
+import { fmtQty, today } from '../utils/format'
+
+const auth = useAuth()
+const rd = useRefData()
+const orders = ref([])
+const loading = ref(false)
+const canCreate = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
+const canOperate = computed(() => auth.hasAny('ADMIN', 'PRODUCTION', 'WAREHOUSE'))
+
+const create = reactive({ visible: false, saving: false, factoryId: null, fgItemId: null, plannedQty: null, plannedDate: today() })
+const detail = reactive({ visible: false, saving: false, mode: 'view', data: null })
+const done = reactive({
+  visible: false, saving: false, mo: null, actualQty: null, mfgDate: today(), extBatchNo: '',
+  warehouseId: null, oemReleased: false, balanceNote: '', ext: []
+})
+
+const factory = computed(() => rd.s.partners.find((p) => p.id === create.factoryId))
+const shortage = computed(() => (detail.data?.requirements || []).some((r) => Number(r.shortQty) > 0))
+const doneWarehouses = computed(() => rd.s.warehouses.filter((w) => w.kind === 'OWN' || (w.kind === 'OEM' && w.partnerId === done.mo?.factoryId)))
+const outOfRange = computed(() => {
+  if (!done.mo || !done.actualQty) return false
+  const r = done.actualQty / Number(done.mo.plannedQty)
+  return r < 0.95 || r > 1.02
+})
+
+async function load() {
+  loading.value = true
+  try {
+    orders.value = await http.get('/mfg-orders')
+  } finally {
+    loading.value = false
+  }
+}
+
+function openCreate() {
+  Object.assign(create, { visible: true, factoryId: null, fgItemId: null, plannedQty: null, plannedDate: today() })
+}
+
+async function submitCreate() {
+  if (!create.factoryId || !create.fgItemId || !(create.plannedQty > 0)) return ElMessage.warning('请选择生产方、成品并填写计划数量')
+  create.saving = true
+  try {
+    const mo = await http.post('/mfg-orders', {
+      factoryId: create.factoryId, fgItemId: create.fgItemId, plannedQty: create.plannedQty, plannedDate: create.plannedDate
+    })
+    ElMessage.success(`已保存 ${mo.moNo}`)
+    create.visible = false
+    load()
+  } finally {
+    create.saving = false
+  }
+}
+
+async function openDetail(row, mode = 'view') {
+  Object.assign(detail, { visible: true, mode, data: null })
+  detail.data = await http.get(`/mfg-orders/${row.id}`)
+}
+
+async function submitIssue() {
+  detail.saving = true
+  try {
+    await http.post(`/mfg-orders/${detail.data.mo.id}/issue`)
+    ElMessage.success('已按先到期先出发料')
+    detail.visible = false
+    load()
+  } finally {
+    detail.saving = false
+  }
+}
+
+async function openComplete(row) {
+  const d = await http.get(`/mfg-orders/${row.id}`)
+  const own = rd.s.warehouses.find((w) => w.kind === 'OWN')
+  Object.assign(done, {
+    visible: true, mo: d.mo, actualQty: Number(d.mo.plannedQty), mfgDate: today(), extBatchNo: '',
+    warehouseId: own?.id || null, oemReleased: false, balanceNote: '',
+    ext: d.requirements.filter((r) => r.supplyMode === 'OEM').map((r) => ({
+      itemId: r.itemId, itemName: r.itemName, unit: r.unit, requiredQty: r.requiredQty, extBatchNo: '', qty: Number(r.requiredQty)
+    }))
+  })
+}
+
+async function submitComplete() {
+  if (done.mo.moType === 'OEM' && !done.oemReleased) return ElMessage.warning('委托生产须在受托厂出厂放行后才能入库')
+  if (done.ext.some((x) => !x.extBatchNo.trim())) return ElMessage.warning('请登记每种工厂代采物料的受托厂批号')
+  if (outOfRange.value && !done.balanceNote.trim()) return ElMessage.warning('请填写物料平衡说明')
+  done.saving = true
+  try {
+    const mo = await http.post(`/mfg-orders/${done.mo.id}/complete`, {
+      actualQty: done.actualQty, mfgDate: done.mfgDate, extBatchNo: done.extBatchNo, warehouseId: done.warehouseId,
+      oemReleased: done.oemReleased, balanceNote: done.balanceNote,
+      extMaterials: done.ext.map(({ itemId, extBatchNo, qty }) => ({ itemId, extBatchNo, qty }))
+    })
+    ElMessage.success(`成品批次 ${mo.outBatchNo} 已入库，待上市放行`)
+    done.visible = false
+    load()
+  } finally {
+    done.saving = false
+  }
+}
+
+onMounted(() => Promise.all([load(), rd.load()]))
+</script>

@@ -1,0 +1,42 @@
+/* 品牌色：深玫红，取自化妆品行业常用的稳重色系；其余沿用 Element Plus 默认中性色 */
+:root {
+  --el-color-primary: #9e2a4f;
+  --el-color-primary-light-3: #bb6a84;
+  --el-color-primary-light-5: #ce95a7;
+  --el-color-primary-light-7: #e2bfca;
+  --el-color-primary-light-8: #ecd4dc;
+  --el-color-primary-light-9: #f5eaed;
+  --el-color-primary-dark-2: #7e2240;
+  --scm-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+html.dark {
+  --el-color-primary: #e47197;
+  --el-color-primary-light-3: #a85570;
+  --el-color-primary-light-5: #7d4254;
+  --el-color-primary-light-7: #533039;
+  --el-color-primary-light-8: #3f262d;
+  --el-color-primary-light-9: #2a1b20;
+  --el-color-primary-dark-2: #e98eac;
+}
+html, body, #app { height: 100%; margin: 0; }
+body {
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  background: var(--el-bg-color-page);
+  color: var(--el-text-color-primary);
+}
+.mono { font-family: var(--scm-mono); font-variant-numeric: tabular-nums; }
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--el-text-color-secondary); }
+.small { font-size: 12.5px; }
+.page { padding: 20px 24px 40px; display: grid; gap: 16px; max-width: 1280px; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.page-head h2 { margin: 0; font-size: 21px; }
+.page-head p { margin: 4px 0 0; color: var(--el-text-color-secondary); max-width: 70ch; font-size: 13px; line-height: 1.6; }
+.toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.line-row { display: grid; grid-template-columns: 2fr 1fr auto; gap: 8px; align-items: center; margin-bottom: 8px; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 16px; }
+@media (max-width: 768px) {
+  .page { padding: 14px 12px 32px; }
+  .line-row { grid-template-columns: 1fr 1fr; }
+  .line-row > :first-child { grid-column: 1 / -1; }
+}

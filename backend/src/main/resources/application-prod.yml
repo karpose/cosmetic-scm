@@ -1,0 +1,14 @@
+# 生产 / 测试环境：MySQL 8，连接信息全部来自环境变量
+spring:
+  datasource:
+    url: jdbc:mysql://${SCM_DB_HOST:localhost}:${SCM_DB_PORT:3306}/${SCM_DB_NAME:cosmetic_scm}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${SCM_DB_USER:scm}
+    password: ${SCM_DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+
+scm:
+  jwt:
+    secret: ${SCM_JWT_SECRET}
+  demo-data: ${SCM_DEMO_DATA:false}

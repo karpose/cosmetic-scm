@@ -1,0 +1,162 @@
+<template>
+  <div class="page">
+    <div class="page-head">
+      <div>
+        <h2>采购入库</h2>
+        <p>只能向合格名录内、资质在有效期内的供应商下单；禁用原料不能采购。收货后物料批次进入“待检”，检验放行前不能发料。</p>
+      </div>
+      <el-button v-if="canCreate" type="primary" @click="openCreate">新建采购单</el-button>
+    </div>
+
+    <el-card shadow="never" body-style="padding:0">
+      <el-table :data="orders" v-loading="loading" empty-text="还没有采购单">
+        <el-table-column label="单号" width="150"><template #default="{ row }"><span class="mono">{{ row.poNo }}</span></template></el-table-column>
+        <el-table-column prop="supplierName" label="供应商" min-width="160" />
+        <el-table-column label="日期" width="110"><template #default="{ row }"><span class="mono">{{ row.orderDate }}</span></template></el-table-column>
+        <el-table-column label="物料（已收 / 订购）" min-width="260">
+          <template #default="{ row }">
+            <div v-for="l in row.lines" :key="l.id">
+              {{ l.itemName }} <span class="mono muted small">{{ fmtQty(l.receivedQty) }} / {{ fmtQty(l.qty) }} {{ l.unit }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="100"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /></template></el-table-column>
+        <el-table-column label="" width="90" fixed="right">
+          <template #default="{ row }">
+            <el-button v-if="row.status !== 'RECEIVED' && canReceive" size="small" @click="openReceive(row)">收货</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- 新建采购单 -->
+    <el-dialog v-model="create.visible" title="新建采购单" width="640px">
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="供应商">
+          <el-select id="po-supplier" v-model="create.supplierId" placeholder="选择供应商" filterable style="width:100%">
+            <el-option v-for="p in rd.suppliers.value" :key="p.id" :value="p.id" :disabled="!p.usable"
+                       :label="p.name + (p.usable ? '' : (p.qualified ? '（资质已过期）' : '（未进合格名录）'))" />
+          </el-select>
+          <div class="muted small">灰色选项不在合格名录或资质已过期，不能下单。</div>
+        </el-form-item>
+        <el-form-item label="物料与数量">
+          <div style="width:100%">
+            <div v-for="(l, i) in create.lines" :key="i" class="line-row">
+              <el-select :id="`po-item-${i}`" v-model="l.itemId" placeholder="选择物料" filterable>
+                <el-option v-for="m in rd.materials.value" :key="m.id" :value="m.id" :disabled="m.banned"
+                           :label="`${m.code} ${m.name}${m.banned ? '（禁用原料）' : ''}`" />
+              </el-select>
+              <el-input-number :id="`po-qty-${i}`" v-model="l.qty" :min="0" :precision="4" :controls="false" placeholder="数量" style="width:100%" />
+              <el-button text :disabled="create.lines.length === 1" @click="create.lines.splice(i, 1)">删除</el-button>
+            </div>
+            <el-button size="small" @click="create.lines.push({ itemId: null, qty: null })">添加一行</el-button>
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="create.visible = false">取消</el-button>
+        <el-button type="primary" :loading="create.saving" @click="submitCreate">保存采购单</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 收货 -->
+    <el-dialog v-model="recv.visible" :title="`收货：${recv.po?.poNo || ''}`" width="860px">
+      <p class="muted small" style="margin-top:0">供应商：{{ recv.po?.supplierName }}。收货后系统生成内部批号，批次状态为“待检”。有效期留空时按物料保质期推算。</p>
+      <el-card v-for="l in recv.lines" :key="l.poLineId" shadow="never" style="margin-bottom:12px">
+        <div style="margin-bottom:8px"><b>{{ l.itemName }}</b> <span class="muted small">{{ l.itemCode }} · 未收 {{ fmtQty(l.remaining) }} {{ l.unit }}{{ l.shelfMonths ? ` · 保质期 ${l.shelfMonths} 个月` : '' }}</span></div>
+        <div class="form-grid">
+          <el-form-item label="本次收货数量"><el-input-number :id="`rv-qty-${l.poLineId}`" v-model="l.qty" :min="0" :max="Number(l.remaining)" :precision="4" :controls="false" style="width:100%" /></el-form-item>
+          <el-form-item label="供应商批号"><el-input :id="`rv-ext-${l.poLineId}`" v-model="l.extBatchNo" placeholder="来料标签上的批号" /></el-form-item>
+          <el-form-item label="生产日期"><el-date-picker :id="`rv-mfg-${l.poLineId}`" v-model="l.mfgDate" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
+          <el-form-item label="有效期至"><el-date-picker :id="`rv-exp-${l.poLineId}`" v-model="l.expDate" type="date" value-format="YYYY-MM-DD" placeholder="可留空" style="width:100%" /></el-form-item>
+          <el-form-item label="入库仓">
+            <el-select :id="`rv-wh-${l.poLineId}`" v-model="l.warehouseId" style="width:100%">
+              <el-option v-for="w in rd.ownWarehouses.value" :key="w.id" :value="w.id" :label="w.name" />
+            </el-select>
+          </el-form-item>
+        </div>
+      </el-card>
+      <template #footer>
+        <el-button @click="recv.visible = false">取消</el-button>
+        <el-button type="primary" :loading="recv.saving" @click="submitReceive">确认收货</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import http from '../api'
+import StatusTag from '../components/StatusTag.vue'
+import { useAuth } from '../stores/auth'
+import { useRefData } from '../utils/refdata'
+import { fmtQty, today } from '../utils/format'
+
+const auth = useAuth()
+const rd = useRefData()
+const orders = ref([])
+const loading = ref(false)
+const canCreate = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
+const canReceive = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'WAREHOUSE'))
+
+const create = reactive({ visible: false, saving: false, supplierId: null, lines: [] })
+const recv = reactive({ visible: false, saving: false, po: null, lines: [] })
+
+async function load() {
+  loading.value = true
+  try {
+    orders.value = await http.get('/purchase-orders')
+  } finally {
+    loading.value = false
+  }
+}
+
+function openCreate() {
+  Object.assign(create, { visible: true, supplierId: null, lines: [{ itemId: null, qty: null }] })
+}
+
+async function submitCreate() {
+  const lines = create.lines.filter((l) => l.itemId || l.qty)
+  if (!create.supplierId) return ElMessage.warning('请选择供应商')
+  if (!lines.length || lines.some((l) => !l.itemId || !(l.qty > 0))) return ElMessage.warning('请把每一行的物料和数量填完整')
+  create.saving = true
+  try {
+    const po = await http.post('/purchase-orders', { supplierId: create.supplierId, lines })
+    ElMessage.success(`采购单 ${po.poNo} 已保存`)
+    create.visible = false
+    load()
+  } finally {
+    create.saving = false
+  }
+}
+
+function openReceive(po) {
+  const wh = rd.ownWarehouses.value[0]?.id || null
+  recv.po = po
+  recv.lines = po.lines.filter((l) => Number(l.remaining) > 0).map((l) => ({
+    poLineId: l.id, itemName: l.itemName, itemCode: l.itemCode, unit: l.unit, shelfMonths: l.shelfMonths,
+    remaining: l.remaining, qty: Number(l.remaining), extBatchNo: '', mfgDate: today(), expDate: null, warehouseId: wh
+  }))
+  recv.visible = true
+}
+
+async function submitReceive() {
+  const lines = recv.lines.filter((l) => l.qty > 0)
+  if (!lines.length) return ElMessage.warning('没有填写收货数量')
+  if (lines.some((l) => !l.extBatchNo.trim())) return ElMessage.warning('请填写每一行的供应商批号')
+  recv.saving = true
+  try {
+    const res = await http.post(`/purchase-orders/${recv.po.id}/receipts`, {
+      lines: lines.map(({ poLineId, qty, extBatchNo, mfgDate, expDate, warehouseId }) => ({ poLineId, qty, extBatchNo, mfgDate, expDate, warehouseId }))
+    })
+    ElMessage.success(`已收货，生成待检批次 ${res.batchNos.join('、')}`)
+    recv.visible = false
+    load()
+  } finally {
+    recv.saving = false
+  }
+}
+
+onMounted(() => Promise.all([load(), rd.load()]))
+</script>
