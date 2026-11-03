@@ -3,6 +3,9 @@
 # 由 docker-compose 的 backup 服务运行；也可以手工执行一次：docker compose exec backup /scripts/backup.sh once
 set -eu
 
+# 密码走环境变量，不出现在命令行（进程列表里看不到，mysql 也不再告警）
+export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
+
 DB="${MYSQL_DATABASE:-cosmetic_scm}"
 HOST="${MYSQL_HOST:-mysql}"
 KEEP_DAYS="${BACKUP_KEEP_DAYS:-30}"
@@ -14,7 +17,7 @@ dump() {
   tmp="$DIR/.${DB}-${ts}.sql.gz.part"
   out="$DIR/${DB}-${ts}.sql.gz"
   # --single-transaction：InnoDB 一致性快照，备份期间不锁表，业务照常
-  mysqldump -h "$HOST" -u root -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers \
+  mysqldump -h "$HOST" -u root --single-transaction --routines --triggers \
     --set-gtid-purged=OFF --default-character-set=utf8mb4 "$DB" | gzip -9 > "$tmp"
   mv "$tmp" "$out"
   # 校验压缩包完整，坏包直接报错，便于监控发现

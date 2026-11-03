@@ -101,7 +101,7 @@ http 自动跳转 https，响应头带 HSTS 和常用安全头（`frontend/secur
 
 ### 备份与恢复
 
-`backup` 服务每天 `SCM_BACKUP_AT`（默认 02:30）把数据库备份到 `./backups/`，校验压缩包，保留 `SCM_BACKUP_KEEP_DAYS`（默认 30）天。**请另外把 `./backups` 同步到异地**。
+`backup` 服务（镜像由 `deploy/backup/Dockerfile` 构建，脚本已打进镜像）每天 `SCM_BACKUP_AT`（默认 02:30）把数据库备份到 `./backups/`，校验压缩包，保留 `SCM_BACKUP_KEEP_DAYS`（默认 30）天。**请另外把 `./backups` 同步到异地**。部署、备份、恢复都已在开发机上完整演练过，见 `docs/csv/07-部署预验证记录-2026-11-03.md`。
 
 ```bash
 docker compose exec backup /scripts/backup.sh once        # 手工备份（升级前必做）

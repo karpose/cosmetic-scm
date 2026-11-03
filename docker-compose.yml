@@ -52,12 +52,11 @@ services:
 
   # 每天定时备份数据库到 ./backups（保留天数、时间见 .env）。请再把 ./backups 同步到异地或对象存储。
   backup:
-    image: mysql:8.0
+    build: ./deploy/backup
     restart: unless-stopped
     depends_on:
       mysql:
         condition: service_healthy
-    entrypoint: ["/scripts/backup.sh"]
     environment:
       MYSQL_HOST: mysql
       MYSQL_DATABASE: cosmetic_scm
@@ -66,7 +65,6 @@ services:
       BACKUP_KEEP_DAYS: ${SCM_BACKUP_KEEP_DAYS:-30}
       TZ: Asia/Shanghai
     volumes:
-      - ./deploy/backup:/scripts:ro
       - ./backups:/backups
 
 volumes:
