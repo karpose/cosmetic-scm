@@ -8,8 +8,17 @@
       <el-button v-if="canCreate" type="primary" @click="openCreate">新建采购单</el-button>
     </div>
 
-    <el-card shadow="never" body-style="padding:0">
-      <el-table :data="orders" v-loading="loading" empty-text="还没有采购单">
+    <el-card shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-input v-model="t.keyword.value" placeholder="搜索单号、供应商、物料" clearable />
+          <el-select v-model="filterBy" placeholder="全部状态" clearable filterable>
+            <el-option v-for="o in filterOptions" :key="o.value" :value="o.value" :label="o.label" />
+          </el-select>
+        </div>
+      </template>
+      <LoadError v-if="loadError" :message="loadError" :loading="loading" @retry="load" />
+      <el-table v-else :data="t.paged.value" v-loading="loading" empty-text="还没有采购单">
         <el-table-column label="单号" width="150"><template #default="{ row }"><span class="mono">{{ row.poNo }}</span></template></el-table-column>
         <el-table-column prop="supplierName" label="供应商" min-width="160" />
         <el-table-column label="日期" width="110"><template #default="{ row }"><span class="mono">{{ row.orderDate }}</span></template></el-table-column>
@@ -27,6 +36,7 @@
           </template>
         </el-table-column>
       </el-table>
+      <ListPager v-model:page="t.page.value" v-model:size="t.size.value" :total="t.total.value" />
     </el-card>
 
     <!-- 新建采购单 -->
@@ -88,15 +98,26 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import http from '../api'
+import ListPager from '../components/ListPager.vue'
+import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
 import { useRefData } from '../utils/refdata'
+import { textMatch, usePaged } from '../utils/table'
 import { fmtQty, today } from '../utils/format'
 
 const auth = useAuth()
 const rd = useRefData()
 const orders = ref([])
 const loading = ref(false)
+const loadError = ref('')
+const filterBy = ref('')
+const filterOptions = computed(() => [...new Map(orders.value.map((r) => [r.status, r.statusLabel])).entries()]
+  .map(([value, label]) => ({ value, label })))
+const t = usePaged(orders, {
+  match: textMatch('poNo', 'supplierName', (r) => r.lines.map((l) => l.itemName + l.itemCode).join(' ')),
+  extra: (r) => !filterBy.value || r.status === filterBy.value
+})
 const canCreate = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
 const canReceive = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'WAREHOUSE'))
 
@@ -105,8 +126,11 @@ const recv = reactive({ visible: false, saving: false, po: null, lines: [] })
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     orders.value = await http.get('/purchase-orders')
+  } catch (e) {
+    loadError.value = e.message
   } finally {
     loading.value = false
   }

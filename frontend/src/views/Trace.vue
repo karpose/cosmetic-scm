@@ -107,6 +107,28 @@
           <el-table-column label="联系方式" min-width="180"><template #default="{ row }">{{ [row.contact, row.address].filter(Boolean).join(' · ') }}</template></el-table-column>
         </el-table>
       </el-card>
+
+      <el-card v-if="t.returns.length || t.recalls.length" shadow="never" body-style="padding:0">
+        <template #header>
+          <div class="head">
+            <b>退回与召回</b>
+            <span class="toolbar">
+              <router-link v-for="r in t.recalls" :key="r.id" :to="{ path: '/quality-events', query: { tab: 'recalls', recall: r.id } }">
+                <el-tag type="danger" size="small" disable-transitions>召回 {{ r.recallNo }} · {{ r.statusLabel }}</el-tag>
+              </router-link>
+            </span>
+          </div>
+        </template>
+        <el-table :data="t.returns" empty-text="还没有退回记录">
+          <el-table-column prop="customerName" label="客户" min-width="160" />
+          <el-table-column label="批号" width="150"><template #default="{ row }"><BatchNo :no="row.batchNo" /></template></el-table-column>
+          <el-table-column label="数量" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span></template></el-table-column>
+          <el-table-column label="退货单" width="140"><template #default="{ row }"><span class="mono">{{ row.returnNo }}</span></template></el-table-column>
+          <el-table-column label="类型" width="100"><template #default="{ row }">{{ row.recallId ? '召回回收' : '客户退货' }}</template></el-table-column>
+          <el-table-column prop="dispositionLabel" label="处置" width="100" />
+          <el-table-column label="日期" width="110"><template #default="{ row }"><span class="mono">{{ row.returnDate }}</span></template></el-table-column>
+        </el-table>
+      </el-card>
     </template>
 
     <el-dialog v-model="fz.visible" title="冻结受影响批次" width="480px">
@@ -197,9 +219,9 @@ async function submitFreeze() {
 .head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .col-h { margin: 0 0 8px; font-size: 13px; color: var(--el-text-color-secondary); font-weight: 500; }
-.node { border: 1px solid var(--el-border-color-light); border-radius: 6px; padding: 10px 12px; display: grid; gap: 4px; background: var(--el-bg-color); }
+.node { border: 1px solid var(--lg-stroke); border-radius: 14px; padding: 10px 14px; display: grid; gap: 4px; background: var(--lg-surface); -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur); box-shadow: var(--lg-highlight), var(--lg-shadow); }
 .node + .node { margin-top: 8px; }
-.node.hl { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
-.tagno { font-size: 12px; padding: 1px 6px; border: 1px solid var(--el-border-color); border-radius: 4px; }
+.node.hl { border-color: color-mix(in srgb, var(--el-color-primary) 55%, transparent); background: var(--lg-tint); }
+.tagno { font-size: 12px; padding: 1px 8px; border: 1px solid var(--el-border-color); border-radius: 999px; }
 @media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
 </style>

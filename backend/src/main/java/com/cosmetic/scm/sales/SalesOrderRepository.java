@@ -10,4 +10,6 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
     List<SalesOrder> findTop300ByOrderByIdDesc();
 
     long countByOrderDateGreaterThanEqual(LocalDate date);
+
+    List<SalesOrder> findByCustomerId(Long customerId);
 }

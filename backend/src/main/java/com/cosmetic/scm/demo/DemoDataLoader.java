@@ -9,10 +9,14 @@ import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 
 import com.cosmetic.scm.common.TimeProvider;
+import com.cosmetic.scm.complaint.ComplaintService;
+import com.cosmetic.scm.complaint.ComplaintService.ComplaintReq;
+import com.cosmetic.scm.domain.ComplaintCategory;
 import com.cosmetic.scm.domain.Decision;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.Role;
+import com.cosmetic.scm.domain.Severity;
 import com.cosmetic.scm.domain.SupplyMode;
 import com.cosmetic.scm.domain.WarehouseKind;
 import com.cosmetic.scm.inventory.InventoryService;
@@ -44,6 +48,9 @@ import com.cosmetic.scm.quality.QualityService.ReleaseReq;
 import com.cosmetic.scm.sales.SalesService;
 import com.cosmetic.scm.sales.SalesService.SoLineReq;
 import com.cosmetic.scm.sales.SalesService.SoReq;
+import com.cosmetic.scm.salesreturn.ReturnService;
+import com.cosmetic.scm.salesreturn.ReturnService.ReturnLineReq;
+import com.cosmetic.scm.salesreturn.ReturnService.ReturnReq;
 import com.cosmetic.scm.security.AppUser;
 import com.cosmetic.scm.security.UserRepository;
 import com.cosmetic.scm.security.UserService;
@@ -80,6 +87,8 @@ public class DemoDataLoader implements ApplicationRunner {
     private final QualityService quality;
     private final ProductionService production;
     private final SalesService sales;
+    private final ReturnService returns;
+    private final ComplaintService complaints;
     private final InventoryService inventory;
     private final TimeProvider time;
 
@@ -137,6 +146,7 @@ public class DemoDataLoader implements ApplicationRunner {
 
         WarehouseView main = as("admin", () -> master.createWarehouse(new WarehouseReq("WH-MAIN", "华东主仓", WarehouseKind.OWN, null)));
         as("admin", () -> master.createWarehouse(new WarehouseReq("WH-A3", "禾川寄存仓", WarehouseKind.OEM, a3.id())));
+        WarehouseView rtn = as("admin", () -> master.createWarehouse(new WarehouseReq("WH-RTN", "退货隔离区", WarehouseKind.RETURN, null)));
 
         as("admin", () -> master.saveBom(serum.getId(), new BomReq(List.of(
                 new BomLineReq(nia.getId(), new BigDecimal("0.0015"), SupplyMode.BRAND),
@@ -197,6 +207,15 @@ public class DemoDataLoader implements ApplicationRunner {
         Long fg0 = inventory.batchByNo(done0.outBatchNo()).getId();
         as("qso1", () -> quality.marketRelease(fg0, new ReleaseReq(Decision.RELEASED, "QC-" + done0.outBatchNo(),
                 "受托厂放行记录及出厂检验报告已审核（示例）", true, true, true, true, 6, "品质部留样室 B-02", DEMO_PASSWORD), qso));
+
+        // ---------- 天猫退回 20 瓶外箱破损的精华液：在隔离区等质量处置 ----------
+        as("sales1", () -> returns.create(new ReturnReq(tm.id(), rtn.id(), null, "物流外箱破损，客户拒收（示例）",
+                List.of(new ReturnLineReq(fg1, new BigDecimal("20"))))));
+
+        // ---------- 一条消费者不良反应投诉：待调查、待上报 ----------
+        as("sales1", () -> complaints.create(new ComplaintReq(t.minusDays(3), "电商平台", tm.id(), "王女士（示例）138****0000",
+                serum.getId(), done1.outBatchNo(), ComplaintCategory.ADVERSE, Severity.NORMAL,
+                "使用两天后面部轻微泛红、刺痛，已停用（示例）")));
 
         // ---------- 一张部分收货的采购单，产生待检批次 ----------
         PoView po4 = as("purchase1", () -> purchase.create(new CreatePoReq(hc.id(), List.of(line(nia, "20"), line(gly, "50")))));

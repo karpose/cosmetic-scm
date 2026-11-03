@@ -7,8 +7,17 @@
       </div>
       <el-button type="primary" @click="openCreate">新增账号</el-button>
     </div>
-    <el-card shadow="never" body-style="padding:0">
-      <el-table :data="users" v-loading="loading">
+    <el-card shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-input v-model="t.keyword.value" placeholder="搜索账号或姓名" clearable />
+          <el-select v-model="role" placeholder="全部角色" clearable>
+            <el-option v-for="(v, k) in ROLE_LABELS" :key="k" :value="k" :label="v" />
+          </el-select>
+        </div>
+      </template>
+      <LoadError v-if="error" :message="error" :loading="loading" @retry="load" />
+      <el-table v-else :data="t.paged.value" v-loading="loading" empty-text="没有符合条件的账号">
         <el-table-column label="账号" width="140"><template #default="{ row }"><span class="mono">{{ row.username }}</span></template></el-table-column>
         <el-table-column prop="displayName" label="姓名" width="180" />
         <el-table-column label="角色" min-width="260">
@@ -22,6 +31,7 @@
           </template>
         </el-table-column>
       </el-table>
+      <ListPager v-model:page="t.page.value" v-model:size="t.size.value" :total="t.total.value" />
     </el-card>
 
     <el-dialog v-model="form.visible" :title="form.id ? '编辑账号' : '新增账号'" width="560px">
@@ -60,17 +70,26 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import http from '../api'
+import ListPager from '../components/ListPager.vue'
+import LoadError from '../components/LoadError.vue'
 import { ROLE_LABELS } from '../stores/auth'
+import { textMatch, usePaged } from '../utils/table'
 
 const users = ref([])
 const loading = ref(false)
+const error = ref('')
+const role = ref('')
+const t = usePaged(users, { match: textMatch('username', 'displayName'), extra: (u) => !role.value || u.roles.includes(role.value) })
 const form = reactive({ visible: false, saving: false, id: null, username: '', displayName: '', password: '', roles: [], enabled: true })
 const reset = reactive({ visible: false, saving: false, id: null, username: '', password: '' })
 
 async function load() {
   loading.value = true
+  error.value = ''
   try {
     users.value = await http.get('/users')
+  } catch (e) {
+    error.value = e.message
   } finally {
     loading.value = false
   }

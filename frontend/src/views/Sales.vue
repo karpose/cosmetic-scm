@@ -8,8 +8,17 @@
       <el-button v-if="canCreate" type="primary" @click="openCreate">新建出库单</el-button>
     </div>
 
-    <el-card shadow="never" body-style="padding:0">
-      <el-table :data="orders" v-loading="loading" empty-text="还没有出库单">
+    <el-card shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-input v-model="t.keyword.value" placeholder="搜索单号、客户、批号" clearable />
+          <el-select v-model="filterBy" placeholder="全部客户" clearable filterable>
+            <el-option v-for="o in filterOptions" :key="o.value" :value="o.value" :label="o.label" />
+          </el-select>
+        </div>
+      </template>
+      <LoadError v-if="loadError" :message="loadError" :loading="loading" @retry="load" />
+      <el-table v-else :data="t.paged.value" v-loading="loading" empty-text="还没有出库单">
         <el-table-column label="单号" width="150"><template #default="{ row }"><span class="mono">{{ row.soNo }}</span></template></el-table-column>
         <el-table-column prop="customerName" label="客户" min-width="160" />
         <el-table-column prop="channel" label="渠道" width="120" />
@@ -22,6 +31,7 @@
         </el-table-column>
         <el-table-column label="日期" width="110"><template #default="{ row }"><span class="mono">{{ row.orderDate }}</span></template></el-table-column>
       </el-table>
+      <ListPager v-model:page="t.page.value" v-model:size="t.size.value" :total="t.total.value" />
     </el-card>
 
     <el-dialog v-model="form.visible" title="新建出库单" width="720px">
@@ -34,7 +44,7 @@
           </el-form-item>
           <el-form-item label="发货仓">
             <el-select id="so-wh" v-model="form.warehouseId" style="width:100%" @change="preview">
-              <el-option v-for="w in rd.s.warehouses" :key="w.id" :value="w.id" :label="w.name" />
+              <el-option v-for="w in rd.stockWarehouses.value" :key="w.id" :value="w.id" :label="w.name" />
             </el-select>
           </el-form-item>
         </div>
@@ -80,23 +90,37 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import http from '../api'
+import ListPager from '../components/ListPager.vue'
+import LoadError from '../components/LoadError.vue'
 import BatchNo from '../components/BatchNo.vue'
 import { useAuth } from '../stores/auth'
 import { useRefData } from '../utils/refdata'
+import { textMatch, usePaged } from '../utils/table'
 import { fmtQty } from '../utils/format'
 
 const auth = useAuth()
 const rd = useRefData()
 const orders = ref([])
 const loading = ref(false)
+const loadError = ref('')
+const filterBy = ref('')
+const filterOptions = computed(() => [...new Map(orders.value.map((r) => [r.customerId, r.customerName])).entries()]
+  .map(([value, label]) => ({ value, label })))
+const t = usePaged(orders, {
+  match: textMatch('soNo', 'customerName', 'channel', (r) => r.allocations.map((a) => a.batchNo + a.itemName).join(' ')),
+  extra: (r) => !filterBy.value || r.customerId === filterBy.value
+})
 const plan = ref(null)
 const canCreate = computed(() => auth.hasAny('ADMIN', 'SALES', 'WAREHOUSE'))
 const form = reactive({ visible: false, saving: false, customerId: null, warehouseId: null, lines: [] })
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     orders.value = await http.get('/sales-orders')
+  } catch (e) {
+    loadError.value = e.message
   } finally {
     loading.value = false
   }
