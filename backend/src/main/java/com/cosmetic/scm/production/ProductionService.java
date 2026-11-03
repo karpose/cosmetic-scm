@@ -26,6 +26,8 @@ import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.MoStatus;
 import com.cosmetic.scm.domain.MoType;
+import com.cosmetic.scm.domain.OemReportStatus;
+import com.cosmetic.scm.domain.OemStage;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.SourceType;
 import com.cosmetic.scm.domain.SupplyMode;
@@ -45,6 +47,10 @@ import com.cosmetic.scm.master.MasterService;
 import com.cosmetic.scm.master.Partner;
 import com.cosmetic.scm.master.Warehouse;
 import com.cosmetic.scm.master.WarehouseRepository;
+import com.cosmetic.scm.oemportal.OemProgress;
+import com.cosmetic.scm.oemportal.OemProgressRepository;
+import com.cosmetic.scm.oemportal.OemReport;
+import com.cosmetic.scm.oemportal.OemReportRepository;
 import com.cosmetic.scm.security.CurrentUser;
 
 import org.springframework.stereotype.Service;
@@ -71,6 +77,8 @@ public class ProductionService {
     private final InventoryService inventory;
     private final BatchRepository batches;
     private final GenealogyRepository genealogy;
+    private final OemProgressRepository oemProgress;
+    private final OemReportRepository oemReports;
     private final DocNoService docNo;
     private final AuditService audit;
     private final TimeProvider time;
@@ -106,7 +114,8 @@ public class ProductionService {
     public record MoView(Long id, String moNo, MoType moType, String moTypeLabel, Long factoryId, String factoryName,
                          Long fgItemId, String fgCode, String fgName, BigDecimal plannedQty, LocalDate plannedDate,
                          MoStatus status, String statusLabel, String outBatchNo, BigDecimal actualQty,
-                         BigDecimal yieldPct, String createdBy, LocalDateTime createdAt) {
+                         BigDecimal yieldPct, String createdBy, LocalDateTime createdAt,
+                         String oemStageLabel, OemReportStatus oemReportStatus, String oemReportStatusLabel) {
     }
 
     public record MoDetail(MoView mo, List<RequirementView> requirements) {
@@ -125,7 +134,21 @@ public class ProductionService {
         Map<Long, String> outNos = batches.findAllById(list.stream().map(MfgOrder::getOutBatchId)
                         .filter(java.util.Objects::nonNull).toList()).stream()
                 .collect(Collectors.toMap(Batch::getId, Batch::getBatchNo));
-        return list.stream().map(m -> toView(m, im, pm, outNos)).toList();
+        // 受托厂门户回传的最新进度和申报状态，列表上直接显示
+        List<Long> ids = list.stream().map(MfgOrder::getId).toList();
+        Map<Long, String> stages = new java.util.HashMap<>();
+        Map<Long, OemReportStatus> reportStates = new java.util.HashMap<>();
+        if (!ids.isEmpty()) {
+            for (OemProgress p : oemProgress.findByMoIdInOrderByIdAsc(ids)) {
+                if (p.getStage() != OemStage.NOTE) {
+                    stages.put(p.getMoId(), p.getStage().getLabel());
+                }
+            }
+            for (OemReport r : oemReports.findByMoIdInOrderByIdAsc(ids)) {
+                reportStates.put(r.getMoId(), r.getStatus());
+            }
+        }
+        return list.stream().map(m -> toView(m, im, pm, outNos, stages.get(m.getId()), reportStates.get(m.getId()))).toList();
     }
 
     /** 生产单详情。已计划的单据给出 FEFO 发料预览；已发料的给出实际发料批次。 */
@@ -343,6 +366,12 @@ public class ProductionService {
         mo.setActualQty(req.actualQty());
         mo.setCompletedAt(time.now());
         orders.save(mo);
+        oemReports.findFirstByMoIdAndStatus(mo.getId(), OemReportStatus.SUBMITTED).ifPresent(r -> {
+            r.setStatus(OemReportStatus.ACCEPTED);
+            r.setReviewedBy(currentUser.usernameOrSystem());
+            r.setReviewedAt(time.now());
+            oemReports.save(r);
+        });
         audit.log("完工入库", batchNo, mo.getMoNo() + "，产量 " + plain(req.actualQty()) + "（计划 " + plain(mo.getPlannedQty())
                 + "），入 " + wh.getName(), outOfRange ? "物料平衡说明：" + req.balanceNote().trim() : null);
         return toView(mo, lookup.itemMap(), lookup.partnerMap(), Map.of(out.getId(), batchNo));
@@ -370,6 +399,11 @@ public class ProductionService {
     }
 
     private MoView toView(MfgOrder m, Map<Long, Item> im, Map<Long, Partner> pm, Map<Long, String> outNos) {
+        return toView(m, im, pm, outNos, null, null);
+    }
+
+    private MoView toView(MfgOrder m, Map<Long, Item> im, Map<Long, Partner> pm, Map<Long, String> outNos,
+                          String oemStage, OemReportStatus oemReport) {
         Item fg = im.get(m.getFgItemId());
         Partner f = pm.get(m.getFactoryId());
         BigDecimal yieldPct = m.getActualQty() == null ? null
@@ -378,7 +412,7 @@ public class ProductionService {
                 f == null ? null : f.getName(), m.getFgItemId(), fg.getCode(), fg.getName(), m.getPlannedQty(),
                 m.getPlannedDate(), m.getStatus(), m.getStatus().getLabel(),
                 m.getOutBatchId() == null ? null : outNos.get(m.getOutBatchId()), m.getActualQty(), yieldPct,
-                m.getCreatedBy(), m.getCreatedAt());
+                m.getCreatedBy(), m.getCreatedAt(), oemStage, oemReport, oemReport == null ? null : oemReport.getLabel());
     }
 
     private static String plain(BigDecimal v) {

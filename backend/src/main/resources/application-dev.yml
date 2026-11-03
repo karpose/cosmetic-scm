@@ -8,3 +8,7 @@ spring:
 
 scm:
   demo-data: true
+  security:
+    force-password-change: false   # 本地演示不强制改密
+  integration:
+    api-key: dev-integration-key   # 仅本地开发用

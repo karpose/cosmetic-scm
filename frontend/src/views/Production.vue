@@ -28,6 +28,15 @@
         <el-table-column label="计划数量" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.plannedQty) }}</span></template></el-table-column>
         <el-table-column label="计划日期" width="110"><template #default="{ row }"><span class="mono">{{ row.plannedDate }}</span></template></el-table-column>
         <el-table-column label="状态" width="90"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /></template></el-table-column>
+        <el-table-column label="受托厂协同" width="130">
+          <template #default="{ row }">
+            <template v-if="row.moType === 'OEM'">
+              <div class="small">{{ row.oemStageLabel || '未接单' }}</div>
+              <StatusTag v-if="row.oemReportStatus" :status="row.oemReportStatus" :label="row.oemReportStatusLabel" />
+            </template>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="产出批次" min-width="170">
           <template #default="{ row }">
             <BatchNo :no="row.outBatchNo" />
@@ -104,6 +113,31 @@
             </template>
           </el-table-column>
         </el-table>
+        <template v-if="detail.data.mo.moType === 'OEM' && detail.trail">
+          <h4 class="sec">受托厂门户回传</h4>
+          <el-timeline v-if="detail.trail.progress.length" class="tl">
+            <el-timeline-item v-for="p in detail.trail.progress" :key="p.id" :timestamp="`${fmtTime(p.createdAt)} · ${p.createdBy}`" placement="top">
+              <b>{{ p.stageLabel }}</b><span v-if="p.promiseDate" class="muted small"> · 承诺交期 {{ p.promiseDate }}</span>
+              <div v-if="p.note" class="small">{{ p.note }}</div>
+            </el-timeline-item>
+          </el-timeline>
+          <p v-else class="muted small">受托厂还没有在门户里回传进度。</p>
+          <div v-for="r in detail.trail.reports" :key="r.id" class="report glass">
+            <div class="report-h">
+              <b>完工申报</b> <StatusTag :status="r.status" :label="r.statusLabel" />
+              <span class="muted small">{{ r.submittedBy }} · {{ fmtTime(r.submittedAt) }}</span>
+            </div>
+            <div class="small">产量 <b class="mono">{{ fmtQty(r.actualQty) }}</b> · 生产日期 {{ r.mfgDate }} · 受托厂批号 <span class="mono">{{ r.extBatchNo }}</span></div>
+            <div class="small">出厂检验报告 <span class="mono">{{ r.releaseReportNo }}</span> · 放行人 {{ r.releasedBy }}</div>
+            <div v-for="m in r.materials" :key="m.itemId" class="small muted">代采 {{ m.itemName }}：批号 <span class="mono">{{ m.extBatchNo }}</span> · {{ fmtQty(m.qty) }} {{ m.unit }}</div>
+            <div v-if="r.balanceNote" class="small">物料平衡说明：{{ r.balanceNote }}</div>
+            <div v-if="r.reviewNote" class="small" style="color: var(--el-color-danger)">退回原因：{{ r.reviewNote }}（{{ r.reviewedBy }}）</div>
+            <div v-if="r.status === 'SUBMITTED' && canReview" class="toolbar" style="margin-top:6px">
+              <el-button size="small" type="danger" plain @click="returnReport">退回申报</el-button>
+              <span class="muted small">确认无误请点列表里的“完工入库”，会自动带出申报数据。</span>
+            </div>
+          </div>
+        </template>
         <div v-if="detail.mode === 'issue' && detail.data.mo.status === 'PLANNED'" class="toolbar" style="margin-top:16px;justify-content:flex-end">
           <el-alert v-if="shortage" type="error" :closable="false" title="有物料可用库存不足，请先收货并完成检验放行。" />
           <el-button type="primary" :disabled="shortage" :loading="detail.saving" @click="submitIssue">确认发料</el-button>
@@ -113,6 +147,8 @@
 
     <!-- 完工入库 -->
     <el-dialog v-model="done.visible" :title="`完工入库：${done.mo?.moNo || ''}`" width="720px">
+      <el-alert v-if="done.report" type="success" :closable="false" show-icon style="margin-bottom:14px"
+                :title="`已按受托厂 ${fmtTime(done.report.submittedAt)} 的申报预填：出厂检验报告 ${done.report.releaseReportNo}，放行人 ${done.report.releasedBy}。请核对后入库。`" />
       <el-form label-position="top" @submit.prevent>
         <div class="form-grid">
           <el-form-item :label="`实际产量（计划 ${fmtQty(done.mo?.plannedQty)}）`"><el-input-number id="cp-qty" v-model="done.actualQty" :min="1" :precision="0" :controls="false" style="width:100%" /></el-form-item>
@@ -149,7 +185,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
@@ -158,7 +194,7 @@ import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
-import { fmtQty, today } from '../utils/format'
+import { fmtQty, fmtTime, today } from '../utils/format'
 
 const auth = useAuth()
 const rd = useRefData()
@@ -174,11 +210,12 @@ const t = usePaged(orders, {
 })
 const canCreate = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
 const canOperate = computed(() => auth.hasAny('ADMIN', 'PRODUCTION', 'WAREHOUSE'))
+const canReview = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
 
 const create = reactive({ visible: false, saving: false, factoryId: null, fgItemId: null, plannedQty: null, plannedDate: today() })
-const detail = reactive({ visible: false, saving: false, mode: 'view', data: null })
+const detail = reactive({ visible: false, saving: false, mode: 'view', data: null, trail: null })
 const done = reactive({
-  visible: false, saving: false, mo: null, actualQty: null, mfgDate: today(), extBatchNo: '',
+  visible: false, saving: false, mo: null, report: null, actualQty: null, mfgDate: today(), extBatchNo: '',
   warehouseId: null, oemReleased: false, balanceNote: '', ext: []
 })
 
@@ -223,8 +260,25 @@ async function submitCreate() {
 }
 
 async function openDetail(row, mode = 'view') {
-  Object.assign(detail, { visible: true, mode, data: null })
-  detail.data = await http.get(`/mfg-orders/${row.id}`)
+  Object.assign(detail, { visible: true, mode, data: null, trail: null })
+  const [d, trail] = await Promise.all([http.get(`/mfg-orders/${row.id}`), row.moType === 'OEM' ? http.get(`/mfg-orders/${row.id}/oem`) : null])
+  detail.data = d
+  detail.trail = trail
+}
+
+async function returnReport() {
+  let note
+  try {
+    note = (await ElMessageBox.prompt('写明退回原因，受托厂会在门户里看到并修改后重报。', '退回受托厂申报', {
+      inputPlaceholder: '如：出厂检验报告编号与附件不符', confirmButtonText: '退回申报', cancelButtonText: '取消',
+      inputValidator: (v) => !!v?.trim() || '请写明退回原因'
+    })).value
+  } catch {
+    return
+  }
+  detail.trail = await http.post(`/mfg-orders/${detail.data.mo.id}/oem/return`, { note })
+  ElMessage.success('已退回，等待受托厂重新申报')
+  load()
 }
 
 async function submitIssue() {
@@ -240,13 +294,18 @@ async function submitIssue() {
 }
 
 async function openComplete(row) {
-  const d = await http.get(`/mfg-orders/${row.id}`)
+  const [d, trail] = await Promise.all([http.get(`/mfg-orders/${row.id}`), row.moType === 'OEM' ? http.get(`/mfg-orders/${row.id}/oem`) : null])
   const own = rd.s.warehouses.find((w) => w.kind === 'OWN')
+  // 受托厂已在门户申报的，用申报数据预填，品牌方核对即可
+  const rep = trail?.reports.find((r) => r.status === 'SUBMITTED') || null
+  const extOf = (itemId) => rep?.materials.find((m) => m.itemId === itemId)
   Object.assign(done, {
-    visible: true, mo: d.mo, actualQty: Number(d.mo.plannedQty), mfgDate: today(), extBatchNo: '',
-    warehouseId: own?.id || null, oemReleased: false, balanceNote: '',
+    visible: true, mo: d.mo, report: rep,
+    actualQty: Number(rep?.actualQty ?? d.mo.plannedQty), mfgDate: rep?.mfgDate || today(), extBatchNo: rep?.extBatchNo || '',
+    warehouseId: own?.id || null, oemReleased: !!rep, balanceNote: rep?.balanceNote || '',
     ext: d.requirements.filter((r) => r.supplyMode === 'OEM').map((r) => ({
-      itemId: r.itemId, itemName: r.itemName, unit: r.unit, requiredQty: r.requiredQty, extBatchNo: '', qty: Number(r.requiredQty)
+      itemId: r.itemId, itemName: r.itemName, unit: r.unit, requiredQty: r.requiredQty,
+      extBatchNo: extOf(r.itemId)?.extBatchNo || '', qty: Number(extOf(r.itemId)?.qty ?? r.requiredQty)
     }))
   })
 }
@@ -272,3 +331,10 @@ async function submitComplete() {
 
 onMounted(() => Promise.all([load(), rd.load()]))
 </script>
+
+<style scoped>
+.sec { margin: 20px 0 10px; font-size: 14px; }
+.tl { padding-left: 4px; }
+.report { padding: 12px 14px; margin-top: 10px; border-radius: 14px; display: grid; gap: 4px; }
+.report-h { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+</style>

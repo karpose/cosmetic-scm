@@ -10,7 +10,11 @@ public enum Role {
     QA("质量检验"),
     QSO("质量安全负责人"),
     SALES("销售"),
-    VIEWER("只读");
+    VIEWER("只读"),
+    /** 外部账号：受托生产企业，只能用代工厂门户，只看本厂的委托单 */
+    OEM_PORTAL("代工厂门户"),
+    /** 外部账号：经销商，只能用经销商门户，只看本单位的订单和召回通知 */
+    DEALER("经销商门户");
 
     private final String label;
 
@@ -20,5 +24,9 @@ public enum Role {
 
     public String getLabel() {
         return label;
+    }
+
+    public boolean isPortal() {
+        return this == OEM_PORTAL || this == DEALER;
     }
 }

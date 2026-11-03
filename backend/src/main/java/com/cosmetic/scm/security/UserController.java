@@ -46,4 +46,9 @@ public class UserController {
     public void resetPassword(@PathVariable Long id, @Valid @RequestBody PasswordReq req) {
         userService.resetPassword(id, req);
     }
+
+    @PostMapping("/{id}/unlock")
+    public UserView unlock(@PathVariable Long id) {
+        return userService.unlock(id);
+    }
 }

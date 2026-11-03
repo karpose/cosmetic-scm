@@ -10,3 +10,7 @@ spring:
 
 scm:
   demo-data: true
+  security:
+    force-password-change: false
+  integration:
+    api-key: test-integration-key

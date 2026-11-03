@@ -92,7 +92,7 @@ class MainLineIntegrationTest {
         DashboardService.Summary s = dashboard.summary();
         assertThat(s.counts().quarantine()).isEqualTo(1);
         assertThat(s.counts().pendingRelease()).isEqualTo(1);
-        assertThat(s.counts().wipOrders()).isEqualTo(1);
+        assertThat(s.counts().wipOrders()).isEqualTo(2);  // 待发料的自产面霜 + 等受托厂申报的委托单
 
         assertThat(s.counts().openComplaints()).isEqualTo(1);
         assertThat(s.counts().pendingReturns()).isEqualTo(1);

@@ -13,10 +13,13 @@ import com.cosmetic.scm.audit.AuditService;
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.complaint.ComplaintService;
 import com.cosmetic.scm.complaint.ComplaintService.ComplaintView;
+import com.cosmetic.scm.dealer.DealerService;
 import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.MoStatus;
+import com.cosmetic.scm.domain.OemReportStatus;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.PoStatus;
+import com.cosmetic.scm.integration.IntegrationService;
 import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.inventory.InventoryService;
 import com.cosmetic.scm.inventory.InventoryService.BatchView;
@@ -24,6 +27,8 @@ import com.cosmetic.scm.master.Item;
 import com.cosmetic.scm.master.MasterLookup;
 import com.cosmetic.scm.master.MasterService;
 import com.cosmetic.scm.master.MasterDtos.PartnerView;
+import com.cosmetic.scm.oemportal.OemReport;
+import com.cosmetic.scm.oemportal.OemReportRepository;
 import com.cosmetic.scm.production.MfgOrder;
 import com.cosmetic.scm.production.MfgOrderRepository;
 import com.cosmetic.scm.purchase.PurchaseOrderRepository;
@@ -53,6 +58,9 @@ public class DashboardService {
     private final ComplaintService complaints;
     private final RecallService recalls;
     private final ReturnService returns;
+    private final OemReportRepository oemReports;
+    private final DealerService dealers;
+    private final IntegrationService integration;
     private final AuditService audit;
     private final TimeProvider time;
 
@@ -62,7 +70,8 @@ public class DashboardService {
     }
 
     /**
-     * kind: QC / RELEASE / MO_ISSUE / MO_COMPLETE / LICENSE / NEAR_EXPIRY / RECALL / ADVERSE / COMPLAINT / RETURN；
+     * kind: QC / RELEASE / MO_ISSUE / MO_COMPLETE / LICENSE / NEAR_EXPIRY / RECALL / ADVERSE / COMPLAINT / RETURN /
+     * OEM_REPORT / DEALER_ORDER / CHANNEL_FAILED；
      * level: warn / info / bad / muted
      */
     public record Todo(String kind, String label, String level, String title, String ref, String detail, String route) {
@@ -109,6 +118,25 @@ public class DashboardService {
                 todos.add(new Todo("COMPLAINT", "投诉待处理", "muted", c.itemName(), c.complaintNo(),
                         c.categoryLabel() + " · " + c.channel(), "/quality-events"));
             }
+        }
+        Map<Long, MfgOrder> wipById = wip.stream().collect(java.util.stream.Collectors.toMap(MfgOrder::getId, m -> m));
+        for (OemReport r : oemReports.findByStatus(OemReportStatus.SUBMITTED)) {
+            MfgOrder m = wipById.get(r.getMoId());
+            if (m != null) {
+                todos.add(new Todo("OEM_REPORT", "受托厂已申报完工", "info", lookup.item(m.getFgItemId()).getName(),
+                        m.getMoNo(), "产量 " + plain(r.getActualQty()) + "，出厂报告 " + r.getReleaseReportNo() + "，待确认入库",
+                        "/production"));
+            }
+        }
+        long dealerPending = dealers.pendingCount();
+        if (dealerPending > 0) {
+            todos.add(new Todo("DEALER_ORDER", "经销商订单待审核", "warn", dealerPending + " 张经销商订货单", "—",
+                    "审核通过即按先到期先出生成出库单", "/dealer-orders"));
+        }
+        long channelFailed = integration.failedCount();
+        if (channelFailed > 0) {
+            todos.add(new Todo("CHANNEL_FAILED", "电商订单出库失败", "bad", channelFailed + " 张电商订单", "—",
+                    "查看失败原因，补货后重试", "/integration"));
         }
         if (pendingReturns > 0) {
             todos.add(new Todo("RETURN", "退货待处置", "warn", pendingReturns + " 行退货在隔离区", "—",

@@ -10,14 +10,22 @@ export const ROLE_LABELS = {
   QA: '质量检验',
   QSO: '质量安全负责人',
   SALES: '销售',
-  VIEWER: '只读'
+  VIEWER: '只读',
+  OEM_PORTAL: '代工厂门户',
+  DEALER: '经销商门户'
 }
+
+// 外部门户角色：只能用对应门户，不能和内部角色同时分配
+export const PORTAL_ROLES = { OEM_PORTAL: { home: '/portal/oem', partnerKind: 'OEM' }, DEALER: { home: '/portal/dealer', partnerKind: 'CUSTOMER' } }
+export const PASSWORD_RULE = '至少 8 位，大写字母、小写字母、数字、符号中至少三类，且不能包含账号名'
 
 export const useAuth = defineStore('auth', {
   state: () => ({ user: null, token: localStorage.getItem(TOKEN_KEY) }),
   getters: {
     loggedIn: (s) => !!s.token,
-    roles: (s) => s.user?.roles || []
+    roles: (s) => s.user?.roles || [],
+    // 门户账号的首页；内部账号为 null
+    portalHome: (s) => (s.user?.roles || []).map((r) => PORTAL_ROLES[r]?.home).find(Boolean) || null
   },
   actions: {
     hasAny(...roles) {
@@ -31,6 +39,9 @@ export const useAuth = defineStore('auth', {
     },
     async fetchMe() {
       this.user = await http.get('/auth/me', { silent: true })
+    },
+    async changePassword(oldPassword, newPassword) {
+      this.user = await http.post('/auth/password', { oldPassword, newPassword })
     },
     logout() {
       this.token = null

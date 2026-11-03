@@ -31,8 +31,11 @@ export const STATUS_TAG = {
   OPEN: 'warning', PARTIAL: 'primary', RECEIVED: 'success',
   PLANNED: 'info', ISSUED: 'primary', COMPLETED: 'success',
   CLOSED: 'info', PENDING: 'warning', RESTOCK: 'success', SCRAP: 'danger',
-  TRANSFER: 'primary', ADJUST: 'warning'
+  TRANSFER: 'primary', ADJUST: 'warning',
+  SUBMITTED: 'warning', APPROVED: 'success', CANCELLED: 'info',
+  SHIPPED: 'success', FAILED: 'danger', ACCEPTED: 'success', RETURNED: 'danger'
 }
 export const COMPLAINT_CATEGORY = { ADVERSE: '不良反应', QUALITY: '质量问题', PACKAGE: '包装 / 标签', LOGISTICS: '物流 / 破损', OTHER: '其他' }
 export const SEVERITY = { NORMAL: '一般', SERIOUS: '严重' }
 export const COMPLAINT_CHANNELS = ['客服热线', '电商平台', '经销商', '私域社群', '监管部门转办', '其他']
+export const OEM_STAGES = { CONFIRMED: '已接单', SCHEDULED: '已排产', PRODUCING: '生产中', TESTING: '检验中', NOTE: '备注' }

@@ -31,6 +31,7 @@ services:
       SCM_JWT_SECRET: ${SCM_JWT_SECRET}
       SCM_ADMIN_PASSWORD: ${SCM_ADMIN_PASSWORD}
       SCM_DEMO_DATA: ${SCM_DEMO_DATA:-false}
+      SCM_INTEGRATION_API_KEY: ${SCM_INTEGRATION_API_KEY:-}
 
   frontend:
     build: ./frontend
