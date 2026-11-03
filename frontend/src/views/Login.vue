@@ -38,7 +38,7 @@ async function submit() {
   loading.value = true
   try {
     await auth.login(form.username.trim(), form.password)
-    router.replace(route.query.redirect || '/')
+    router.replace(auth.portalHome || route.query.redirect || '/')
   } catch {
     // 错误已由 api.js 统一提示
   } finally {

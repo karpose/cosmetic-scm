@@ -20,7 +20,11 @@ const routes = [
       { path: 'quality-events', name: 'quality-events', component: () => import('./views/QualityEvents.vue'), meta: { title: '投诉与召回' } },
       { path: 'audit', name: 'audit', component: () => import('./views/Audit.vue'), meta: { title: '审计日志' } },
       { path: 'master', name: 'master', component: () => import('./views/Master.vue'), meta: { title: '主数据' } },
-      { path: 'users', name: 'users', component: () => import('./views/Users.vue'), meta: { title: '账号与权限', roles: ['ADMIN'] } }
+      { path: 'users', name: 'users', component: () => import('./views/Users.vue'), meta: { title: '账号与权限', roles: ['ADMIN'] } },
+      { path: 'dealer-orders', name: 'dealer-orders', component: () => import('./views/DealerOrders.vue'), meta: { title: '经销商订单' } },
+      { path: 'integration', name: 'integration', component: () => import('./views/Integration.vue'), meta: { title: '电商对接' } },
+      { path: 'portal/oem', name: 'portal-oem', component: () => import('./views/PortalOem.vue'), meta: { title: '代工厂门户', portal: 'OEM_PORTAL' } },
+      { path: 'portal/dealer', name: 'portal-dealer', component: () => import('./views/PortalDealer.vue'), meta: { title: '经销商门户', portal: 'DEALER' } }
     ]
   },
   { path: '/:pathMatch(.*)*', redirect: '/' }
@@ -40,6 +44,12 @@ router.beforeEach(async (to) => {
       return { name: 'login', query: { redirect: to.fullPath } }
     }
   }
+  // 门户账号只能进自己的门户；内部账号进不了门户页
+  if (auth.portalHome) {
+    if (to.meta.portal && auth.hasAny(to.meta.portal)) return true
+    return auth.portalHome
+  }
+  if (to.meta.portal) return { name: 'dashboard' }
   if (to.meta.roles && !auth.hasAny(...to.meta.roles)) return { name: 'dashboard' }
   return true
 })

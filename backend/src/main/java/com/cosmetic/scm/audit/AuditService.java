@@ -33,8 +33,9 @@ public class AuditService {
         a.setCreatedAt(time.now());
         Optional<AppUser> user = currentUser.find();
         a.setUserId(user.map(AppUser::getId).orElse(null));
-        a.setUsername(user.map(AppUser::getUsername).orElse("system"));
-        a.setDisplayName(user.map(AppUser::getDisplayName).orElse("系统"));
+        boolean integration = user.isEmpty() && currentUser.isIntegration();
+        a.setUsername(user.map(AppUser::getUsername).orElse(integration ? "integration" : "system"));
+        a.setDisplayName(user.map(AppUser::getDisplayName).orElse(integration ? "电商对接" : "系统"));
         a.setAction(action);
         a.setTarget(truncate(target, 200));
         a.setDetail(truncate(detail, 1000));

@@ -46,13 +46,19 @@
       </main>
     </div>
 
-    <el-dialog v-model="pwd.visible" title="修改密码" width="420px">
+    <el-dialog v-model="pwd.visible" :title="forced ? '请先修改密码' : '修改密码'" width="440px"
+               :show-close="!forced" :close-on-click-modal="!forced" :close-on-press-escape="!forced">
+      <el-alert v-if="forced" type="warning" :closable="false" show-icon style="margin-bottom:14px"
+                :title="auth.user.passwordChangeRequired === 'EXPIRED' ? '密码已超过有效期，修改后才能继续使用。' : '这是管理员设置的初始密码，修改后才能继续使用。'" />
       <el-form label-position="top" @submit.prevent>
-        <el-form-item label="原密码"><el-input id="pwd-old" v-model="pwd.oldPassword" type="password" show-password /></el-form-item>
-        <el-form-item label="新密码（至少 8 位）"><el-input id="pwd-new" v-model="pwd.newPassword" type="password" show-password /></el-form-item>
+        <el-form-item label="原密码"><el-input id="pwd-old" v-model="pwd.oldPassword" type="password" show-password autocomplete="current-password" /></el-form-item>
+        <el-form-item label="新密码"><el-input id="pwd-new" v-model="pwd.newPassword" type="password" show-password autocomplete="new-password" /></el-form-item>
+        <el-form-item label="再输一次新密码"><el-input id="pwd-new2" v-model="pwd.confirm" type="password" show-password autocomplete="new-password" /></el-form-item>
+        <p class="muted small" style="margin:-6px 0 0">{{ PASSWORD_RULE }}</p>
       </el-form>
       <template #footer>
-        <el-button @click="pwd.visible = false">取消</el-button>
+        <el-button v-if="forced" @click="onCommand('logout')">退出登录</el-button>
+        <el-button v-else @click="pwd.visible = false">取消</el-button>
         <el-button type="primary" :loading="pwd.saving" @click="changePassword">保存新密码</el-button>
       </template>
     </el-dialog>
@@ -60,15 +66,14 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  ArrowDown, Box, Coin, DataBoard, Document, Expand, Fold, Goods, Guide, Operation, RefreshLeft, ShoppingCart,
-  Stamp, User, Van, WarningFilled
+  ArrowDown, Box, Coin, Connection, DataBoard, Document, Expand, Fold, Goods, Guide, OfficeBuilding, Operation,
+  RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, User, Van, WarningFilled
 } from '@element-plus/icons-vue'
-import http from '../api'
-import { useAuth, ROLE_LABELS } from '../stores/auth'
+import { useAuth, PASSWORD_RULE, ROLE_LABELS } from '../stores/auth'
 
 const auth = useAuth()
 const route = useRoute()
@@ -76,6 +81,8 @@ const router = useRouter()
 const collapsed = ref(window.innerWidth < 900)
 
 const groups = computed(() => {
+  if (auth.hasAny('OEM_PORTAL')) return [{ title: '协同', items: [{ path: '/portal/oem', title: '委托生产协同', icon: OfficeBuilding }] }]
+  if (auth.hasAny('DEALER')) return [{ title: '订货', items: [{ path: '/portal/dealer', title: '订货与召回', icon: Shop }] }]
   const list = [
     { title: '概况', items: [{ path: '/', title: '总览', icon: DataBoard }] },
     {
@@ -87,7 +94,9 @@ const groups = computed(() => {
         { path: '/stock', title: '库存', icon: Box },
         { path: '/inventory-ops', title: '库存作业', icon: Operation },
         { path: '/sales', title: '销售出库', icon: Van },
-        { path: '/returns', title: '销售退货', icon: RefreshLeft }
+        { path: '/returns', title: '销售退货', icon: RefreshLeft },
+        { path: '/dealer-orders', title: '经销商订单', icon: Tickets },
+        { path: '/integration', title: '电商对接', icon: Connection }
       ]
     },
     {
@@ -108,23 +117,30 @@ const activePath = computed(() => route.path)
 const roleText = computed(() => auth.roles.map((r) => ROLE_LABELS[r] || r).join('、'))
 const initial = computed(() => (auth.user?.displayName || '?').slice(0, 1))
 
-const pwd = reactive({ visible: false, oldPassword: '', newPassword: '', saving: false })
+const pwd = reactive({ visible: false, oldPassword: '', newPassword: '', confirm: '', saving: false })
+// 后端要求改密（初始密码或已过期）时，弹窗不可关闭，改完才能用
+const forced = computed(() => !!auth.user?.passwordChangeRequired)
+watch(forced, (v) => { if (v) Object.assign(pwd, { visible: true, oldPassword: '', newPassword: '', confirm: '' }) }, { immediate: true })
 
 function onCommand(cmd) {
   if (cmd === 'logout') {
     auth.logout()
     router.push({ name: 'login' })
   } else if (cmd === 'password') {
-    Object.assign(pwd, { visible: true, oldPassword: '', newPassword: '' })
+    Object.assign(pwd, { visible: true, oldPassword: '', newPassword: '', confirm: '' })
   }
 }
 
 async function changePassword() {
+  if (pwd.newPassword !== pwd.confirm) return ElMessage.warning('两次输入的新密码不一致')
+  const wasForced = forced.value
   pwd.saving = true
   try {
-    await http.post('/auth/password', { oldPassword: pwd.oldPassword, newPassword: pwd.newPassword })
+    await auth.changePassword(pwd.oldPassword, pwd.newPassword)
     ElMessage.success('密码已修改')
     pwd.visible = false
+    // 之前被拦下的页面数据重新加载
+    if (wasForced) location.reload()
   } finally {
     pwd.saving = false
   }

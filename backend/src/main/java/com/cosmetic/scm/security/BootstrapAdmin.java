@@ -36,7 +36,8 @@ public class BootstrapAdmin implements ApplicationRunner {
         if (users.count() > 0) {
             return;
         }
-        userService.newUser(username, "系统管理员", password, EnumSet.of(Role.ADMIN, Role.MASTER_DATA));
+        // 初始密码来自配置，按“管理员设定的初始密码”对待：开启强制改密时首次登录必须修改
+        userService.newUser(username, "系统管理员", password, EnumSet.of(Role.ADMIN, Role.MASTER_DATA), null, true);
         log.warn("已创建初始管理员账号 {}，请登录后立即修改密码", username);
     }
 }

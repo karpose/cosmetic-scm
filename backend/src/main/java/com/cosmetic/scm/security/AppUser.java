@@ -43,6 +43,17 @@ public class AppUser {
 
     private LocalDateTime createdAt;
 
+    /** 门户账号所属单位（受托厂或经销商）；内部账号为空 */
+    private Long partnerId;
+
+    private int failedLogins;
+
+    private LocalDateTime lockedUntil;
+
+    private LocalDateTime passwordChangedAt;
+
+    private boolean mustChangePassword;
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "app_user_role", joinColumns = @JoinColumn(name = "user_id"))
     @Column(name = "role_name")
@@ -51,5 +62,9 @@ public class AppUser {
 
     public boolean hasRole(Role role) {
         return roles.contains(role);
+    }
+
+    public boolean isPortal() {
+        return roles.stream().anyMatch(Role::isPortal);
     }
 }

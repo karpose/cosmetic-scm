@@ -11,7 +11,9 @@ import lombok.RequiredArgsConstructor;
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.complaint.ComplaintService;
 import com.cosmetic.scm.complaint.ComplaintService.ComplaintReq;
+import com.cosmetic.scm.dealer.DealerService;
 import com.cosmetic.scm.domain.ComplaintCategory;
+import com.cosmetic.scm.domain.OemStage;
 import com.cosmetic.scm.domain.Decision;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.PartnerKind;
@@ -19,6 +21,7 @@ import com.cosmetic.scm.domain.Role;
 import com.cosmetic.scm.domain.Severity;
 import com.cosmetic.scm.domain.SupplyMode;
 import com.cosmetic.scm.domain.WarehouseKind;
+import com.cosmetic.scm.integration.IntegrationService;
 import com.cosmetic.scm.inventory.InventoryService;
 import com.cosmetic.scm.master.Item;
 import com.cosmetic.scm.master.ItemRepository;
@@ -30,6 +33,7 @@ import com.cosmetic.scm.master.MasterDtos.PartnerView;
 import com.cosmetic.scm.master.MasterDtos.WarehouseReq;
 import com.cosmetic.scm.master.MasterDtos.WarehouseView;
 import com.cosmetic.scm.master.MasterService;
+import com.cosmetic.scm.oemportal.OemPortalService;
 import com.cosmetic.scm.production.ProductionService;
 import com.cosmetic.scm.production.ProductionService.CompleteReq;
 import com.cosmetic.scm.production.ProductionService.CreateMoReq;
@@ -89,6 +93,9 @@ public class DemoDataLoader implements ApplicationRunner {
     private final SalesService sales;
     private final ReturnService returns;
     private final ComplaintService complaints;
+    private final OemPortalService oemPortal;
+    private final DealerService dealers;
+    private final IntegrationService integration;
     private final InventoryService inventory;
     private final TimeProvider time;
 
@@ -99,7 +106,8 @@ public class DemoDataLoader implements ApplicationRunner {
         }
         try {
             load();
-            log.warn("已写入示例数据。示例账号密码均为 {}：purchase1 / prod1 / qa1 / qso1 / sales1 / viewer1", DEMO_PASSWORD);
+            log.warn("已写入示例数据。示例账号密码均为 {}：purchase1 / prod1 / qa1 / qso1 / sales1 / viewer1；门户：oem1（禾川）/ dealer1（华东经销商）",
+                    DEMO_PASSWORD);
         } catch (RuntimeException e) {
             log.error("示例数据写入中断，系统仍可正常使用：{}", e.getMessage(), e);
         } finally {
@@ -222,6 +230,30 @@ public class DemoDataLoader implements ApplicationRunner {
         PoLineView niaLine = po4.lines().get(0);
         as("purchase1", () -> purchase.receive(po4.id(), new ReceiveReq(List.of(new ReceiveLineReq(niaLine.id(),
                 new BigDecimal("20"), "HC-NA-NEW-03", t.minusDays(18), null, main.id())))));
+
+        // ---------- 门户账号：禾川的代工厂门户、华东经销商的订货门户 ----------
+        PartnerView hd = as("admin", () -> master.listPartners().stream().filter(p -> "CUS-HD".equals(p.code())).findFirst().orElseThrow());
+        if (!users.existsByUsername("oem1")) {
+            userService.newUser("oem1", "禾川生物 · 生产计划（示例）", DEMO_PASSWORD, EnumSet.of(Role.OEM_PORTAL), a3.id(), false);
+        }
+        if (!users.existsByUsername("dealer1")) {
+            userService.newUser("dealer1", "华东经销商 · 采购（示例）", DEMO_PASSWORD, EnumSet.of(Role.DEALER), hd.id(), false);
+        }
+
+        // ---------- 第三张委托单：已发料，受托厂已在门户接单排产，等它申报完工 ----------
+        MoView mo4 = as("prod1", () -> production.create(new CreateMoReq(a3.id(), serum.getId(), new BigDecimal("3000"), t.plusDays(10))));
+        as("prod1", () -> production.issue(mo4.id()));
+        as("oem1", () -> oemPortal.addProgress(mo4.id(), new OemPortalService.ProgressReq(OemStage.CONFIRMED, t.plusDays(9), "已收到品牌方发料（示例）")));
+        as("oem1", () -> oemPortal.addProgress(mo4.id(), new OemPortalService.ProgressReq(OemStage.SCHEDULED, null, "排在 3 号灌装线（示例）")));
+
+        // ---------- 经销商在门户提交的一张订货单，等销售审核 ----------
+        as("dealer1", () -> dealers.submit(new DealerService.OrderReq(t.plusDays(5), "补货（示例）",
+                List.of(new DealerService.LineReq(serum.getId(), new BigDecimal("200"))))));
+
+        // ---------- 天猫 ERP 推来一单面霜，此时还没有面霜库存：出库失败，面霜放行后可在“电商对接”里重试 ----------
+        as("admin", () -> integration.receive(new IntegrationService.PushReq("TMALL", "CUS-TM", null, List.of(
+                new IntegrationService.PushOrder("TM-DEMO-0001", t.atTime(10, 0),
+                        List.of(new IntegrationService.PushLine("FG-CRM-002", new BigDecimal("2"))))))));
 
         // ---------- 自产面霜：已计划，待发料 ----------
         as("prod1", () -> production.create(new CreateMoReq(own.id(), cream.getId(), new BigDecimal("8000"), t.plusDays(7))));

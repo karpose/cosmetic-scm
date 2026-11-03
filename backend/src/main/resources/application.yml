@@ -31,6 +31,15 @@ scm:
     username: ${SCM_ADMIN_USERNAME:admin}
     password: ${SCM_ADMIN_PASSWORD:Admin@123456}
   demo-data: false
+  security:
+    max-failed-logins: 5         # 连续输错几次锁定
+    lock-minutes: 15             # 锁定多久
+    password-max-age-days: 90    # 密码有效期，0 表示不限
+    # 管理员新建 / 重置的账号首次登录必须改密，密码过期后必须改密
+    force-password-change: ${SCM_FORCE_PASSWORD_CHANGE:true}
+  integration:
+    # 电商 ERP 调用 /api/integration/** 时在请求头 X-Api-Key 里带上；留空则关闭对接接口
+    api-key: ${SCM_INTEGRATION_API_KEY:}
 
 logging:
   level:
