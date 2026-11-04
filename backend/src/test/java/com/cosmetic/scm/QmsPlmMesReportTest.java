@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.io.ByteArrayInputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +37,8 @@ import com.cosmetic.scm.domain.FormulaStatus;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.MoStatus;
 import com.cosmetic.scm.domain.MoType;
+import com.cosmetic.scm.domain.OemStage;
+import com.cosmetic.scm.domain.PoStatus;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.RetainStatus;
 import com.cosmetic.scm.domain.StepStatus;
@@ -52,14 +55,20 @@ import com.cosmetic.scm.master.MasterService;
 import com.cosmetic.scm.master.Partner;
 import com.cosmetic.scm.master.PartnerRepository;
 import com.cosmetic.scm.mes.MesService;
+import com.cosmetic.scm.inventory.InventoryService;
 import com.cosmetic.scm.notify.NotificationLogRepository;
 import com.cosmetic.scm.notify.NotifyService;
+import com.cosmetic.scm.oemportal.OemProgress;
+import com.cosmetic.scm.oemportal.OemProgressRepository;
+import com.cosmetic.scm.planning.PlanningService;
 import com.cosmetic.scm.plm.FilingService;
 import com.cosmetic.scm.plm.FormulaService;
 import com.cosmetic.scm.plm.FormulaVersionRepository;
+import com.cosmetic.scm.production.MfgIssueRepository;
 import com.cosmetic.scm.production.MfgOrder;
 import com.cosmetic.scm.production.MfgOrderRepository;
 import com.cosmetic.scm.production.ProductionService;
+import com.cosmetic.scm.purchase.PurchaseService;
 import com.cosmetic.scm.qms.DeviationService;
 import com.cosmetic.scm.qms.RetainSample;
 import com.cosmetic.scm.qms.RetainSampleRepository;
@@ -67,6 +76,10 @@ import com.cosmetic.scm.qms.RetainService;
 import com.cosmetic.scm.qms.SupplierAuditService;
 import com.cosmetic.scm.quality.QualityService;
 import com.cosmetic.scm.report.ReportService;
+import com.cosmetic.scm.sales.SalesOrder;
+import com.cosmetic.scm.sales.SalesOrderRepository;
+import com.cosmetic.scm.sales.SoLine;
+import com.cosmetic.scm.sales.SoLineRepository;
 import com.cosmetic.scm.security.AppUser;
 import com.cosmetic.scm.security.UserRepository;
 
@@ -114,6 +127,13 @@ class QmsPlmMesReportTest {
     @Autowired NotifyService notify;
     @Autowired NotificationLogRepository notifyLogs;
     @Autowired TimeProvider time;
+    @Autowired PurchaseService purchases;
+    @Autowired MfgIssueRepository issues;
+    @Autowired InventoryService inventory;
+    @Autowired OemProgressRepository progress;
+    @Autowired PlanningService planning;
+    @Autowired SalesOrderRepository salesOrders;
+    @Autowired SoLineRepository soLines;
     @MockBean JavaMailSender mail;
 
     private AppUser user(String name) {
@@ -471,13 +491,156 @@ class QmsPlmMesReportTest {
     @WithMockUser(username = "qa1", roles = "QA")
     void everyReportExportsAndIsAudited() throws Exception {
         for (String key : List.of("stock", "batches", "production", "shipments", "complaints", "deviations", "capas", "supplier-audits", "retains", "audit")) {
-            ReportService.Export e = reports.export(key);
+            ReportService.Export e = reports.export(key, null, null);
             assertThat(e.fileName()).endsWith(".xlsx");
             assertThat(unzip(e.content()).get("xl/worksheets/sheet1.xml")).contains("<row r=\"1\">");
         }
-        assertThat(unzip(reports.export("stock").content()).get("xl/worksheets/sheet1.xml")).contains("烟酰胺精华液");
-        assertThat(unzip(reports.export("audit").content()).get("xl/worksheets/sheet1.xml")).contains("导出报表");
-        assertThatThrownBy(() -> reports.export("nope")).hasMessageContaining("不存在");
+        assertThat(unzip(reports.export("stock", null, null).content()).get("xl/worksheets/sheet1.xml")).contains("烟酰胺精华液");
+        assertThat(unzip(reports.export("audit", null, null).content()).get("xl/worksheets/sheet1.xml")).contains("导出报表");
+        assertThatThrownBy(() -> reports.export("nope", null, null)).hasMessageContaining("不存在");
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "qa1", roles = "QA")
+    void exportsContainAllRowsNotJustTheLatestPage() throws Exception {
+        // 页面列表只取最近 300 张；导出必须是全部
+        Item fg = item("FG-SER-001");
+        Partner factory = partners.findAll().stream().filter(p -> p.getKind() == PartnerKind.OEM).findFirst().orElseThrow();
+        for (int i = 0; i < 305; i++) {
+            MfgOrder m = new MfgOrder();
+            m.setMoNo("MO-BULK-" + i);
+            m.setMoType(MoType.OEM);
+            m.setFactoryId(factory.getId());
+            m.setFgItemId(fg.getId());
+            m.setPlannedQty(BigDecimal.TEN);
+            m.setStatus(MoStatus.PLANNED);
+            m.setCreatedAt(time.now());
+            orders.save(m);
+        }
+        assertThat(production.list()).hasSize(300);
+        String sheet = unzip(reports.export("production", null, null).content()).get("xl/worksheets/sheet1.xml");
+        assertThat(sheet).contains("MO-BULK-0<").contains("MO-BULK-304<");
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "qa1", roles = "QA")
+    void auditExportHonoursDateRange() throws Exception {
+        LocalDate today = time.today();
+        String inRange = unzip(reports.export("audit", today, today).content()).get("xl/worksheets/sheet1.xml");
+        assertThat(inRange).contains("<row r=\"2\">");
+        String past = unzip(reports.export("audit", today.minusYears(5), today.minusYears(4)).content()).get("xl/worksheets/sheet1.xml");
+        assertThat(past).doesNotContain("<row r=\"2\">");
+    }
+
+    // ---------- 取消 ----------
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "prod1", roles = "PRODUCTION")
+    void plannedOrderCancelsAndDropsOutOfWorkInProgress() {
+        MfgOrder mo = orders.findByStatusIn(List.of(MoStatus.PLANNED)).stream().filter(m -> m.getMoType() == MoType.OWN).findFirst().orElseThrow();
+        var view = production.cancel(mo.getId(), new ProductionService.CancelReq("计划调整"));
+        assertThat(view.status()).isEqualTo(MoStatus.CANCELLED);
+        assertThat(view.cancelReason()).isEqualTo("计划调整");
+        assertThat(orders.findByStatusIn(List.of(MoStatus.PLANNED, MoStatus.ISSUED))).noneMatch(m -> m.getId().equals(mo.getId()));
+        assertThatThrownBy(() -> production.issue(mo.getId())).hasMessageContaining("不能发料");
+        assertThatThrownBy(() -> production.cancel(mo.getId(), new ProductionService.CancelReq("再取消"))).hasMessageContaining("不能取消");
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "prod1", roles = "PRODUCTION")
+    void cancellingIssuedOrderReturnsMaterialsAndClearsTrace() {
+        MfgOrder mo = issuedOwnOrder();
+        var issuedRows = issues.findByMoId(mo.getId());
+        assertThat(issuedRows).isNotEmpty();
+        Long batchId = issuedRows.get(0).getBatchId();
+        BigDecimal qty = issuedRows.get(0).getQty();
+        BigDecimal before = inventory.onHand(batchId);
+
+        production.cancel(mo.getId(), new ProductionService.CancelReq("开错单"));
+        assertThat(inventory.onHand(batchId)).isEqualByComparingTo(before.add(qty));
+        assertThat(issues.findByMoId(mo.getId())).isEmpty();
+        assertThat(issues.findByBatchId(batchId)).noneMatch(i -> i.getMoId().equals(mo.getId()));
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "prod1", roles = "PRODUCTION")
+    void startedOrderCannotBeCancelled() {
+        MfgOrder mo = issuedOwnOrder();
+        mes.clearance(mo.getId(), BEFORE, user("prod1"));
+        assertThatThrownBy(() -> production.cancel(mo.getId(), new ProductionService.CancelReq("不想做了"))).hasMessageContaining("不能取消");
+        // 受托厂已回传生产中的，也不能取消
+        MfgOrder oem = orders.findByStatusIn(List.of(MoStatus.ISSUED)).stream().filter(m -> m.getMoType() == MoType.OEM).findFirst().orElseThrow();
+        OemProgress p = new OemProgress();
+        p.setMoId(oem.getId());
+        p.setStage(OemStage.PRODUCING);
+        p.setCreatedBy("oem1");
+        p.setCreatedAt(time.now());
+        progress.save(p);
+        assertThatThrownBy(() -> production.cancel(oem.getId(), new ProductionService.CancelReq("不想做了"))).hasMessageContaining("生产中");
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "purchase1", roles = "PURCHASE")
+    void purchaseOrderCancelOrCloseStopsReceivingAndOnOrder() {
+        Partner sup = partners.findAll().stream().filter(p -> p.getKind() == PartnerKind.SUPPLIER && p.isQualified()).findFirst().orElseThrow();
+        Item rm = item("RM-GLY-002");
+        var open = purchases.create(new PurchaseService.CreatePoReq(sup.getId(), List.of(new PurchaseService.PoLineReq(rm.getId(), BigDecimal.TEN))));
+        var cancelled = purchases.close(open.id(), new PurchaseService.CloseReq("下错了"));
+        assertThat(cancelled.status()).isEqualTo(PoStatus.CANCELLED);
+        Long wh = ownWarehouse();
+        var line = new PurchaseService.ReceiveLineReq(open.lines().get(0).id(), BigDecimal.ONE, "EXT-1", time.today(), null, wh);
+        assertThatThrownBy(() -> purchases.receive(open.id(), new PurchaseService.ReceiveReq(List.of(line)))).hasMessageContaining("不能收货");
+        assertThatThrownBy(() -> purchases.close(open.id(), new PurchaseService.CloseReq("再关"))).hasMessageContaining("不能取消");
+
+        var part = purchases.create(new PurchaseService.CreatePoReq(sup.getId(), List.of(new PurchaseService.PoLineReq(rm.getId(), BigDecimal.TEN))));
+        purchases.receive(part.id(), new PurchaseService.ReceiveReq(List.of(new PurchaseService.ReceiveLineReq(part.lines().get(0).id(), BigDecimal.ONE, "EXT-2", time.today(), null, wh))));
+        assertThat(purchases.close(part.id(), new PurchaseService.CloseReq("供应商停产")).status()).isEqualTo(PoStatus.CLOSED);
+    }
+
+    // ---------- 预测接入 ----------
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "prod1", roles = "PRODUCTION")
+    void planningCanUseSeasonalForecastInsteadOfHistoricalAverage() {
+        Item cream = item("FG-CRM-002");
+        Partner customer = partners.findAll().stream().filter(p -> p.getKind() == PartnerKind.CUSTOMER).findFirst().orElseThrow();
+        Long wh = ownWarehouse();
+        // 造 24 个月出库：每年“下个月”是旺季（1000），其它月 100
+        java.time.YearMonth thisMonth = java.time.YearMonth.from(time.today());
+        for (int back = 24; back >= 1; back--) {
+            java.time.YearMonth m = thisMonth.minusMonths(back);
+            SalesOrder so = new SalesOrder();
+            so.setSoNo("SO-H-" + back);
+            so.setCustomerId(customer.getId());
+            so.setWarehouseId(wh);
+            so.setOrderDate(m.atDay(15));
+            so.setStatus("SHIPPED");
+            so.setCreatedAt(time.now());
+            salesOrders.save(so);
+            SoLine l = new SoLine();
+            l.setSoId(so.getId());
+            l.setItemId(cream.getId());
+            l.setQty(BigDecimal.valueOf(m.getMonthValue() == thisMonth.plusMonths(1).getMonthValue() ? 1000 : 100));
+            soLines.save(l);
+        }
+        java.util.function.Function<Boolean, PlanningService.FgRow> row = use -> planning.finishedGoods(new PlanningService.PlanParams(90, 30, 15, 60, use))
+                .stream().filter(r -> r.code().equals("FG-CRM-002")).findFirst().orElseThrow();
+        PlanningService.FgRow history = row.apply(false);
+        assertThat(history.forecastMethod()).isEqualTo("季节指数");
+        assertThat(history.forecast()).hasSize(3);
+        // 下个月的预测远高于本月
+        assertThat(history.forecast().get(1).qty().compareTo(history.forecast().get(0).qty().multiply(BigDecimal.valueOf(3)))).isPositive();
+        // 打开开关后日均来自预测，和历史平均不同
+        PlanningService.FgRow fc = row.apply(true);
+        assertThat(fc.dailyDemand()).isEqualByComparingTo(fc.forecastDaily());
+        assertThat(fc.dailyDemand()).isNotEqualByComparingTo(history.dailyDemand());
     }
 
     // ---------- 提醒 ----------
@@ -502,6 +665,37 @@ class QmsPlmMesReportTest {
         NotifyService.SendResult failed = notify.sendNow();
         assertThat(failed.failed()).isEqualTo(1);
         assertThat(notifyLogs.findTop50ByOrderByIdDesc().get(0).getError()).contains("连接失败");
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "admin", roles = "ADMIN")
+    void personalMailOnlyCarriesTodosForThatRole() {
+        AppUser qso = user("qso1");
+        qso.setEmail("qso-person@test.invalid");
+        AppUser dealer = user("dealer1");
+        dealer.setEmail("dealer@test.invalid");
+        AppUser viewer = user("viewer1");
+        viewer.setEmail("viewer@test.invalid");
+        // 已在全量收件人里的不重复发
+        AppUser qa = user("qa1");
+        qa.setEmail("QA@test.invalid");
+        users.saveAll(List.of(qso, dealer, viewer, qa));
+
+        var people = notify.status().people();
+        // 门户账号不收，只读账号没有相关事项，qa 已在全量里
+        assertThat(people).extracting(NotifyService.PersonView::email).containsExactly("qso-person@test.invalid");
+        // 配方待签批只有 QSO 的事，电商出库失败不是
+        assertThat(people.get(0).itemCount()).isLessThan(notify.digest().items().size());
+
+        NotifyService.SendResult r = notify.sendNow();
+        assertThat(r.sent()).isEqualTo(2);
+        var captor = org.mockito.ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mail, org.mockito.Mockito.times(2)).send(captor.capture());
+        SimpleMailMessage personal = captor.getAllValues().stream()
+                .filter(m -> List.of(m.getTo()).contains("qso-person@test.invalid")).findFirst().orElseThrow();
+        assertThat(personal.getText()).contains("配方变更待签批").doesNotContain("电商订单出库失败");
+        assertThat(notifyLogs.findTop50ByOrderByIdDesc()).extracting(l -> l.getRecipient()).contains("qso-person@test.invalid");
     }
 
     private static final class DashboardTodoKind {

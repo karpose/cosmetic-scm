@@ -31,8 +31,9 @@ public class PlanningController {
     public List<FgRow> finishedGoods(@RequestParam(defaultValue = "90") int windowDays,
                                      @RequestParam(defaultValue = "30") int leadDays,
                                      @RequestParam(defaultValue = "15") int safetyDays,
-                                     @RequestParam(defaultValue = "60") int coverDays) {
-        return planning.finishedGoods(validParams(windowDays, leadDays, safetyDays, coverDays));
+                                     @RequestParam(defaultValue = "60") int coverDays,
+                                     @RequestParam(defaultValue = "false") boolean useForecast) {
+        return planning.finishedGoods(validParams(windowDays, leadDays, safetyDays, coverDays, useForecast));
     }
 
     @PostMapping("/materials")
@@ -40,11 +41,11 @@ public class PlanningController {
         return planning.materials(req);
     }
 
-    private static PlanParams validParams(int windowDays, int leadDays, int safetyDays, int coverDays) {
+    private static PlanParams validParams(int windowDays, int leadDays, int safetyDays, int coverDays, boolean useForecast) {
         if (windowDays < 7 || windowDays > 365 || leadDays < 0 || leadDays > 180 || safetyDays < 0 || safetyDays > 180
                 || coverDays < 0 || coverDays > 365) {
             throw new com.cosmetic.scm.common.BizException("参数超出范围：观察 7–365 天，交付周期和安全天数 0–180 天，覆盖 0–365 天");
         }
-        return new PlanParams(windowDays, leadDays, safetyDays, coverDays);
+        return new PlanParams(windowDays, leadDays, safetyDays, coverDays, useForecast);
     }
 }

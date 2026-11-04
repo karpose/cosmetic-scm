@@ -82,6 +82,12 @@ public class SupplierAuditService {
         return audits.findTop300ByOrderByIdDesc().stream().map(this::toView).toList();
     }
 
+    /** 全部审核记录，导出用。 */
+    @Transactional(readOnly = true)
+    public List<AuditView> listAll() {
+        return audits.findAllByOrderByIdDesc().stream().map(this::toView).toList();
+    }
+
     @Transactional(readOnly = true)
     public List<PartnerRow> partnerRows() {
         LocalDate today = time.today();

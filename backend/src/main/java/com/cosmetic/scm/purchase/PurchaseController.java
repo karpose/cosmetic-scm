@@ -41,6 +41,12 @@ public class PurchaseController {
         return purchase.create(req);
     }
 
+    @PostMapping("/{id}/close")
+    @PreAuthorize("hasAnyRole('ADMIN','PURCHASE')")
+    public PurchaseService.PoView close(@PathVariable Long id, @jakarta.validation.Valid @RequestBody PurchaseService.CloseReq req) {
+        return purchase.close(id, req);
+    }
+
     @PostMapping("/{id}/receipts")
     @PreAuthorize("hasAnyRole('ADMIN','PURCHASE','WAREHOUSE')")
     public Map<String, List<String>> receive(@PathVariable Long id, @Valid @RequestBody ReceiveReq req) {

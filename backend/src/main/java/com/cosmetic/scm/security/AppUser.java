@@ -39,6 +39,9 @@ public class AppUser {
 
     private String displayName;
 
+    /** 接收每日待办的邮箱，选填。 */
+    private String email;
+
     private boolean enabled = true;
 
     private LocalDateTime createdAt;

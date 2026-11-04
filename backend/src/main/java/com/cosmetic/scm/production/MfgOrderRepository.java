@@ -13,6 +13,8 @@ public interface MfgOrderRepository extends JpaRepository<MfgOrder, Long> {
 
     List<MfgOrder> findTop300ByOrderByIdDesc();
 
+    List<MfgOrder> findAllByOrderByIdDesc();
+
     Optional<MfgOrder> findByMoNo(String moNo);
 
     List<MfgOrder> findByStatusIn(Collection<MoStatus> statuses);

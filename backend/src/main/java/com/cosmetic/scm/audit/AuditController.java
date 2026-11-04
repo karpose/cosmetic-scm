@@ -18,7 +18,9 @@ public class AuditController {
 
     @GetMapping
     public List<AuditLog> list(@RequestParam(required = false) String q,
+                               @RequestParam(required = false) java.time.LocalDate from,
+                               @RequestParam(required = false) java.time.LocalDate to,
                                @RequestParam(defaultValue = "300") int limit) {
-        return auditService.list(q, limit);
+        return auditService.search(from, to, q, Math.min(limit, 1000));
     }
 }

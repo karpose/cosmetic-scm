@@ -4,7 +4,8 @@ package com.cosmetic.scm.domain;
 public enum MoStatus {
     PLANNED("已计划"),
     ISSUED("已发料"),
-    COMPLETED("已完工");
+    COMPLETED("已完工"),
+    CANCELLED("已取消");
 
     private final String label;
 

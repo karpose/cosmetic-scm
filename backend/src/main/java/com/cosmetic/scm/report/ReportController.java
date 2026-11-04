@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -21,8 +22,10 @@ public class ReportController {
     private final ReportService reports;
 
     @GetMapping("/{key}")
-    public ResponseEntity<byte[]> export(@PathVariable String key) {
-        ReportService.Export e = reports.export(key);
+    public ResponseEntity<byte[]> export(@PathVariable String key,
+                                         @RequestParam(required = false) java.time.LocalDate from,
+                                         @RequestParam(required = false) java.time.LocalDate to) {
+        ReportService.Export e = reports.export(key, from, to);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
                 .header(HttpHeaders.CONTENT_DISPOSITION,

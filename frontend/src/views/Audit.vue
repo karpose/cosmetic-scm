@@ -5,7 +5,7 @@
         <h2>审计日志</h2>
         <p>每次新增、收货、发料、签批、出库、冻结和账号变更都会记录操作人、时间和原因。日志只增不改，系统不提供修改或删除入口。</p>
       </div>
-      <ExportButton report="audit" />
+      <ExportButton report="audit" :params="range" />
     </div>
     <el-card shadow="never" body-style="padding:0 0 8px">
       <template #header>
@@ -14,7 +14,8 @@
           <el-select v-model="action" placeholder="全部操作" clearable filterable>
             <el-option v-for="a in actions" :key="a" :value="a" :label="a" />
           </el-select>
-          <span class="muted small">显示最近 300 条</span>
+          <el-date-picker v-model="dates" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" style="width:260px;flex:none" @change="load" />
+          <span class="muted small">显示该范围内最近 300 条；导出不限条数，按所选日期范围</span>
         </div>
       </template>
       <LoadError v-if="error" :message="error" :loading="loading" @retry="load" />
@@ -42,6 +43,8 @@ import { usePaged } from '../utils/table'
 
 const q = ref('')
 const action = ref('')
+const dates = ref(null)
+const range = computed(() => (dates.value ? { from: dates.value[0], to: dates.value[1] } : {}))
 const rows = ref([])
 const loading = ref(false)
 const error = ref('')
@@ -52,7 +55,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    rows.value = await http.get('/audit', { params: { limit: 300, ...(q.value ? { q: q.value } : {}) } })
+    rows.value = await http.get('/audit', { params: { limit: 300, ...range.value, ...(q.value ? { q: q.value } : {}) } })
   } catch (e) {
     error.value = e.message
   } finally {

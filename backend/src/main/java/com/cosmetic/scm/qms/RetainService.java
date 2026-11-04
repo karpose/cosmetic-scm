@@ -64,6 +64,12 @@ public class RetainService {
         return toViews(samples.findTop300ByOrderByRetainUntilAsc());
     }
 
+    /** 全部留样，导出用。 */
+    @Transactional(readOnly = true)
+    public List<SampleView> listAll() {
+        return toViews(samples.findAllByOrderByRetainUntilAsc());
+    }
+
     /** 保存期已满、还没销毁的留样。 */
     @Transactional(readOnly = true)
     public List<SampleView> dueForDestruction() {

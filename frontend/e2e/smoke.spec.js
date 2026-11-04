@@ -426,6 +426,59 @@ test('报表导出 Excel 并写审计，消息提醒页只显示渠道状态', a
   await expect(page).not.toHaveURL(/notifications/)
 })
 
+test('开错的单据可以取消：生产单退回物料，采购单关闭后不能再收货', async ({ page }) => {
+  await login(page, 'prod1')
+  const before = await api(page, '/stock')
+  const created = await page.evaluate(async () => {
+    const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
+    const j = (u) => fetch(`/api${u}`, { headers: h }).then((r) => r.json())
+    const fg = (await j('/items')).find((i) => i.code === 'FG-SER-001')
+    const oem = (await j('/partners')).find((p) => p.kind === 'OEM')
+    const mo = await fetch('/api/mfg-orders', { method: 'POST', headers: h, body: JSON.stringify({ factoryId: oem.id, fgItemId: fg.id, plannedQty: 10 }) }).then((r) => r.json())
+    await fetch(`/api/mfg-orders/${mo.id}/issue`, { method: 'POST', headers: h })
+    return mo.moNo
+  })
+  const onHand = (rows) => rows.reduce((sum, s) => sum + (s.itemCode === 'PK-BTL-001' ? Number(s.qty) : 0), 0)
+  expect(onHand(await api(page, '/stock'))).toBe(onHand(before) - 10)
+
+  await page.goto('/production')
+  const row = page.locator('.el-table__row').filter({ hasText: created })
+  await row.getByRole('button', { name: '取消' }).click()
+  await page.locator('.el-message-box input').fill('E2E 开错单')
+  await page.getByRole('button', { name: '退回物料并取消' }).click()
+  await toast(page, '已取消，物料已退回')
+  await expect(row.getByText('已取消')).toBeVisible()
+  await expect(row.getByText('E2E 开错单')).toBeVisible()
+  await expect(row.getByRole('button', { name: '发料' })).toHaveCount(0)
+  expect(onHand(await api(page, '/stock'))).toBe(onHand(before))
+
+  await login(page, 'purchase1')
+  await page.goto('/purchase')
+  const po = page.locator('.el-table__row').filter({ hasText: '部分收货' }).first()
+  await po.getByRole('button', { name: '关闭' }).click()
+  await page.locator('.el-message-box input').fill('E2E 供应商停产')
+  await page.getByRole('button', { name: '关闭采购单' }).click()
+  await toast(page, '已关闭')
+  const closed = page.locator('.el-table__row').filter({ hasText: 'E2E 供应商停产' })
+  await expect(closed.getByText('已关闭')).toBeVisible()
+  await expect(closed.getByRole('button', { name: '收货' })).toHaveCount(0)
+})
+
+test('审计日志按日期查询，补货建议显示预测', async ({ page }) => {
+  await login(page, 'prod1')
+  await page.goto('/planning')
+  await expect(page.getByText('未来 3 个月预测', { exact: true })).toBeVisible()
+  await page.locator('.params .el-switch').click()
+  await expect(page.locator('.el-table__row').first()).toBeVisible()
+
+  await page.goto('/audit')
+  const inputs = page.locator('.el-date-editor input')
+  await inputs.nth(0).fill('2020-01-01')
+  await inputs.nth(1).fill('2020-01-31')
+  await inputs.nth(1).press('Enter')
+  await expect(page.getByText('没有记录')).toBeVisible()
+})
+
 test('门户账号进不了内部页面', async ({ page }) => {
   await login(page, 'dealer1')
   await expect(page).toHaveURL(/\/portal\/dealer/)

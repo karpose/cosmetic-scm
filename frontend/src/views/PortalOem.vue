@@ -10,11 +10,11 @@
 
     <el-tabs v-model="tab" class="seg">
       <el-tab-pane :label="`进行中（${active.length}）`" name="active" />
-      <el-tab-pane :label="`已完工（${finished.length}）`" name="done" />
+      <el-tab-pane :label="`已结束（${finished.length}）`" name="done" />
     </el-tabs>
 
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
-    <el-empty v-else-if="!shown.length && !loader.loading.value" :description="tab === 'active' ? '目前没有进行中的委托单' : '还没有已完工的委托单'" />
+    <el-empty v-else-if="!shown.length && !loader.loading.value" :description="tab === 'active' ? '目前没有进行中的委托单' : '还没有已结束的委托单'" />
 
     <div class="cards">
       <section v-for="o in shown" :key="o.id" class="order glass">
@@ -59,10 +59,10 @@
           </div>
         </div>
 
-        <AttachmentList portal owner-type="MFG_ORDER" :owner-id="o.id" :can-upload="o.status !== 'COMPLETED'"
+        <AttachmentList portal owner-type="MFG_ORDER" :owner-id="o.id" :can-upload="!isClosed(o)"
                         title="附件（出厂检验报告、批生产记录）" empty-text="申报时请上传出厂检验报告扫描件" />
 
-        <footer v-if="o.status !== 'COMPLETED'" class="toolbar">
+        <footer v-if="!isClosed(o)" class="toolbar">
           <el-button @click="openProgress(o)">{{ o.progress.length ? '回传进度' : '确认接单' }}</el-button>
           <el-button type="primary" :disabled="!canReport(o)" @click="openReport(o)">申报完工与出厂放行</el-button>
           <span v-if="o.status === 'PLANNED'" class="muted small">品牌方发料后才能申报完工</span>
@@ -138,8 +138,9 @@ const tab = ref('active')
 const loader = useLoader(async () => { orders.value = await http.get('/portal/oem/orders') })
 const load = () => loader.run()
 
-const active = computed(() => orders.value.filter((o) => o.status !== 'COMPLETED'))
-const finished = computed(() => orders.value.filter((o) => o.status === 'COMPLETED'))
+const isClosed = (o) => o.status === 'COMPLETED' || o.status === 'CANCELLED'
+const active = computed(() => orders.value.filter((o) => !isClosed(o)))
+const finished = computed(() => orders.value.filter(isClosed))
 const shown = computed(() => (tab.value === 'active' ? active.value : finished.value))
 const latestReport = (o) => o.reports[o.reports.length - 1] || null
 const canReport = (o) => o.status === 'ISSUED' && latestReport(o)?.status !== 'SUBMITTED'

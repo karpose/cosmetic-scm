@@ -12,6 +12,8 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, Lo
 
     List<PurchaseOrder> findTop300ByOrderByIdDesc();
 
+    List<PurchaseOrder> findAllByOrderByIdDesc();
+
     Optional<PurchaseOrder> findByPoNo(String poNo);
 
     long countByStatusIn(Collection<PoStatus> statuses);

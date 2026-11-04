@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h2>消息提醒</h2>
-        <p>每天把总览里警告和紧急的待办汇总，推送到邮件和企业微信群。渠道在服务器的环境变量里配置（见部署说明），这里只显示状态，不显示密钥。</p>
+        <p>每天把总览里警告和紧急的待办汇总推送出去：账号填了邮箱的只收自己岗位的事项，配置的收件人和企业微信群收全部。渠道在服务器的环境变量里配置（见部署说明），这里只显示状态，不显示密钥。</p>
       </div>
       <el-button type="primary" :loading="sending" :disabled="!channelReady" @click="send">立即发送一次</el-button>
     </div>
@@ -38,10 +38,21 @@
       </el-card>
 
       <el-card shadow="never" body-style="padding:0 0 8px">
+        <template #header><b>今天会收到个人邮件的人</b> <span class="muted small">在“账号与权限”里给账号填邮箱</span></template>
+        <el-table :data="s.people" empty-text="没有。账号没填邮箱、没有相关事项，或邮件服务未配置">
+          <el-table-column prop="displayName" label="姓名" min-width="160" />
+          <el-table-column prop="email" label="邮箱" min-width="200" />
+          <el-table-column label="岗位" min-width="180"><template #default="{ row }">{{ row.roles.join('、') }}</template></el-table-column>
+          <el-table-column label="事项数" width="80" align="right"><template #default="{ row }"><span class="mono">{{ row.itemCount }}</span></template></el-table-column>
+        </el-table>
+      </el-card>
+
+      <el-card shadow="never" body-style="padding:0 0 8px">
         <template #header><b>发送记录</b> <span class="muted small">最近 50 次</span></template>
         <el-table :data="s.logs" empty-text="还没有发送过">
           <el-table-column label="时间" width="170"><template #default="{ row }"><span class="mono small">{{ fmtTime(row.sentAt) }}</span></template></el-table-column>
           <el-table-column label="渠道" width="110"><template #default="{ row }">{{ row.channel === 'MAIL' ? '邮件' : '企业微信' }}</template></el-table-column>
+          <el-table-column label="收件人" min-width="170"><template #default="{ row }">{{ row.recipient || '—' }}</template></el-table-column>
           <el-table-column label="结果" width="90"><template #default="{ row }"><el-tag :type="row.success ? 'success' : 'danger'" size="small" disable-transitions>{{ row.success ? '成功' : '失败' }}</el-tag></template></el-table-column>
           <el-table-column label="事项数" width="80" align="right"><template #default="{ row }"><span class="mono">{{ row.itemCount }}</span></template></el-table-column>
           <el-table-column label="触发" width="110"><template #default="{ row }">{{ row.triggered === 'schedule' ? '定时' : row.triggered }}</template></el-table-column>

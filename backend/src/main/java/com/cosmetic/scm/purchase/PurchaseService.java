@@ -75,6 +75,9 @@ public class PurchaseService {
     public record ReceiveReq(@NotEmpty(message = "没有收货行") @Valid List<ReceiveLineReq> lines) {
     }
 
+    public record CloseReq(@NotBlank(message = "请填写原因") @Size(max = 300) String reason) {
+    }
+
     public record PoLineView(Long id, int lineNo, Long itemId, String itemCode, String itemName, String itemType,
                              String unit, Integer shelfMonths, BigDecimal qty, BigDecimal receivedQty,
                              BigDecimal remaining) {
@@ -82,12 +85,21 @@ public class PurchaseService {
 
     public record PoView(Long id, String poNo, Long supplierId, String supplierName, LocalDate orderDate,
                          PoStatus status, String statusLabel, String createdBy, LocalDateTime createdAt,
-                         List<PoLineView> lines) {
+                         List<PoLineView> lines, String closeReason, String closedBy, LocalDateTime closedAt) {
     }
 
     @Transactional(readOnly = true)
     public List<PoView> list() {
-        List<PurchaseOrder> list = orders.findTop300ByOrderByIdDesc();
+        return views(orders.findTop300ByOrderByIdDesc());
+    }
+
+    /** 全部采购单，导出用（页面列表只取最近 300 张）。 */
+    @Transactional(readOnly = true)
+    public List<PoView> listAll() {
+        return views(orders.findAllByOrderByIdDesc());
+    }
+
+    private List<PoView> views(List<PurchaseOrder> list) {
         Map<Long, List<PoLine>> byPo = list.isEmpty() ? Map.of()
                 : lines.findByPoIdIn(list.stream().map(PurchaseOrder::getId).toList()).stream()
                 .collect(Collectors.groupingBy(PoLine::getPoId));
@@ -154,12 +166,29 @@ public class PurchaseService {
         return get(po.getId());
     }
 
+    /** 结束采购单：没收过货的取消，收过一部分的关闭（余量不再收，也不再算在途）。 */
+    @Transactional
+    public PoView close(Long poId, CloseReq req) {
+        PurchaseOrder po = orders.findById(poId).orElseThrow(() -> BizException.notFound("采购单"));
+        if (po.getStatus() != PoStatus.OPEN && po.getStatus() != PoStatus.PARTIAL) {
+            throw new BizException("采购单 " + po.getPoNo() + " 当前为" + po.getStatus().getLabel() + "，不能取消或关闭");
+        }
+        boolean partial = po.getStatus() == PoStatus.PARTIAL;
+        po.setStatus(partial ? PoStatus.CLOSED : PoStatus.CANCELLED);
+        po.setCloseReason(req.reason().trim());
+        po.setClosedBy(currentUser.usernameOrSystem());
+        po.setClosedAt(time.now());
+        orders.save(po);
+        audit.log(partial ? "关闭采购单" : "取消采购单", po.getPoNo(), lookup.partner(po.getSupplierId()).getName(), po.getCloseReason());
+        return toView(po, lines.findByPoIdOrderByLineNo(poId), lookup.itemMap(), lookup.partnerMap());
+    }
+
     /** 收货：每行生成一个待检批次并入库。返回新批号。 */
     @Transactional
     public List<String> receive(Long poId, ReceiveReq req) {
         PurchaseOrder po = orders.findById(poId).orElseThrow(() -> BizException.notFound("采购单"));
-        if (po.getStatus() == PoStatus.RECEIVED) {
-            throw new BizException("采购单 " + po.getPoNo() + " 已全部收货");
+        if (po.getStatus() != PoStatus.OPEN && po.getStatus() != PoStatus.PARTIAL) {
+            throw new BizException("采购单 " + po.getPoNo() + " 当前为" + po.getStatus().getLabel() + "，不能收货");
         }
         LocalDate today = time.today();
         Map<Long, PoLine> lineMap = lines.findByPoIdOrderByLineNo(poId).stream()
@@ -216,7 +245,7 @@ public class PurchaseService {
                             l.remaining());
                 }).toList();
         return new PoView(po.getId(), po.getPoNo(), po.getSupplierId(), s == null ? null : s.getName(),
-                po.getOrderDate(), po.getStatus(), po.getStatus().getLabel(), po.getCreatedBy(), po.getCreatedAt(), lv);
+                po.getOrderDate(), po.getStatus(), po.getStatus().getLabel(), po.getCreatedBy(), po.getCreatedAt(), lv, po.getCloseReason(), po.getClosedBy(), po.getClosedAt());
     }
 
     private static String plain(BigDecimal v) {

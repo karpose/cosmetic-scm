@@ -232,6 +232,12 @@ public class InventoryService {
                 .toList();
     }
 
+    /** 全部批次，导出用（页面列表只取最近 500 个）。 */
+    @Transactional(readOnly = true)
+    public List<BatchView> listAllBatches() {
+        return toViews(batches.findAllByOrderByIdDesc());
+    }
+
     @Transactional(readOnly = true)
     public List<BatchView> listBatches(Collection<BatchStatus> statuses, String q) {
         List<Batch> list = statuses == null || statuses.isEmpty()

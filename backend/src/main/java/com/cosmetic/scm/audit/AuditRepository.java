@@ -11,6 +11,20 @@ public interface AuditRepository extends JpaRepository<AuditLog, Long> {
 
     List<AuditLog> findAllByOrderByIdDesc(Pageable pageable);
 
+    /** 按时间范围查，q 为空串时不过滤关键字。 */
+    @Query("""
+            select a from AuditLog a
+            where a.createdAt >= :from and a.createdAt < :to
+              and (:q = ''
+               or lower(a.target) like lower(concat('%', :q, '%'))
+               or lower(a.action) like lower(concat('%', :q, '%'))
+               or lower(a.detail) like lower(concat('%', :q, '%'))
+               or lower(a.username) like lower(concat('%', :q, '%')))
+            order by a.id desc
+            """)
+    List<AuditLog> searchRange(@Param("from") java.time.LocalDateTime from, @Param("to") java.time.LocalDateTime to,
+                               @Param("q") String q, Pageable pageable);
+
     @Query("""
             select a from AuditLog a
             where lower(a.target) like lower(concat('%', :q, '%'))
