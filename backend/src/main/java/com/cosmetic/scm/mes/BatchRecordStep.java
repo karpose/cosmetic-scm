@@ -64,4 +64,8 @@ public class BatchRecordStep {
     private LocalDateTime reviewedAt;
 
     private Long deviationId;
+
+    private boolean requiresEquipment;
+
+    private Long equipmentId;
 }

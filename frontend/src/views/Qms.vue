@@ -10,6 +10,7 @@
         <el-button v-if="tab === 'deviations' && canReport" type="primary" @click="openDeviation">登记偏差</el-button>
         <el-button v-if="tab === 'capas' && isQa" type="primary" @click="openCapa(null)">新建 CAPA</el-button>
         <el-button v-if="tab === 'audits' && isQa" type="primary" @click="openAudit()">登记审核</el-button>
+        <el-button v-if="tab === 'equipment' && canEquip" type="primary" @click="openEquip">新增设备</el-button>
       </div>
     </div>
 
@@ -64,6 +65,7 @@
               </template>
             </el-table-column>
           </el-table>
+          <ListCapHint :count="deviations.length" />
           <ListPager v-model:page="dt.page.value" v-model:size="dt.size.value" :total="dt.total.value" />
         </el-card>
       </el-tab-pane>
@@ -103,6 +105,7 @@
               </template>
             </el-table-column>
           </el-table>
+          <ListCapHint :count="capas.length" />
           <ListPager v-model:page="ct.page.value" v-model:size="ct.size.value" :total="ct.total.value" />
         </el-card>
       </el-tab-pane>
@@ -173,7 +176,91 @@
           <ListPager v-model:page="rt.page.value" v-model:size="rt.size.value" :total="rt.total.value" />
         </el-card>
       </el-tab-pane>
+      <!-- ================= 设备 ================= -->
+      <el-tab-pane :label="`设备与校准（${equipDueCount} 台待校准）`" name="equipment">
+        <el-card shadow="never" body-style="padding:0 0 8px">
+          <template #header>
+            <div class="filters">
+              <el-input v-model="et.keyword.value" placeholder="搜索编号、名称、位置" clearable />
+              <span class="muted small">校准过期或停用的设备不能写进批记录。校准不合格时设备自动停用，并生成重大偏差。</span>
+            </div>
+          </template>
+          <el-table :data="et.paged.value" row-key="id" empty-text="还没有设备">
+            <el-table-column type="expand">
+              <template #default="{ row }">
+                <div class="detail">
+                  <div v-if="row.stopReason"><span class="muted">停用原因：</span>{{ row.stopReason }}</div>
+                  <div v-for="c in row.calibrations" :key="c.id">
+                    <span class="mono">{{ c.calibratedDate }}</span> <el-tag :type="c.result === 'PASS' ? 'success' : 'danger'" size="small" disable-transitions>{{ c.resultLabel }}</el-tag>
+                    <span v-if="c.certificateNo" class="mono small"> {{ c.certificateNo }}</span><span v-if="c.note" class="small"> {{ c.note }}</span> <span class="muted small">{{ c.doneBy }}</span>
+                  </div>
+                  <div v-if="!row.calibrations.length" class="muted small">还没有校准记录</div>
+                  <AttachmentList owner-type="EQUIPMENT" :owner-id="row.id" :can-upload="auth.canAttach()" title="校准证书、维修记录" />
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="编号" width="130"><template #default="{ row }"><span class="mono">{{ row.code }}</span></template></el-table-column>
+            <el-table-column label="名称" min-width="180"><template #default="{ row }">{{ row.name }}<div class="muted small">{{ row.location || '—' }}</div></template></el-table-column>
+            <el-table-column label="校准到期" width="150">
+              <template #default="{ row }">
+                <template v-if="row.needsCalibration"><span class="mono" :class="{ bad: row.dueState === 'OVERDUE', warn: row.dueState === 'DUE' }">{{ row.nextDue || '没有记录' }}</span>
+                  <div v-if="row.dueState === 'OVERDUE'" class="bad small">已过期</div><div v-else-if="row.dueState === 'DUE'" class="warn small">{{ row.dueDaysLeft }} 天后到期</div>
+                  <div v-else class="muted small">周期 {{ row.cycleMonths }} 个月</div>
+                </template>
+                <span v-else class="muted">不需校准</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="90"><template #default="{ row }"><StatusTag :status="row.status === 'IN_USE' ? 'RELEASED' : 'REJECTED'" :label="row.statusLabel" /></template></el-table-column>
+            <el-table-column v-if="canEquip" label="" width="190" fixed="right">
+              <template #default="{ row }">
+                <el-button v-if="row.needsCalibration" size="small" @click="openCal(row)">登记校准</el-button>
+                <el-button v-if="row.status === 'IN_USE'" size="small" text @click="stopEquip(row)">停用</el-button>
+                <el-button v-else-if="isQa" size="small" text @click="resumeEquip(row)">启用</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <ListPager v-model:page="et.page.value" v-model:size="et.size.value" :total="et.total.value" />
+        </el-card>
+      </el-tab-pane>
     </el-tabs>
+
+    <!-- 新增设备 -->
+    <el-dialog v-model="eq.visible" title="新增设备" width="520px">
+      <el-form label-position="top" @submit.prevent>
+        <div class="grid2">
+          <el-form-item label="设备编号"><el-input id="eq-code" v-model="eq.code" class="mono" maxlength="40" /></el-form-item>
+          <el-form-item label="名称"><el-input id="eq-name" v-model="eq.name" maxlength="100" /></el-form-item>
+        </div>
+        <el-form-item label="位置（选填）"><el-input v-model="eq.location" maxlength="100" /></el-form-item>
+        <el-form-item><el-checkbox v-model="eq.needsCalibration">需要定期校准</el-checkbox></el-form-item>
+        <div v-if="eq.needsCalibration" class="grid2">
+          <el-form-item label="校准周期（月）"><el-input-number id="eq-cycle" v-model="eq.cycleMonths" :min="1" :max="120" :controls="false" style="width:100%" /></el-form-item>
+          <el-form-item label="下次校准到期"><el-date-picker v-model="eq.nextDue" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button @click="eq.visible = false">取消</el-button>
+        <el-button type="primary" :loading="eq.saving" @click="saveEquip">新增设备</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 登记校准 -->
+    <el-dialog v-model="cal.visible" :title="`登记校准：${cal.row?.name || ''}`" width="520px">
+      <el-form label-position="top" @submit.prevent>
+        <div class="grid2">
+          <el-form-item label="校准日期"><el-date-picker v-model="cal.calibratedDate" value-format="YYYY-MM-DD" :clearable="false" style="width:100%" /></el-form-item>
+          <el-form-item label="结论"><el-select v-model="cal.result" style="width:100%"><el-option value="PASS" label="合格" /><el-option value="FAIL" label="不合格" /></el-select></el-form-item>
+          <el-form-item label="证书或报告编号"><el-input id="cal-cert" v-model="cal.certificateNo" class="mono" maxlength="60" /></el-form-item>
+          <el-form-item label="下次到期（不填按周期算）"><el-date-picker v-model="cal.nextDue" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
+        </div>
+        <el-alert v-if="cal.result === 'FAIL'" type="error" :closable="false" show-icon title="设备会自动停用，并生成重大偏差，列出上次合格以来用过它的工单。" style="margin-bottom:12px" />
+        <el-form-item :label="cal.result === 'FAIL' ? '不合格情况（必填）' : '备注（选填）'"><el-input id="cal-note" v-model="cal.note" type="textarea" :rows="2" maxlength="300" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="cal.visible = false">取消</el-button>
+        <el-button type="primary" :loading="cal.saving" @click="saveCal">登记校准结果</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 登记偏差 -->
     <el-dialog v-model="dv.visible" title="登记偏差" width="620px">
@@ -285,7 +372,9 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
+import AttachmentList from '../components/AttachmentList.vue'
 import ExportButton from '../components/ExportButton.vue'
+import ListCapHint from '../components/ListCapHint.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
@@ -294,7 +383,7 @@ import { fmtTime, today } from '../utils/format'
 import { useLoader } from '../utils/loader'
 import { textMatch, usePaged } from '../utils/table'
 
-const EXPORTS = { deviations: 'deviations', capas: 'capas', audits: 'supplier-audits', retains: 'retains' }
+const EXPORTS = { deviations: 'deviations', capas: 'capas', audits: 'supplier-audits', retains: 'retains', equipment: 'equipment' }
 const AREA = { PRODUCTION: '生产', QC: '检验', WAREHOUSE: '仓储', SUPPLIER: '供应商 / 受托厂', OTHER: '其他' }
 const LEVEL = { MINOR: '微小偏差', MAJOR: '重大偏差', CRITICAL: '严重偏差' }
 const LEVEL_TAG = { MINOR: 'info', MAJOR: 'warning', CRITICAL: 'danger' }
@@ -317,6 +406,10 @@ const capas = ref([])
 const audits = ref([])
 const partners = ref([])
 const retains = ref([])
+const equipment = ref([])
+const canEquip = computed(() => auth.hasAny('ADMIN', 'PRODUCTION', 'QA', 'QSO'))
+const et = usePaged(equipment, { match: textMatch('code', 'name', 'location') })
+const equipDueCount = computed(() => equipment.value.filter((e) => e.status === 'IN_USE' && (e.dueState === 'OVERDUE' || e.dueState === 'DUE')).length)
 
 const df = reactive({ status: 'OPEN' })
 const cf = reactive({ status: 'ACTIVE' })
@@ -329,9 +422,10 @@ const openCapaCount = computed(() => capas.value.filter((c) => c.status !== 'VER
 const capasOf = (d) => capas.value.filter((c) => c.deviationId === d.id)
 
 const loader = useLoader(async () => {
-  const [a, b, c, d, e] = await Promise.all([
-    http.get('/qms/deviations'), http.get('/qms/capas'), http.get('/qms/audits'), http.get('/qms/audit-partners'), http.get('/qms/retains')
+  const [a, b, c, d, e, f] = await Promise.all([
+    http.get('/qms/deviations'), http.get('/qms/capas'), http.get('/qms/audits'), http.get('/qms/audit-partners'), http.get('/qms/retains'), http.get('/equipment')
   ])
+  equipment.value = f
   deviations.value = a
   capas.value = b
   audits.value = c
@@ -480,6 +574,51 @@ async function destroyRetain() {
   } finally {
     ds.saving = false
   }
+}
+
+// ---------- 设备 ----------
+const eq = reactive({ visible: false, saving: false, code: '', name: '', location: '', needsCalibration: true, cycleMonths: 12, nextDue: '' })
+const openEquip = () => Object.assign(eq, { visible: true, code: '', name: '', location: '', needsCalibration: true, cycleMonths: 12, nextDue: plusDays(365) })
+async function saveEquip() {
+  eq.saving = true
+  try {
+    const { visible, saving, ...body } = eq
+    await http.post('/equipment', { ...body, nextDue: body.nextDue || null })
+    ElMessage.success('设备已新增')
+    eq.visible = false
+    load()
+  } finally {
+    eq.saving = false
+  }
+}
+const cal = reactive({ visible: false, saving: false, row: null, calibratedDate: '', result: 'PASS', certificateNo: '', nextDue: '', note: '' })
+const openCal = (row) => Object.assign(cal, { visible: true, row, calibratedDate: today(), result: 'PASS', certificateNo: '', nextDue: '', note: '' })
+async function saveCal() {
+  cal.saving = true
+  try {
+    await http.post(`/equipment/${cal.row.id}/calibrations`, { calibratedDate: cal.calibratedDate, result: cal.result, certificateNo: cal.certificateNo, nextDue: cal.nextDue || null, note: cal.note })
+    ElMessage.success(cal.result === 'PASS' ? '校准结果已登记' : '已登记，设备已停用并生成偏差')
+    cal.visible = false
+    load()
+  } finally {
+    cal.saving = false
+  }
+}
+async function stopEquip(row) {
+  let reason
+  try {
+    reason = (await ElMessageBox.prompt('停用后不能写进批记录。', `停用 ${row.name}`, { confirmButtonText: '停用设备', cancelButtonText: '取消', inputPlaceholder: '停用原因', inputValidator: (v) => !!v?.trim() || '请填写停用原因' })).value
+  } catch {
+    return
+  }
+  await http.post(`/equipment/${row.id}/stop`, { reason })
+  ElMessage.success('设备已停用')
+  load()
+}
+async function resumeEquip(row) {
+  await http.post(`/equipment/${row.id}/resume`)
+  ElMessage.success('设备已启用')
+  load()
 }
 
 onMounted(load)

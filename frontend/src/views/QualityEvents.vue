@@ -88,6 +88,7 @@
               </template>
             </el-table-column>
           </el-table>
+          <ListCapHint :count="complaints.length" />
           <ListPager v-model:page="ct.page.value" v-model:size="ct.size.value" :total="ct.total.value" />
         </el-card>
       </el-tab-pane>
@@ -279,6 +280,7 @@ import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import AttachmentList from '../components/AttachmentList.vue'
 import ExportButton from '../components/ExportButton.vue'
+import ListCapHint from '../components/ListCapHint.vue'
 import { useAuth } from '../stores/auth'
 import { COMPLAINT_CATEGORY, COMPLAINT_CHANNELS, SEVERITY, fmtQty, fmtTime, today } from '../utils/format'
 import { useLoader } from '../utils/loader'

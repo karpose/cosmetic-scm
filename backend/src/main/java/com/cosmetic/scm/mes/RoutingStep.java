@@ -40,4 +40,7 @@ public class RoutingStep {
     private BigDecimal ipcMax;
 
     private String ipcUnit;
+
+    /** 执行时必须选择设备（校准有效、未停用）。 */
+    private boolean requiresEquipment;
 }

@@ -17,6 +17,7 @@ import com.cosmetic.scm.common.XlsxWriter;
 import com.cosmetic.scm.complaint.ComplaintService;
 import com.cosmetic.scm.inventory.InventoryService;
 import com.cosmetic.scm.master.MasterService;
+import com.cosmetic.scm.mes.EquipmentService;
 import com.cosmetic.scm.production.ProductionService;
 import com.cosmetic.scm.purchase.PurchaseService;
 import com.cosmetic.scm.qms.DeviationService;
@@ -48,6 +49,7 @@ public class ReportService {
     private final SupplierAuditService audits;
     private final RetainService retains;
     private final PurchaseService purchases;
+    private final EquipmentService equipment;
     private final AuditService audit;
     private final TimeProvider time;
 
@@ -69,6 +71,7 @@ public class ReportService {
         m.put("capas", this::capas);
         m.put("supplier-audits", this::supplierAudits);
         m.put("retains", this::retainSamples);
+        m.put("equipment", this::equipmentList);
         m.put("audit", () -> auditLogs(from, to));
         return m;
     }
@@ -158,6 +161,14 @@ public class ReportService {
         List<List<Object>> rows = new ArrayList<>();
         retains.listAll().forEach(s -> rows.add(row(s.batchNo(), s.itemName(), s.qty(), s.remainingQty(), s.location(), s.retainUntil(), s.statusLabel())));
         return new Table("留样台账", List.of("批号", "产品", "留样数量", "剩余数量", "存放地点", "保存至", "状态"), rows);
+    }
+
+    private Table equipmentList() {
+        List<List<Object>> rows = new ArrayList<>();
+        equipment.list().forEach(e -> rows.add(row(e.code(), e.name(), e.location(), e.statusLabel(), e.needsCalibration() ? "是" : "否", e.cycleMonths(),
+                e.nextDue(), e.calibrations().isEmpty() ? null : e.calibrations().get(0).calibratedDate(),
+                e.calibrations().isEmpty() ? null : e.calibrations().get(0).resultLabel(), e.stopReason())));
+        return new Table("设备台账", List.of("编号", "名称", "位置", "状态", "需要校准", "周期（月）", "校准到期", "最近校准", "结论", "停用原因"), rows);
     }
 
     private Table auditLogs(LocalDate from, LocalDate to) {

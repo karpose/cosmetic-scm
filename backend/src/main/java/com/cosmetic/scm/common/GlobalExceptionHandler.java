@@ -35,6 +35,23 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(new ApiError(msg));
     }
 
+    /** 地址写错、参数缺失或类型不对是调用方的问题，不是系统错误，不该进错误日志。 */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<ApiError> noResource(org.springframework.web.servlet.resource.NoResourceFoundException e) {
+        return ResponseEntity.status(org.springframework.http.HttpStatus.NOT_FOUND).body(new ApiError("接口不存在"));
+    }
+
+    @ExceptionHandler({org.springframework.web.bind.MissingServletRequestParameterException.class,
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class})
+    public ResponseEntity<ApiError> badParam(Exception e) {
+        return ResponseEntity.badRequest().body(new ApiError("请求参数不正确"));
+    }
+
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiError> badMethod(Exception e) {
+        return ResponseEntity.status(org.springframework.http.HttpStatus.METHOD_NOT_ALLOWED).body(new ApiError("不支持的请求方法"));
+    }
+
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ApiError> tooLarge(MaxUploadSizeExceededException e) {
         return ResponseEntity.badRequest().body(new ApiError("文件太大，单个附件不能超过 20 MB"));

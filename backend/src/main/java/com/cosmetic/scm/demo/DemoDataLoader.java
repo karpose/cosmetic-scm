@@ -62,6 +62,7 @@ import com.cosmetic.scm.sales.SalesService.SoReq;
 import com.cosmetic.scm.salesreturn.ReturnService;
 import com.cosmetic.scm.salesreturn.ReturnService.ReturnLineReq;
 import com.cosmetic.scm.salesreturn.ReturnService.ReturnReq;
+import com.cosmetic.scm.mes.EquipmentService;
 import com.cosmetic.scm.mes.MesService;
 import com.cosmetic.scm.plm.FilingService;
 import com.cosmetic.scm.plm.FormulaService;
@@ -115,6 +116,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final DeviationService deviations;
     private final SupplierAuditService supplierAudits;
     private final MesService mes;
+    private final EquipmentService equipment;
     private final InventoryService inventory;
     private final TimeProvider time;
 
@@ -302,11 +304,14 @@ public class DemoDataLoader implements ApplicationRunner {
                 "把记录仪电量纳入每周点检（示例）", "仓库主管（示例）", t.plusDays(21))));
 
         // ---------- 自产面霜：有工艺路线；已计划，待发料。发料后在生产单明细里填批生产记录 ----------
+        for (String[] e : new String[][] {{"EQ-EM-01", "乳化锅 A（示例）", "2 号车间", "200"}, {"EQ-FL-01", "灌装机 1（示例）", "2 号车间", "120"}, {"EQ-SC-01", "电子秤 1（示例）", "称量间", "20"}}) {
+            as("admin", () -> equipment.create(new EquipmentService.EquipmentReq(e[0], e[1], e[2], true, 12, t.plusDays(Long.parseLong(e[3])))));
+        }
         as("admin", () -> mes.saveRouting(cream.getId(), new MesService.RoutingReq(List.of(
                 new MesService.RoutingStepReq("称量投料", "按配方逐项称量，双人核对物料和批号", true, null, null, null, null),
-                new MesService.RoutingStepReq("乳化", "水相、油相分别升温后混合，均质 10 分钟", false, "乳化温度", new BigDecimal("70"), new BigDecimal("80"), "℃"),
+                new MesService.RoutingStepReq("乳化", "水相、油相分别升温后混合，均质 10 分钟", false, "乳化温度", new BigDecimal("70"), new BigDecimal("80"), "℃", true),
                 new MesService.RoutingStepReq("冷却", "搅拌冷却后加入防腐体系", false, "料体 pH", new BigDecimal("5.0"), new BigDecimal("7.0"), null),
-                new MesService.RoutingStepReq("灌装", "首件确认后连续灌装，每 30 分钟抽检装量", true, "装量", new BigDecimal("49"), new BigDecimal("52"), "g"),
+                new MesService.RoutingStepReq("灌装", "首件确认后连续灌装，每 30 分钟抽检装量", true, "装量", new BigDecimal("49"), new BigDecimal("52"), "g", true),
                 new MesService.RoutingStepReq("包装贴标", "核对批号和限用日期后贴标装盒", false, null, null, null, null)))));
         as("prod1", () -> production.create(new CreateMoReq(own.id(), cream.getId(), new BigDecimal("8000"), t.plusDays(7))));
     }

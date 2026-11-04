@@ -31,6 +31,7 @@ import com.cosmetic.scm.oemportal.OemReport;
 import com.cosmetic.scm.oemportal.OemReportRepository;
 import com.cosmetic.scm.production.MfgOrder;
 import com.cosmetic.scm.production.MfgOrderRepository;
+import com.cosmetic.scm.mes.EquipmentService;
 import com.cosmetic.scm.plm.FilingService;
 import com.cosmetic.scm.plm.FormulaService;
 import com.cosmetic.scm.purchase.PurchaseOrderRepository;
@@ -71,6 +72,7 @@ public class DashboardService {
     private final RetainService retains;
     private final FormulaService formulas;
     private final FilingService filings;
+    private final EquipmentService equipment;
     private final AuditService audit;
     private final TimeProvider time;
 
@@ -81,7 +83,7 @@ public class DashboardService {
 
     /**
      * kind: QC / RELEASE / MO_ISSUE / MO_COMPLETE / LICENSE / NEAR_EXPIRY / RECALL / ADVERSE / COMPLAINT / RETURN /
-     * OEM_REPORT / DEALER_ORDER / CHANNEL_FAILED / DEVIATION / CAPA / SUPPLIER_AUDIT / RETAIN / FORMULA / FILING；
+     * OEM_REPORT / DEALER_ORDER / CHANNEL_FAILED / DEVIATION / CAPA / SUPPLIER_AUDIT / RETAIN / FORMULA / FILING / EQUIPMENT；
      * level: warn / info / bad / muted
      */
     public record Todo(String kind, String label, String level, String title, String ref, String detail, String route) {
@@ -217,6 +219,17 @@ public class DashboardService {
         }
         for (RetainService.SampleView s : retains.dueForDestruction()) {
             todos.add(new Todo("RETAIN", "留样待销毁", "muted", s.itemName(), s.batchNo(), "保存期已于 " + s.retainUntil() + " 届满，剩余 " + s.remainingQty() + " 件", "/qms?tab=retains"));
+        }
+        for (EquipmentService.EquipmentView e : equipment.list()) {
+            if (e.status() == com.cosmetic.scm.domain.EquipmentStatus.STOPPED) {
+                continue;
+            }
+            if ("OVERDUE".equals(e.dueState())) {
+                todos.add(new Todo("EQUIPMENT", "设备校准已过期", "bad", e.name(), e.code(),
+                        (e.nextDue() == null ? "还没有校准记录" : "已于 " + e.nextDue() + " 到期") + "，不能用于批记录", "/qms?tab=equipment"));
+            } else if ("DUE".equals(e.dueState())) {
+                todos.add(new Todo("EQUIPMENT", "设备校准将到期", "warn", e.name(), e.code(), e.dueDaysLeft() + " 天后到期（" + e.nextDue() + "）", "/qms?tab=equipment"));
+            }
         }
         long pendingFormula = formulas.pendingCount();
         if (pendingFormula > 0) {

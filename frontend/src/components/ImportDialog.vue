@@ -9,7 +9,8 @@
     <div class="pick glass">
       <div>
         <b>{{ fileName || '还没有选择文件' }}</b>
-        <p class="muted small">编码已存在的行按“修改”处理（文件里没有的列保留原值，有列但留空则清空），不存在的新增。任何一行有问题都不会写入，改好后重新上传即可。Excel 请“另存为 → CSV UTF-8（逗号分隔）”；普通 CSV（GBK）也能识别。</p>
+        <p v-if="spec.hint" class="muted small">{{ spec.hint }}</p>
+        <p v-else class="muted small">编码已存在的行按“修改”处理（文件里没有的列保留原值，有列但留空则清空），不存在的新增。任何一行有问题都不会写入，改好后重新上传即可。Excel 请“另存为 → CSV UTF-8（逗号分隔）”；普通 CSV（GBK）也能识别。</p>
       </div>
       <div class="toolbar">
         <el-button @click="downloadTemplate">下载模板</el-button>
@@ -22,7 +23,7 @@
       <div class="summary">
         <span>共 <b class="mono">{{ rows.length }}</b> 行</span>
         <template v-if="result">
-          <el-tag v-if="!issues.length" type="success" disable-transitions>预检通过：新增 {{ result.created }}，修改 {{ result.updated }}</el-tag>
+          <el-tag v-if="!issues.length" type="success" disable-transitions>预检通过：{{ spec.sign ? `${result.created} 个批次` : `新增 ${result.created}，修改 ${result.updated}` }}</el-tag>
           <el-tag v-else type="danger" disable-transitions>{{ issues.length }} 处问题，修改文件后重新上传</el-tag>
         </template>
         <el-tag v-else-if="parseErrors.length" type="danger" disable-transitions>{{ parseErrors.length }} 处格式问题</el-tag>
@@ -43,6 +44,7 @@
     </template>
 
     <template #footer>
+      <el-input v-if="spec.sign && canApply" id="im-pwd" v-model="password" type="password" show-password placeholder="签批密码" autocomplete="current-password" style="width:160px;margin-right:10px" />
       <el-button @click="visible = false">取消</el-button>
       <el-button :disabled="!rows.length || parseErrors.length > 0" :loading="busy === 'dry'" @click="send(true)">预检</el-button>
       <el-button type="primary" :disabled="!canApply" :loading="busy === 'apply'" @click="send(false)">确认导入 {{ rows.length || '' }} 行</el-button>
@@ -114,6 +116,24 @@ const SPECS = {
       { header: '指导价（元）', key: 'listPrice', conv: num('指导价'), example: '' }
     ]
   },
+  opening: {
+    title: '期初库存', url: '/opening-stock', file: '期初库存导入模板.csv', sign: true, codeKey: 'batchNo', required: ['itemCode', 'batchNo', 'mfgDate', 'warehouseCode', 'qty', 'status'],
+    hint: '上线时录入仓库现有的批次，全成或全不成。同一批号在多个仓库就写多行。已放行的批次相当于一次放行决定，要填检验报告编号，成品还要填留样；导入时需要签批。',
+    columns: [
+      { header: '物料编码', key: 'itemCode', conv: text, example: 'RM-GLY-010' },
+      { header: '批号', key: 'batchNo', conv: text, example: 'R-260901-01' },
+      { header: '状态', key: 'status', conv: enumOf('状态', { RELEASED: '已放行', QUARANTINE: '待检', PENDING_RELEASE: '待上市放行' }, true), show: (v) => ({ RELEASED: '已放行', QUARANTINE: '待检', PENDING_RELEASE: '待上市放行' }[v]), example: '已放行' },
+      { header: '仓库编码', key: 'warehouseCode', conv: text, example: 'WH-MAIN' },
+      { header: '数量', key: 'qty', conv: num('数量'), example: '25' },
+      { header: '生产日期', key: 'mfgDate', conv: date('生产日期'), example: '2026-09-01' },
+      { header: '有效期', key: 'expDate', conv: date('有效期'), example: '' },
+      { header: '外部批号', key: 'extBatchNo', conv: text, example: 'SUP-2026-09' },
+      { header: '来源单位编码', key: 'partnerCode', conv: text, example: '' },
+      { header: '检验报告编号', key: 'reportNo', conv: text, example: 'COA-260901' },
+      { header: '留样数量', key: 'retainQty', conv: int('留样数量'), example: '' },
+      { header: '留样地点', key: 'retainLocation', conv: text, example: '' }
+    ]
+  },
   partners: {
     title: '往来单位', url: '/import/partners', listUrl: '/partners', file: '往来单位导入模板.csv',
     columns: [
@@ -142,6 +162,7 @@ const rows = ref([])
 const parseErrors = ref([])
 const result = ref(null)
 const busy = ref('')
+const password = ref('')
 const step = computed(() => (result.value && !issues.value.length ? 3 : rows.value.length ? 2 : 1))
 const issues = computed(() => [...parseErrors.value, ...(result.value?.errors || [])])
 const canApply = computed(() => result.value && !issues.value.length && !busy.value)
@@ -151,6 +172,7 @@ function reset() {
   rows.value = []
   parseErrors.value = []
   result.value = null
+  password.value = ''
   if (fileInput.value) fileInput.value.value = ''
 }
 
@@ -210,7 +232,8 @@ async function onFile(e) {
   const header = table[0].map((h) => h.trim())
   const cols = spec.value.columns
   const index = Object.fromEntries(cols.map((c) => [c.key, header.indexOf(c.header)]))
-  const missing = cols.filter((c) => ['code', 'name', 'itemType', 'unit', 'kind'].includes(c.key) && index[c.key] < 0)
+  const requiredKeys = spec.value.required || ['code', 'name', 'itemType', 'unit', 'kind']
+  const missing = cols.filter((c) => requiredKeys.includes(c.key) && index[c.key] < 0)
   if (missing.length) {
     parseErrors.value = [{ line: 1, code: '', message: `表头缺少：${missing.map((c) => c.header).join('、')}。请用“下载模板”的表头` }]
     return
@@ -223,7 +246,7 @@ async function onFile(e) {
       try {
         obj[c.key] = c.conv(raw)
       } catch (err) {
-        errs.push({ line: i + 2, code: text(cells[index.code]), message: err.message })
+        errs.push({ line: i + 2, code: text(cells[index[spec.value.codeKey || 'code']]), message: err.message })
       }
     }
     return obj
@@ -231,7 +254,7 @@ async function onFile(e) {
   parseErrors.value = errs
   // 文件里没有的列：已存在的编码保留原值，避免只导部分列时把其它字段清空
   const absent = cols.filter((c) => index[c.key] < 0).map((c) => c.key)
-  if (absent.length) {
+  if (absent.length && spec.value.listUrl) {
     const existing = new Map((await http.get(spec.value.listUrl)).map((r) => [r.code, r]))
     for (const r of rows.value) {
       const old = existing.get(r.code)
@@ -244,10 +267,14 @@ async function onFile(e) {
 async function send(dryRun) {
   busy.value = dryRun ? 'dry' : 'apply'
   try {
-    const res = await http.post(spec.value.url, { rows: rows.value, dryRun })
+    if (!dryRun && spec.value.sign && !password.value) {
+      ElMessage.warning('请输入签批密码')
+      return
+    }
+    const res = await http.post(spec.value.url, { rows: rows.value, dryRun, ...(spec.value.sign ? { password: password.value } : {}) })
     result.value = res
     if (!dryRun && res.applied) {
-      ElMessage.success(`已导入：新增 ${res.created}，修改 ${res.updated}`)
+      ElMessage.success(spec.value.sign ? `已导入 ${res.created} 个批次` : `已导入：新增 ${res.created}，修改 ${res.updated}`)
       emit('done')
       visible.value = false
     }

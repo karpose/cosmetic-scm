@@ -23,6 +23,7 @@ import com.cosmetic.scm.domain.MoType;
 import com.cosmetic.scm.domain.OwnerType;
 import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.master.PartnerRepository;
+import com.cosmetic.scm.mes.EquipmentRepository;
 import com.cosmetic.scm.production.MfgOrder;
 import com.cosmetic.scm.production.MfgOrderRepository;
 import com.cosmetic.scm.purchase.PurchaseOrderRepository;
@@ -64,6 +65,7 @@ public class AttachmentService {
     private final RecallRepository recalls;
     private final SalesReturnRepository returns;
     private final PartnerRepository partners;
+    private final EquipmentRepository equipment;
     private final AuditService audit;
     private final TimeProvider time;
     private final CurrentUser currentUser;
@@ -194,6 +196,7 @@ public class AttachmentService {
             case RECALL -> recalls;
             case SALES_RETURN -> returns;
             case PARTNER -> partners;
+            case EQUIPMENT -> equipment;
         };
     }
 
