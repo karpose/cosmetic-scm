@@ -1,0 +1,10 @@
+# HTTPS 叠加配置：docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+# 证书放在 deploy/certs/（fullchain.pem、privkey.pem），不要提交到代码仓库
+services:
+  frontend:
+    ports:
+      - "${SCM_HTTP_PORT:-80}:80"
+      - "${SCM_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx/https.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro

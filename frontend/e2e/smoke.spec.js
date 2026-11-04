@@ -100,6 +100,37 @@ test('电商对接里能看到缺货失败的订单和原因', async ({ page }) 
   await expect(row.getByText('库存不足')).toBeVisible()
 })
 
+test('经营看板和补货建议能打开并算出结果', async ({ page }) => {
+  await login(page, 'prod1')
+  await page.goto('/analytics')
+  await expect(page.getByText('成品库存效期分布')).toBeVisible()
+  await expect(page.getByText('呆滞库存')).toBeVisible()
+  await page.goto('/planning')
+  await expect(page.locator('.el-table__row').filter({ hasText: '烟酰胺精华液' }).first()).toBeVisible()
+  await page.locator('.el-table__row').filter({ hasText: '角鲨烷修护面霜' }).first().locator('.el-checkbox').click()
+  await page.locator('.el-table__row').filter({ hasText: '角鲨烷修护面霜' }).first().locator('.el-input-number input').fill('8000')
+  await page.getByRole('button', { name: '计算物料需求' }).click()
+  await expect(page.getByText('品牌供料物料需求')).toBeVisible()
+  await expect(page.locator('.el-table__row').filter({ hasText: '角鲨烷' }).first()).toBeVisible()
+})
+
+test('消费者扫码无需登录，召回中的批次提示停止使用', async ({ page }) => {
+  await login(page, 'qa1')
+  // 示例数据给第一批精华液生成了码；前面的用例已对这批发起召回
+  const code = await page.evaluate(async () => {
+    const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}` }
+    const batches = await fetch('/api/serials/batches', { headers: h }).then((r) => r.json())
+    const b = batches.find((x) => x.generated > 0)
+    const csv = await fetch(`/api/serials/batches/${b.batchId}/export`, { headers: h }).then((r) => r.text())
+    return csv.split('\r\n')[1].split(',')[1]
+  })
+  await page.evaluate(() => localStorage.clear())
+  await page.goto(`/v/${code}`)
+  await expect(page.getByRole('heading', { name: '该批次已暂停销售' })).toBeVisible()
+  await page.goto('/v/0000-0000-0000')
+  await expect(page.getByRole('heading', { name: '未查到此防伪码' })).toBeVisible()
+})
+
 test('门户账号进不了内部页面', async ({ page }) => {
   await login(page, 'dealer1')
   await expect(page).toHaveURL(/\/portal\/dealer/)
