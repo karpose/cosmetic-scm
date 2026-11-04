@@ -100,6 +100,14 @@ public class UserService {
                 p == null ? null : p.getName(), locked, passwordChangeRequired(u), u.getEmail());
     }
 
+    /**
+     * 截断到整秒。MySQL 的 DATETIME 会把小数秒四舍五入：12:00:00.6 存成 12:00:01，
+     * 而紧接着签发的新令牌 iat 是 12:00:00，会被当成改密前的旧令牌拒绝。
+     */
+    private java.time.LocalDateTime passwordChangeTime() {
+        return time.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    }
+
     /** 当前是否必须先改密码；返回 null 表示不需要。 */
     public String passwordChangeRequired(AppUser u) {
         if (!forcePasswordChange) {
@@ -143,7 +151,7 @@ public class UserService {
         u.setPasswordHash(passwordEncoder.encode(rawPassword));
         u.setEnabled(true);
         u.setCreatedAt(time.now());
-        u.setPasswordChangedAt(time.now());
+        u.setPasswordChangedAt(passwordChangeTime());
         u.setMustChangePassword(mustChangePassword);
         u.setRoles(EnumSet.copyOf(roles));
         u.setPartnerId(partnerId);
@@ -178,7 +186,7 @@ public class UserService {
         AppUser u = user(id);
         requireStrong(req.password(), u.getUsername());
         u.setPasswordHash(passwordEncoder.encode(req.password()));
-        u.setPasswordChangedAt(time.now());
+        u.setPasswordChangedAt(passwordChangeTime());
         u.setMustChangePassword(true);
         u.setFailedLogins(0);
         u.setLockedUntil(null);
@@ -205,7 +213,7 @@ public class UserService {
         }
         requireStrong(req.newPassword(), u.getUsername());
         u.setPasswordHash(passwordEncoder.encode(req.newPassword()));
-        u.setPasswordChangedAt(time.now());
+        u.setPasswordChangedAt(passwordChangeTime());
         u.setMustChangePassword(false);
         users.save(u);
         audit.log("修改本人密码", u.getUsername(), "");

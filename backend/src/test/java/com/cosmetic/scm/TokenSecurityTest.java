@@ -75,6 +75,8 @@ class TokenSecurityTest {
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         String fresh = json.readTree(body).get("token").asText();
         assertThat(fresh).isNotBlank().isNotEqualTo(old);
+        // 存的是整秒：MySQL 的 DATETIME 会四舍五入小数秒，否则新令牌有一半概率被判成旧令牌（H2 上测不出来）
+        assertThat(users.findByUsername("sales1").orElseThrow().getPasswordChangedAt().getNano()).isZero();
         mvc.perform(get("/api/stock").header("Authorization", "Bearer " + old)).andExpect(status().isUnauthorized());
         mvc.perform(get("/api/stock").header("Authorization", "Bearer " + fresh)).andExpect(status().isOk());
     }
