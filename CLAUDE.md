@@ -47,6 +47,7 @@ cp .env.example .env && docker compose up -d --build
 - 成品上市放行接口只授予 `QSO` 角色（管理员也不行）；放行、拒收、冻结、解冻都通过 `SignatureService.verify` 要求再次输入密码。
 - 召回发起 / 关闭只授予 `QSO`；发起时冻结批次并按出库记录逐客户生成通知，所有客户通知后才能关闭。不良反应投诉未登记上报不能关闭。报废、退货处置须 QA / QSO 签批。
 - 单据状态流转必须先锁行再判断状态（各 Repository 的 `lockById`，只在写事务里用，读事务里 FOR UPDATE 在 MySQL 上会报错）。检查和修改之间不加锁，连点按钮就会重复入库，实测过。出库和发料用 `InventoryService.allocateForUpdate`，预览用 `allocate`。库存行加锁走 `lockStock`：实体已载入时直接用锁查询，Hibernate 会因版本不同报冲突。
+- MySQL 的 `DATETIME` 会把小数秒四舍五入（H2 不同）。要和令牌 iat 比较的时间（`passwordChangedAt`）必须先截断到整秒，曾因此让一半用户改密后被踢出。
 - 令牌只证明身份，角色每次从数据库读（`DbJwtAuthenticationConverter`），不要往令牌里加权限判断。改密后旧令牌失效，改密接口返回新令牌。
 - 列表和统计不能靠“最近 N 条”做判断（曾因此漏掉最老的临期批次）。不要 `findAll` 全表：用分组或专门的查询。看板、补货建议的短时缓存在 Controller 层（`ShortCache`），测试和开发环境 ttl 为 0。
 - 权限边界在 `SecurityConfig` 的 URL 层：`/api/portal/oem/**` 只给 OEM_PORTAL，`/api/portal/dealer/**` 只给 DEALER，`/api/integration/**` 只认 X-Api-Key，`/api/public/**` 和 `/api/health` 无需登录（只能放不含内部数据的接口，前端调用时加 `{ public: true }` 不带令牌），其余 `/api/**` 只给内部角色。门户服务里的每个查询都必须用 `CurrentUser.portalPartnerId()` 过滤，别人的数据一律当“不存在”。新增内部接口不需要额外处理，新增门户接口要放在对应前缀下。
@@ -79,11 +80,11 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-04）
 
-- 后端 `mvn clean test` 93 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 21 项全部通过；GitHub Actions 在 PR 上跑这三项。
+- 后端 `mvn clean test` 96 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 22 项全部通过；GitHub Actions 在 PR 上跑这三项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
-- 已完成：一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。
-- Docker 部署已在本机 Colima（profile `cosmetic-scm`）上完整演练过：MySQL 8 上迁移和示例数据都正常，HTTPS、首次改密、备份恢复、数据库宕机时的健康检查都实测通过，记录见 `docs/csv/07-部署预验证记录-2026-11-03.md`（含历次升级、备份恢复、并发和容量测试）。并发、死锁和 CSP 这类问题 H2 和开发服务器测不全，改到这些要到 MySQL 上跑。CSP、Permissions-Policy 和上传限制只有经过 nginx 才生效，开发服务器测不出来，改这些要走一遍 Docker。这台 Colima 没有共享宿主机目录，绑定挂载会是空目录；里面还有一套用 8088 端口的 `cosmetic-scm` 旧部署，不要动它。
+- 已完成：一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。
+- Docker 部署已在本机 Colima（profile `cosmetic-scm`）上完整演练过：MySQL 8 上迁移和示例数据都正常，HTTPS、首次改密、备份恢复、数据库宕机时的健康检查都实测通过，记录见 `docs/csv/07-部署预验证记录-2026-11-03.md`（含历次升级、备份恢复、并发、容量测试和空库上线演练）。所有自动化测试都带示例数据，改动上线流程后要在空库上再走一遍。并发、死锁和 CSP 这类问题 H2 和开发服务器测不全，改到这些要到 MySQL 上跑。CSP、Permissions-Policy 和上传限制只有经过 nginx 才生效，开发服务器测不出来，改这些要走一遍 Docker。这台 Colima 没有共享宿主机目录，绑定挂载会是空目录；里面还有一套用 8088 端口的 `cosmetic-scm` 旧部署，不要动它。
 - 看板图表配色用 dataviz 参考调色板，已用校验脚本在浅色、深色下验过；图表是纯 HTML/CSS，没有引入图表库。
 - 示例数据含：精华液 V2 配方待签批且备案在途、面霜工艺路线、明瓶包装审核快到期、电子秤校准快到期、一条微小偏差和 CAPA；老批次精华液（效期门槛、呆滞）、退货隔离区 + 待处置退货、待上报的不良反应投诉、受托厂已排产的委托单、经销商待审核订单、一张缺货失败的电商订单、第一批精华液的 20 个防伪码。
 

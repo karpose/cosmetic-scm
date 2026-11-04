@@ -61,6 +61,7 @@ class ConcurrencyIntegrationTest {
     @Autowired ItemRepository items;
     @Autowired PartnerRepository partners;
     @Autowired MasterService master;
+    @Autowired com.cosmetic.scm.master.MasterImportService imports;
 
     /** 同时跑 THREADS 次，返回成功次数；业务拒绝和并发冲突都算失败，其它异常直接让测试失败。 */
     private int race(String user, java.util.function.IntFunction<Object> action) throws Exception {
@@ -128,6 +129,24 @@ class ConcurrencyIntegrationTest {
         } finally {
             SecurityContextHolder.clearContext();
         }
+    }
+
+    @Test
+    void bomImportDryRunWritesNothingAndValidApplies() {
+        // 这条要真实的独立事务才能验证回滚，所以放在不套事务的这个类里
+        as("admin", () -> {
+            Item fg = master.createItem(new com.cosmetic.scm.master.MasterDtos.ItemReq("FG-DRY", "预检成品", com.cosmetic.scm.domain.ItemType.FG, "瓶", null, null,
+                    false, 36, null, new BigDecimal("30"), true, null, null));
+            var rows = List.of(new com.cosmetic.scm.master.MasterImportService.BomImportRow("FG-DRY", "RM-GLY-002", new BigDecimal("0.001"), SupplyMode.BRAND));
+            var dry = imports.importBoms(new com.cosmetic.scm.master.MasterImportService.BomImportReq(rows, true));
+            assertThat(dry.errors()).isEmpty();
+            assertThat(dry.created()).isEqualTo(1);
+            assertThat(dry.applied()).isFalse();
+            assertThat(master.bomLines(fg.getId())).isEmpty();
+            // 预检之后真的导入，不会被刚才那次判成“已有配方”
+            assertThat(imports.importBoms(new com.cosmetic.scm.master.MasterImportService.BomImportReq(rows, false)).applied()).isTrue();
+            assertThat(master.bomLines(fg.getId())).hasSize(1);
+        });
     }
 
     @Test

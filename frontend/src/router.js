@@ -20,6 +20,7 @@ const routes = [
       { path: 'qms', name: 'qms', component: () => import('./views/Qms.vue'), meta: { title: '质量体系' } },
       { path: 'formulas', name: 'formulas', component: () => import('./views/Formulas.vue'), meta: { title: '配方与备案' } },
       { path: 'notifications', name: 'notifications', component: () => import('./views/Notifications.vue'), meta: { title: '消息提醒', roles: ['ADMIN'] } },
+      { path: 'golive', name: 'golive', component: () => import('./views/GoLive.vue'), meta: { title: '上线检查', roles: ['ADMIN', 'MASTER_DATA', 'QA', 'QSO'] } },
       { path: 'scan', name: 'scan', component: () => import('./views/Scan.vue'), meta: { title: '扫码作业' } },
       { path: 'purchase', name: 'purchase', component: () => import('./views/Purchase.vue'), meta: { title: '采购入库' } },
       { path: 'production', name: 'production', component: () => import('./views/Production.vue'), meta: { title: '生产与委托' } },

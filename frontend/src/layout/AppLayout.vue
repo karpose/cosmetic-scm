@@ -70,7 +70,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  ArrowDown, Bell, Box, Coin, Connection, DataAnalysis, DataBoard, Document, Expand, Fold, Goods, Guide, Iphone, Memo, Notebook, OfficeBuilding,
+  ArrowDown, Bell, Box, Coin, Connection, Finished, DataAnalysis, DataBoard, Document, Expand, Fold, Goods, Guide, Iphone, Memo, Notebook, OfficeBuilding,
   Operation, Postcard, RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, TrendCharts, User, Van, WarningFilled
 } from '@element-plus/icons-vue'
 import { useAuth, PASSWORD_RULE, ROLE_LABELS } from '../stores/auth'
@@ -119,6 +119,7 @@ const groups = computed(() => {
     },
     { title: '基础', items: [{ path: '/master', title: '主数据', icon: Coin }, { path: '/formulas', title: '配方与备案', icon: Notebook }] }
   ]
+  if (auth.hasAny('ADMIN', 'MASTER_DATA', 'QA', 'QSO')) list[3].items.push({ path: '/golive', title: '上线检查', icon: Finished })
   if (auth.hasAny('ADMIN')) {
     list[3].items.push({ path: '/users', title: '账号与权限', icon: User })
     list[3].items.push({ path: '/notifications', title: '消息提醒', icon: Bell })

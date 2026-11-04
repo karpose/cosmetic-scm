@@ -109,6 +109,12 @@ public class MasterController {
         return importer.importItems(req);
     }
 
+    @PostMapping("/import/boms")
+    @PreAuthorize(CAN_EDIT)
+    public ImportResult importBoms(@Valid @RequestBody MasterImportService.BomImportReq req) {
+        return importer.importBoms(req);
+    }
+
     @PostMapping("/import/partners")
     @PreAuthorize(CAN_EDIT)
     public ImportResult importPartners(@Valid @RequestBody PartnerImportReq req) {
