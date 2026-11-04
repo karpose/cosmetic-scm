@@ -5,6 +5,7 @@
         <h2>库存</h2>
         <p>按批次、仓库查看结存。剩余效期低于 50% 标黄、低于 1/3 标红；出库分配时还会按客户的效期接收标准过滤。点击批号可查看追溯和库存流水。</p>
       </div>
+      <ExportButton report="stock" />
     </div>
     <el-card shadow="never" body-style="padding:0 0 8px">
       <template #header>
@@ -46,6 +47,7 @@ import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import ShelfBar from '../components/ShelfBar.vue'
 import StatusTag from '../components/StatusTag.vue'
+import ExportButton from '../components/ExportButton.vue'
 import { ITEM_TYPE, fmtDate, fmtQty } from '../utils/format'
 import { usePaged } from '../utils/table'
 

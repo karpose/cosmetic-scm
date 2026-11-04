@@ -6,6 +6,7 @@
         <p>投诉登记后由质量人员调查；不良反应按严重程度在 7 日 / 30 日内完成监测上报后才能关闭。召回由质量安全负责人发起：同时冻结批次，并按出库记录列出每个收货客户，逐个通知、登记回收，全部通知到位后才能关闭。</p>
       </div>
       <div class="toolbar">
+        <ExportButton v-if="tab === 'complaints'" report="complaints" />
         <el-button v-if="tab === 'complaints' && canLog" type="primary" @click="openComplaint">登记投诉</el-button>
         <el-button v-if="tab === 'recalls' && isQso" type="danger" @click="openRecall()">发起召回</el-button>
       </div>
@@ -277,6 +278,7 @@ import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import AttachmentList from '../components/AttachmentList.vue'
+import ExportButton from '../components/ExportButton.vue'
 import { useAuth } from '../stores/auth'
 import { COMPLAINT_CATEGORY, COMPLAINT_CHANNELS, SEVERITY, fmtQty, fmtTime, today } from '../utils/format'
 import { useLoader } from '../utils/loader'

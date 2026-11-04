@@ -31,7 +31,12 @@ import com.cosmetic.scm.oemportal.OemReport;
 import com.cosmetic.scm.oemportal.OemReportRepository;
 import com.cosmetic.scm.production.MfgOrder;
 import com.cosmetic.scm.production.MfgOrderRepository;
+import com.cosmetic.scm.plm.FilingService;
+import com.cosmetic.scm.plm.FormulaService;
 import com.cosmetic.scm.purchase.PurchaseOrderRepository;
+import com.cosmetic.scm.qms.DeviationService;
+import com.cosmetic.scm.qms.RetainService;
+import com.cosmetic.scm.qms.SupplierAuditService;
 import com.cosmetic.scm.recall.RecallService;
 import com.cosmetic.scm.recall.RecallService.RecallView;
 import com.cosmetic.scm.sales.SalesOrderRepository;
@@ -61,6 +66,11 @@ public class DashboardService {
     private final OemReportRepository oemReports;
     private final DealerService dealers;
     private final IntegrationService integration;
+    private final DeviationService deviations;
+    private final SupplierAuditService supplierAudits;
+    private final RetainService retains;
+    private final FormulaService formulas;
+    private final FilingService filings;
     private final AuditService audit;
     private final TimeProvider time;
 
@@ -71,7 +81,7 @@ public class DashboardService {
 
     /**
      * kind: QC / RELEASE / MO_ISSUE / MO_COMPLETE / LICENSE / NEAR_EXPIRY / RECALL / ADVERSE / COMPLAINT / RETURN /
-     * OEM_REPORT / DEALER_ORDER / CHANNEL_FAILED；
+     * OEM_REPORT / DEALER_ORDER / CHANNEL_FAILED / DEVIATION / CAPA / SUPPLIER_AUDIT / RETAIN / FORMULA / FILING；
      * level: warn / info / bad / muted
      */
     public record Todo(String kind, String label, String level, String title, String ref, String detail, String route) {
@@ -119,6 +129,7 @@ public class DashboardService {
                         c.categoryLabel() + " · " + c.channel(), "/quality-events"));
             }
         }
+        addQualitySystemTodos(todos);
         Map<Long, MfgOrder> wipById = wip.stream().collect(java.util.stream.Collectors.toMap(MfgOrder::getId, m -> m));
         for (OemReport r : oemReports.findByStatus(OemReportStatus.SUBMITTED)) {
             MfgOrder m = wipById.get(r.getMoId());
@@ -181,6 +192,41 @@ public class DashboardService {
             }
         }
         return new Summary(counts, todos, audit.list(null, 8));
+    }
+
+    private void addQualitySystemTodos(List<Todo> todos) {
+        for (DeviationService.DeviationView d : deviations.open()) {
+            boolean major = d.level() != com.cosmetic.scm.domain.DeviationLevel.MINOR;
+            todos.add(new Todo("DEVIATION", d.overdue() ? "偏差调查已超期" : "偏差处理中", d.overdue() ? "bad" : major ? "warn" : "muted",
+                    d.title(), d.deviationNo(), d.levelLabel() + " · 期限 " + d.dueDate()
+                    + (major && d.batchNo() != null ? " · 批次 " + d.batchNo() + " 不能放行" : ""), "/qms"));
+        }
+        for (DeviationService.CapaView c : deviations.openCapas()) {
+            if (c.overdue()) {
+                todos.add(new Todo("CAPA", "CAPA 已超期", "bad", c.description(), c.capaNo(), "负责人 " + c.owner() + " · 期限 " + c.dueDate(), "/qms?tab=capas"));
+            } else if (c.status() == com.cosmetic.scm.domain.CapaStatus.DONE) {
+                todos.add(new Todo("CAPA", "CAPA 待验证", "warn", c.description(), c.capaNo(), "已由 " + c.doneBy() + " 完成，待质量验证有效性", "/qms?tab=capas"));
+            }
+        }
+        for (SupplierAuditService.PartnerRow p : supplierAudits.partnerRows()) {
+            if ("OVERDUE".equals(p.dueState())) {
+                todos.add(new Todo("SUPPLIER_AUDIT", "供应商审核已超期", "bad", p.name(), p.code(), "应于 " + p.nextAuditDate() + " 前审核", "/qms?tab=audits"));
+            } else if ("DUE".equals(p.dueState())) {
+                todos.add(new Todo("SUPPLIER_AUDIT", "供应商审核将到期", "warn", p.name(), p.code(), p.dueDaysLeft() + " 天后到期（" + p.nextAuditDate() + "）", "/qms?tab=audits"));
+            }
+        }
+        for (RetainService.SampleView s : retains.dueForDestruction()) {
+            todos.add(new Todo("RETAIN", "留样待销毁", "muted", s.itemName(), s.batchNo(), "保存期已于 " + s.retainUntil() + " 届满，剩余 " + s.remainingQty() + " 件", "/qms?tab=retains"));
+        }
+        long pendingFormula = formulas.pendingCount();
+        if (pendingFormula > 0) {
+            todos.add(new Todo("FORMULA", "配方变更待签批", "warn", pendingFormula + " 个配方版本", "—", "由质量安全负责人签批后生效", "/formulas"));
+        }
+        for (FilingService.FilingView f : filings.expiring()) {
+            boolean expired = f.expiryDaysLeft() < 0;
+            todos.add(new Todo("FILING", expired ? "注册证已到期" : "注册证将到期", expired ? "bad" : "warn", f.fgName(), f.filingNo(),
+                    (expired ? "已于 " : "有效期至 ") + f.expiryDate() + (expired ? " 到期，不能上市放行" : ""), "/formulas?tab=filings"));
+        }
     }
 
     private static String plain(BigDecimal v) {

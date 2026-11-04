@@ -21,6 +21,19 @@ spring:
       # 在这里中途拒绝的话，后端没读完请求体就回错误，和 nginx 互相等待直到超时
       max-file-size: 30MB
       max-request-size: 30MB
+  # 每日提醒的邮件服务。host 留空表示不发邮件；默认按 465 端口 SSL 连接
+  mail:
+    host: ${SCM_SMTP_HOST:}
+    port: ${SCM_SMTP_PORT:465}
+    username: ${SCM_SMTP_USERNAME:}
+    password: ${SCM_SMTP_PASSWORD:}
+    default-encoding: UTF-8
+    properties:
+      mail.smtp.auth: ${SCM_SMTP_AUTH:true}
+      mail.smtp.ssl.enable: ${SCM_SMTP_SSL:true}
+      mail.smtp.connectiontimeout: 10000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
   jackson:
     time-zone: Asia/Shanghai
     serialization:
@@ -50,6 +63,12 @@ scm:
     # 附件文件目录；Docker 部署时是一个卷（见 docker-compose.yml），备份容器会一起打包
     dir: ${SCM_STORAGE_DIR:./data/files}
     max-file-mb: 20
+  notify:
+    # 每日待办摘要。enabled=false 时不启动定时任务，管理员仍可在“消息提醒”页手工发送
+    enabled: ${SCM_NOTIFY_ENABLED:false}
+    cron: ${SCM_NOTIFY_CRON:0 30 8 * * *}
+    mail-to: ${SCM_NOTIFY_MAIL_TO:}         # 收件人，多个用英文逗号隔开
+    wecom-webhook: ${SCM_NOTIFY_WECOM_WEBHOOK:}   # 企业微信群机器人地址，含密钥，不要提交到仓库
   serial:
     # 一物一码导出给印刷厂时拼在码前面的扫码地址，生产环境改成正式域名，如 https://scm.example.com/v/
     verify-url-prefix: ${SCM_VERIFY_URL_PREFIX:http://localhost:5173/v/}

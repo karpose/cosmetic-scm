@@ -15,7 +15,8 @@ http.interceptors.request.use((cfg) => {
 
 // 统一取 data；后端错误统一为 { message }，直接提示给用户
 http.interceptors.response.use(
-  (resp) => resp.data,
+  // fullResponse：需要响应头（如导出文件名）时返回完整响应
+  (resp) => (resp.config.fullResponse ? resp : resp.data),
   async (err) => {
     const status = err.response?.status
     // 下载类请求的错误体也是 Blob，要读出来才能拿到后端的中文提示

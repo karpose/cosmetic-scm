@@ -19,10 +19,14 @@ import com.cosmetic.scm.audit.AuditService;
 import com.cosmetic.scm.common.BizException;
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.domain.BatchStatus;
+import com.cosmetic.scm.domain.CaseStatus;
 import com.cosmetic.scm.domain.Decision;
+import com.cosmetic.scm.domain.DeviationLevel;
+import com.cosmetic.scm.domain.FilingStatus;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.MoType;
 import com.cosmetic.scm.domain.QcStage;
+import com.cosmetic.scm.domain.RetainStatus;
 import com.cosmetic.scm.domain.SourceType;
 import com.cosmetic.scm.domain.rules.ShelfLife;
 import com.cosmetic.scm.inventory.Batch;
@@ -31,7 +35,12 @@ import com.cosmetic.scm.inventory.InventoryService;
 import com.cosmetic.scm.inventory.InventoryService.BatchView;
 import com.cosmetic.scm.master.Item;
 import com.cosmetic.scm.master.MasterLookup;
+import com.cosmetic.scm.plm.ProductFilingRepository;
 import com.cosmetic.scm.production.MfgOrderRepository;
+import com.cosmetic.scm.qms.Deviation;
+import com.cosmetic.scm.qms.DeviationRepository;
+import com.cosmetic.scm.qms.RetainSample;
+import com.cosmetic.scm.qms.RetainSampleRepository;
 import com.cosmetic.scm.security.AppUser;
 
 import org.springframework.stereotype.Service;
@@ -50,6 +59,9 @@ public class QualityService {
     private final BatchRepository batches;
     private final InventoryService inventory;
     private final MfgOrderRepository mfgOrders;
+    private final DeviationRepository deviations;
+    private final RetainSampleRepository retainSamples;
+    private final ProductFilingRepository filings;
     private final MasterLookup lookup;
     private final AuditService audit;
     private final TimeProvider time;
@@ -119,6 +131,9 @@ public class QualityService {
         if (req.decision() == Decision.RELEASED && ShelfLife.isExpired(b.getExpDate(), time.today())) {
             throw new BizException("批次 " + b.getBatchNo() + " 已过有效期，不能放行");
         }
+        if (req.decision() == Decision.RELEASED) {
+            requireNoOpenDeviation(b);
+        }
         b.setStatus(req.decision() == Decision.RELEASED ? BatchStatus.RELEASED : BatchStatus.REJECTED);
         batches.save(b);
         QualityDecision d = newDecision(b, QcStage.MATERIAL_QC, req.decision(), req.reportNo(), req.note(), signer);
@@ -163,6 +178,13 @@ public class QualityService {
             if (item.getFilingNo() == null || item.getFilingNo().isBlank()) {
                 throw new BizException(item.getName() + " 还没有登记备案或注册编号，不能上市放行");
             }
+            requireNoOpenDeviation(b);
+            // 只看最新一条已完成的记录：注册证续期后，旧证的到期日不再有效
+            filings.findByFgItemIdAndStatusOrderByIdDesc(item.getId(), FilingStatus.FILED).stream().findFirst()
+                    .filter(f -> f.getExpiryDate() != null && f.getExpiryDate().isBefore(time.today()))
+                    .ifPresent(f -> {
+                        throw new BizException(item.getName() + " 的注册证 " + f.getFilingNo() + " 已于 " + f.getExpiryDate() + " 到期，不能上市放行");
+                    });
             if (req.reportNo() == null || req.reportNo().isBlank()) {
                 throw new BizException("请填写出厂检验报告编号");
             }
@@ -177,6 +199,16 @@ public class QualityService {
             d.setRetainLocation(req.retainLocation().trim());
             d.setRetainUntil(ShelfLife.retainUntil(b.getExpDate()));
             b.setStatus(BatchStatus.RELEASED);
+            RetainSample sample = new RetainSample();
+            sample.setBatchId(b.getId());
+            sample.setQty(d.getRetainQty());
+            sample.setRemainingQty(d.getRetainQty());
+            sample.setLocation(d.getRetainLocation());
+            sample.setRetainUntil(d.getRetainUntil());
+            sample.setStatus(RetainStatus.HELD);
+            sample.setCreatedBy(signer.getDisplayName());
+            sample.setCreatedAt(time.now());
+            retainSamples.save(sample);
         } else {
             b.setStatus(BatchStatus.REJECTED);
         }
@@ -224,6 +256,15 @@ public class QualityService {
         batches.save(b);
         audit.log("解冻批次", b.getBatchNo(), "恢复为" + back.getLabel() + "，签批人 " + signer.getDisplayName(), req.reason().trim());
         return single(b);
+    }
+
+    /** 微小偏差不挡放行；重大及以上的必须先关闭。 */
+    private void requireNoOpenDeviation(Batch b) {
+        List<String> open = deviations.findByBatchIdAndStatus(b.getId(), CaseStatus.OPEN).stream()
+                .filter(x -> x.getLevel() != DeviationLevel.MINOR).map(Deviation::getDeviationNo).toList();
+        if (!open.isEmpty()) {
+            throw new BizException("批次 " + b.getBatchNo() + " 有未关闭的偏差：" + String.join("、", open) + "，关闭后才能放行");
+        }
     }
 
     private QualityDecision newDecision(Batch b, QcStage stage, Decision decision, String reportNo, String note,

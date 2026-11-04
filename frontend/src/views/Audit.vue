@@ -5,6 +5,7 @@
         <h2>审计日志</h2>
         <p>每次新增、收货、发料、签批、出库、冻结和账号变更都会记录操作人、时间和原因。日志只增不改，系统不提供修改或删除入口。</p>
       </div>
+      <ExportButton report="audit" />
     </div>
     <el-card shadow="never" body-style="padding:0 0 8px">
       <template #header>
@@ -31,6 +32,7 @@
 </template>
 
 <script setup>
+import ExportButton from '../components/ExportButton.vue'
 import { computed, onMounted, ref } from 'vue'
 import http from '../api'
 import ListPager from '../components/ListPager.vue'

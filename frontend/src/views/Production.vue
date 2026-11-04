@@ -5,7 +5,10 @@
         <h2>生产与委托</h2>
         <p>委托代工和自有工厂走同一张单：品牌供料部分按“先到期先出”从自有仓发料，工厂代采部分在完工时登记受托厂的原料批号。完工批次一律进入“待上市放行”。</p>
       </div>
-      <el-button v-if="canCreate" type="primary" @click="openCreate">新建生产 / 委托单</el-button>
+      <div class="toolbar">
+        <ExportButton report="production" />
+        <el-button v-if="canCreate" type="primary" @click="openCreate">新建生产 / 委托单</el-button>
+      </div>
     </div>
 
     <el-card shadow="never" body-style="padding:0 0 8px">
@@ -88,6 +91,7 @@
         <el-descriptions :column="2" size="small" border>
           <el-descriptions-item label="生产方">{{ detail.data.mo.factoryName }}（{{ detail.data.mo.moTypeLabel }}）</el-descriptions-item>
           <el-descriptions-item label="状态">{{ detail.data.mo.statusLabel }}</el-descriptions-item>
+          <el-descriptions-item label="配方版本">V{{ detail.data.formulaVersionNo ?? '—' }}</el-descriptions-item>
           <el-descriptions-item v-if="detail.data.mo.actualQty" label="实际产量">{{ fmtQty(detail.data.mo.actualQty) }}（收率 {{ detail.data.mo.yieldPct }}%）</el-descriptions-item>
           <el-descriptions-item v-if="detail.data.mo.outBatchNo" label="产出批次"><BatchNo :no="detail.data.mo.outBatchNo" /></el-descriptions-item>
         </el-descriptions>
@@ -113,6 +117,7 @@
             </template>
           </el-table-column>
         </el-table>
+        <BatchRecord v-if="detail.data.mo.moType === 'OWN'" :key="detail.data.mo.id" :mo-id="detail.data.mo.id" />
         <h4 class="sec">附件</h4>
         <AttachmentList owner-type="MFG_ORDER" :owner-id="detail.data.mo.id" :can-upload="auth.canAttach()"
                         :title="detail.data.mo.moType === 'OEM' ? '受托厂出厂报告、批生产记录等（受托厂可在门户上传）' : '批生产记录、检验报告等'" />
@@ -195,6 +200,8 @@ import LoadError from '../components/LoadError.vue'
 import BatchNo from '../components/BatchNo.vue'
 import StatusTag from '../components/StatusTag.vue'
 import AttachmentList from '../components/AttachmentList.vue'
+import BatchRecord from '../components/BatchRecord.vue'
+import ExportButton from '../components/ExportButton.vue'
 import { useAuth } from '../stores/auth'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
