@@ -33,6 +33,12 @@
                 <span class="muted small"> {{ row.inci }}</span>
               </template>
             </el-table-column>
+            <el-table-column label="标准成本 / 指导价" width="150">
+              <template #default="{ row }">
+                <span class="mono">{{ row.stdCost != null ? `${fmtMoney(row.stdCost)}/${row.unit}` : '—' }}</span>
+                <div v-if="row.listPrice != null" class="muted small mono">指导价 {{ fmtMoney(row.listPrice) }}</div>
+              </template>
+            </el-table-column>
             <el-table-column label="保质期" width="90"><template #default="{ row }">{{ row.shelfMonths ? `${row.shelfMonths} 个月` : '—' }}</template></el-table-column>
             <el-table-column prop="filingNo" label="备案编号" min-width="150" />
             <el-table-column label="净含量" width="90"><template #default="{ row }">{{ row.netG ? `${fmtQty(row.netG)} g` : '' }}</template></el-table-column>
@@ -96,13 +102,14 @@
                   <span><b>{{ b.fgName }}</b> <span class="mono muted small">{{ b.fgCode }}</span></span>
                   <span class="toolbar">
                     <span class="muted small">{{ b.netG ? `净含量 ${fmtQty(b.netG)} g` : '未填净含量，无法校验浓度' }}</span>
+                    <span v-if="b.materialCost != null" class="small">物料成本 <b class="mono">{{ fmtMoney(b.materialCost) }}</b>/件<span v-if="!b.costComplete" class="muted">（有物料未填成本）</span></span>
                     <el-button v-if="canEdit" size="small" @click="openBom(b)">编辑</el-button>
                   </span>
                 </div>
               </template>
               <el-table v-if="b.lines.length" :data="b.lines" size="small">
                 <el-table-column label="物料" min-width="160"><template #default="{ row }">{{ row.itemName }} <span class="muted small mono">{{ row.itemCode }}</span></template></el-table-column>
-                <el-table-column label="单耗" width="130" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qtyPer) }} {{ row.unit }}</span></template></el-table-column>
+                <el-table-column label="单耗" width="130" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qtyPer, 6) }} {{ row.unit }}</span></template></el-table-column>
                 <el-table-column label="供料方式" width="100">
                   <template #default="{ row }"><el-tag size="small" :type="row.supplyMode === 'BRAND' ? 'primary' : 'info'" disable-transitions>{{ row.supplyMode === 'BRAND' ? '品牌供料' : '工厂代采' }}</el-tag></template>
                 </el-table-column>
@@ -130,6 +137,8 @@
           </el-form-item>
           <el-form-item label="单位"><el-input id="it-unit" v-model="item.unit" placeholder="kg / 个 / 瓶" /></el-form-item>
           <el-form-item label="保质期（月）"><el-input-number id="it-shelf" v-model="item.shelfMonths" :min="1" :max="120" :controls="false" style="width:100%" /></el-form-item>
+          <el-form-item :label="item.itemType === 'FG' ? '标准成本（元 / 件，不填按 BOM 估算）' : `标准成本（元 / ${item.unit || '单位'}）`"><el-input-number id="it-cost" v-model="item.stdCost" :min="0" :precision="4" :controls="false" style="width:100%" placeholder="选填" /></el-form-item>
+          <el-form-item v-if="item.itemType === 'FG'" label="指导价（元 / 件）"><el-input-number id="it-price" v-model="item.listPrice" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="选填" /></el-form-item>
         </div>
         <div v-if="item.itemType === 'RM'" class="form-grid">
           <el-form-item label="INCI 名"><el-input id="it-inci" v-model="item.inci" /></el-form-item>
@@ -174,6 +183,8 @@
           <el-form-item label="联系人与电话"><el-input id="pt-contact" v-model="partner.contact" /></el-form-item>
           <el-form-item label="地址"><el-input id="pt-addr" v-model="partner.address" /></el-form-item>
         </div>
+        <AttachmentList v-if="partner.id && partner.kind !== 'CUSTOMER'" style="margin-bottom:12px" owner-type="PARTNER" :owner-id="partner.id"
+                        :can-upload="auth.canAttach()" title="资质证书（营业执照、生产许可证、体系证书）" empty-text="还没有上传资质证书" />
         <div v-if="partner.kind !== 'CUSTOMER'" class="toolbar">
           <el-checkbox id="pt-qualified" v-model="partner.qualified">已审核，列入合格名录</el-checkbox>
           <el-checkbox v-if="partner.kind === 'SUPPLIER'" id="pt-critical" v-model="partner.criticalSupplier">关键原料供应商</el-checkbox>
@@ -241,10 +252,11 @@ import http from '../api'
 import ImportDialog from '../components/ImportDialog.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
+import AttachmentList from '../components/AttachmentList.vue'
 import { useAuth } from '../stores/auth'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
-import { ITEM_TYPE, PARTNER_KIND, WAREHOUSE_KIND, fmtQty } from '../utils/format'
+import { ITEM_TYPE, PARTNER_KIND, WAREHOUSE_KIND, fmtMoney, fmtQty } from '../utils/format'
 
 // 合规校验结果标签
 const CheckTag = defineComponent({
@@ -266,7 +278,7 @@ const boms = ref([])
 const canEdit = computed(() => auth.hasAny('ADMIN', 'MASTER_DATA'))
 const addLabel = computed(() => ({ items: '新增物料', partners: '新增往来单位', warehouses: '新增仓库', boms: '维护 BOM' }[tab.value]))
 
-const emptyItem = () => ({ id: null, code: '', name: '', itemType: 'RM', unit: 'kg', inci: '', limitPct: null, banned: false, shelfMonths: null, filingNo: '', netG: null, active: true })
+const emptyItem = () => ({ id: null, code: '', name: '', itemType: 'RM', unit: 'kg', inci: '', limitPct: null, banned: false, shelfMonths: null, filingNo: '', netG: null, active: true, stdCost: null, listPrice: null })
 const emptyPartner = () => ({ id: null, code: '', name: '', kind: 'SUPPLIER', licenseNo: '', licenseExpiry: null, licenseScope: '', batchPrefix: '', channel: '', minShelfPct: 0, contact: '', address: '', qualified: true, criticalSupplier: false })
 const item = reactive({ visible: false, saving: false, ...emptyItem() })
 const partner = reactive({ visible: false, saving: false, ...emptyPartner() })

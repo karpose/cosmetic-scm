@@ -59,6 +59,9 @@
           </div>
         </div>
 
+        <AttachmentList portal owner-type="MFG_ORDER" :owner-id="o.id" :can-upload="o.status !== 'COMPLETED'"
+                        title="附件（出厂检验报告、批生产记录）" empty-text="申报时请上传出厂检验报告扫描件" />
+
         <footer v-if="o.status !== 'COMPLETED'" class="toolbar">
           <el-button @click="openProgress(o)">{{ o.progress.length ? '回传进度' : '确认接单' }}</el-button>
           <el-button type="primary" :disabled="!canReport(o)" @click="openReport(o)">申报完工与出厂放行</el-button>
@@ -124,6 +127,7 @@ import { ElMessage } from 'element-plus'
 import http from '../api'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
+import AttachmentList from '../components/AttachmentList.vue'
 import { useAuth } from '../stores/auth'
 import { OEM_STAGES, fmtQty, fmtTime, today } from '../utils/format'
 import { useLoader } from '../utils/loader'

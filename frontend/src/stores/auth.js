@@ -31,6 +31,10 @@ export const useAuth = defineStore('auth', {
     hasAny(...roles) {
       return roles.some((r) => this.roles.includes(r))
     },
+    // 能上传附件：除只读外的内部岗位（与后端 AttachmentController 一致）
+    canAttach() {
+      return this.hasAny('ADMIN', 'MASTER_DATA', 'PURCHASE', 'WAREHOUSE', 'PRODUCTION', 'QA', 'QSO', 'SALES')
+    },
     async login(username, password) {
       const resp = await http.post('/auth/login', { username, password })
       this.token = resp.token

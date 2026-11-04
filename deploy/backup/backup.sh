@@ -23,11 +23,17 @@ dump() {
   # 校验压缩包完整，坏包直接报错，便于监控发现
   gzip -t "$out"
   echo "$(date '+%F %T') 备份完成：$out（$(du -h "$out" | cut -f1)）"
+  # 附件文件卷（只读挂载在 /files）一起打包
+  if [ -d /files ]; then
+    fout="$DIR/files-${ts}.tar.gz"
+    tar -czf "$fout.part" -C /files . && mv "$fout.part" "$fout" && gzip -t "$fout"
+    echo "$(date '+%F %T') 附件备份完成：$fout（$(du -h "$fout" | cut -f1)）"
+  fi
   # 按文件名里的日期清理过期备份（只用 shell 和 date，不依赖精简镜像里可能没有的 find）
   cutoff=$(date -d "-${KEEP_DAYS} days" +%Y%m%d)
-  for f in "$DIR"/"${DB}"-*.sql.gz; do
+  for f in "$DIR"/"${DB}"-*.sql.gz "$DIR"/files-*.tar.gz; do
     [ -e "$f" ] || continue
-    day=$(basename "$f" | sed "s/^${DB}-\([0-9]\{8\}\)-.*/\1/")
+    day=$(basename "$f" | sed "s/^[a-z_]*-\([0-9]\{8\}\)-.*/\1/")
     if [ "$day" -lt "$cutoff" ]; then
       rm -f "$f" && echo "已清理过期备份：$f"
     fi

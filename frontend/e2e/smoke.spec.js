@@ -20,6 +20,13 @@ async function login(page, username, password = DEMO, { expectOk = true } = {}) 
 const toast = (page, text) => expect(page.locator('.el-message').filter({ hasText: text }).first()).toBeVisible()
 const dialog = (page, title) => page.locator('.el-dialog').filter({ hasText: title })
 
+// 用当前登录账号直接调接口，取测试要用的数据
+const api = (page, url) => page.evaluate(async (u) => {
+  const r = await fetch(`/api${u}`, { headers: { Authorization: `Bearer ${localStorage.getItem('scm_token')}` } })
+  return r.json()
+}, url)
+const pdfFile = (name) => ({ name, mimeType: 'application/pdf', buffer: Buffer.from(`%PDF-1.4 ${name}`) })
+
 test('登录后看到总览和各项待办', async ({ page }) => {
   await login(page, 'qa1')
   await expect(page.getByRole('heading', { name: '总览' })).toBeVisible()
@@ -43,6 +50,8 @@ test('受托厂在门户申报完工，品牌方按申报入库', async ({ page 
   await login(page, 'oem1')
   await expect(page).toHaveURL(/\/portal\/oem/)
   const card = page.locator('section.order').filter({ hasText: '已发料' }).first()
+  await card.locator('input[type=file]').setInputFiles(pdfFile('QC-OEM-E2E.pdf'))
+  await toast(page, '已上传 QC-OEM-E2E.pdf')
   await card.getByRole('button', { name: '申报完工与出厂放行' }).click()
   const d = dialog(page, '完工与出厂放行申报')
   await d.locator('.el-form-item').filter({ hasText: '本厂成品批号' }).locator('input').fill('HC-E2E-01')
@@ -56,6 +65,10 @@ test('受托厂在门户申报完工，品牌方按申报入库', async ({ page 
   await login(page, 'prod1')
   await page.goto('/production')
   const row = page.locator('.el-table__row').filter({ hasText: '待品牌方确认' }).first()
+  // 受托厂传的报告，品牌方在委托单明细里能看到
+  await row.getByRole('button', { name: '明细' }).click()
+  await expect(page.locator('.el-drawer .att a', { hasText: 'QC-OEM-E2E.pdf' })).toBeVisible()
+  await page.locator('.el-drawer__close-btn').click()
   await row.getByRole('button', { name: '完工入库' }).click()
   const done = dialog(page, '完工入库')
   await expect(done.getByText('已按受托厂')).toBeVisible()
@@ -105,6 +118,11 @@ test('经营看板和补货建议能打开并算出结果', async ({ page }) => 
   await page.goto('/analytics')
   await expect(page.getByText('成品库存效期分布')).toBeVisible()
   await expect(page.getByText('呆滞库存')).toBeVisible()
+  await expect(page.getByText('库存金额', { exact: true })).toBeVisible()
+  await page.goto('/master')
+  await page.getByRole('tab', { name: 'BOM' }).click()
+  await expect(page.getByText('物料成本').first()).toBeVisible()
+  await expect(page.getByText('0.00003 kg')).toBeVisible()
   await page.goto('/planning')
   await expect(page.locator('.el-table__row').filter({ hasText: '烟酰胺精华液' }).first()).toBeVisible()
   await page.locator('.el-table__row').filter({ hasText: '角鲨烷修护面霜' }).first().locator('.el-checkbox').click()
@@ -129,6 +147,87 @@ test('消费者扫码无需登录，召回中的批次提示停止使用', async
   await expect(page.getByRole('heading', { name: '该批次已暂停销售' })).toBeVisible()
   await page.goto('/v/0000-0000-0000')
   await expect(page.getByRole('heading', { name: '未查到此防伪码' })).toBeVisible()
+})
+
+test('从库存勾选批次打印带二维码的标签', async ({ page }) => {
+  await login(page, 'prod1')
+  await page.goto('/stock')
+  const row = page.locator('.el-table__row').first()
+  await row.locator('.el-checkbox').click()
+  await page.getByRole('button', { name: '打印标签（1）' }).click()
+  await expect(page).toHaveURL(/\/labels\?batches=/)
+  await expect(page.locator('.label svg')).toBeVisible()
+  const no = new URL(page.url()).searchParams.get('batches')
+  await expect(page.locator('.label .bno')).toHaveText(no)
+  await page.getByText('A4 纸').click()
+  await page.locator('.el-input-number input').fill('3')
+  await page.locator('.el-input-number input').blur()
+  await expect(page.locator('.label')).toHaveCount(3)
+})
+
+test('发料扫码核对：扫错批次当场拦下，结果记入审计', async ({ page }) => {
+  await login(page, 'prod1')
+  const fgBatch = (await api(page, '/stock')).find((s) => s.itemType === 'FG').batchNo
+  await page.goto('/scan')
+  await page.getByRole('tab', { name: '发料核对' }).click()
+  await page.locator('.pick .el-select').click()
+  await page.locator('.el-select-dropdown__item:visible').first().click()
+  const expected = await page.locator('.el-table__row .mono').first().innerText()
+
+  const scan = async (no) => {
+    await page.getByPlaceholder('扫码枪对准标签').fill(no)
+    await page.getByPlaceholder('扫码枪对准标签').press('Enter')
+  }
+  await scan(expected)
+  await expect(page.locator('.flash')).toContainText(`${expected} 一致`)
+  await scan(fgBatch)
+  await expect(page.locator('.flash.bad')).toContainText('不是本单的批次')
+  await scan('NO-SUCH-BATCH')
+  await expect(page.locator('.flash.bad')).toContainText('查不到批号')
+
+  await page.getByRole('button', { name: '提交核对结果' }).click()
+  await toast(page, `扫错 ${fgBatch}`)
+
+  await login(page, 'admin', 'Admin@123456')
+  await page.goto('/audit')
+  await expect(page.getByText('发料扫码核对').first()).toBeVisible()
+})
+
+test('附件：上传、下载、拦截假文件，只读账号不能上传', async ({ page }) => {
+  await login(page, 'qa1')
+  const batch = (await api(page, '/stock'))[0].batchNo
+  const openTrace = async () => {
+    await page.goto('/trace')
+    await page.locator('#trace-no').fill(batch)
+    await page.getByRole('button', { name: '追溯' }).click()
+    await expect(page.locator('.att').first()).toBeVisible()
+  }
+  await openTrace()
+  const input = page.locator('.att input[type=file]').first()
+
+  await input.setInputFiles({ name: 'fake.pdf', mimeType: 'application/pdf', buffer: Buffer.from('这不是 PDF') })
+  await toast(page, '和扩展名 .pdf 不符')
+
+  await input.setInputFiles(pdfFile('COA-E2E.pdf'))
+  await toast(page, '已上传 COA-E2E.pdf')
+  const link = page.locator('.att a', { hasText: 'COA-E2E.pdf' })
+  await expect(link).toBeVisible()
+
+  const [download] = await Promise.all([page.waitForEvent('download'), link.click()])
+  expect(download.suggestedFilename()).toBe('COA-E2E.pdf')
+
+  // 下载被拒时（文件被改动）要显示后端的中文原因，不是笼统的“请求失败”
+  await page.route('**/api/attachments/*/download', (r) => r.fulfill({
+    status: 400, contentType: 'application/json', body: JSON.stringify({ message: '附件校验不一致，已拒绝下载' })
+  }))
+  await link.click()
+  await toast(page, '附件校验不一致')
+  await page.unroute('**/api/attachments/*/download')
+
+  await login(page, 'viewer1')
+  await openTrace()
+  await expect(page.locator('.att a', { hasText: 'COA-E2E.pdf' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '上传附件' })).toHaveCount(0)
 })
 
 test('门户账号进不了内部页面', async ({ page }) => {

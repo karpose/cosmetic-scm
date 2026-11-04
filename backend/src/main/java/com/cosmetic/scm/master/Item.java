@@ -49,5 +49,11 @@ public class Item {
     @Column(name = "net_g") // 默认命名策略会映射成 netg
     private BigDecimal netG;
 
+    /** 标准成本：元 / 物料单位 */
+    private BigDecimal stdCost;
+
+    /** 成品指导价：元 / 件 */
+    private BigDecimal listPrice;
+
     private boolean active = true;
 }

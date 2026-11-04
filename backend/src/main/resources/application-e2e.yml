@@ -15,3 +15,5 @@ scm:
     force-password-change: false
   integration:
     api-key: e2e-integration-key
+  storage:
+    dir: ${java.io.tmpdir}/scm-e2e-files

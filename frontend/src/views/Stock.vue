@@ -17,10 +17,12 @@
           </el-select>
           <el-input id="st-q" v-model="f.q" placeholder="搜索物料或批号" clearable style="width:220px" @change="load" />
           <el-checkbox id="st-zero" v-model="f.includeZero" @change="load">显示已用完批次</el-checkbox>
+          <el-button size="small" :disabled="!picked.length" @click="printLabels">打印标签（{{ picked.length }}）</el-button>
         </div>
       </template>
       <LoadError v-if="error" :message="error" :loading="loading" @retry="load" />
-      <el-table v-else :data="t.paged.value" v-loading="loading" empty-text="没有符合条件的库存">
+      <el-table v-else :data="t.paged.value" v-loading="loading" empty-text="没有符合条件的库存" @selection-change="(s) => (picked = s)">
+        <el-table-column type="selection" width="40" />
         <el-table-column label="物料" min-width="180"><template #default="{ row }">{{ row.itemName }} <span class="muted small mono">{{ row.itemCode }}</span></template></el-table-column>
         <el-table-column label="类型" width="70"><template #default="{ row }">{{ ITEM_TYPE[row.itemType] }}</template></el-table-column>
         <el-table-column label="批号" width="150"><template #default="{ row }"><BatchNo :no="row.batchNo" /></template></el-table-column>
@@ -37,6 +39,7 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
 import ListPager from '../components/ListPager.vue'
@@ -52,6 +55,10 @@ const warehouses = ref([])
 const loading = ref(false)
 const error = ref('')
 const t = usePaged(rows, { pageSize: 50 })
+const router = useRouter()
+const picked = ref([])
+// 同一批次在多个仓库时只打一次
+const printLabels = () => router.push({ path: '/labels', query: { batches: [...new Set(picked.value.map((r) => r.batchNo))].join(',') } })
 
 async function load() {
   loading.value = true

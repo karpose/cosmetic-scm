@@ -94,7 +94,7 @@ public class PlanningService {
                         BigDecimal dailyDemand, BigDecimal available, BigDecimal nearExpiry, BigDecimal pendingRelease,
                         BigDecimal wip, BigDecimal projected, BigDecimal safetyStock, BigDecimal reorderPoint,
                         Integer daysOfSupply, boolean belowReorderPoint, BigDecimal suggested, Long factoryId,
-                        String factoryName) {
+                        String factoryName, BigDecimal unitCost, BigDecimal listPrice) {
     }
 
     public record PlanLine(@NotNull Long fgItemId, @NotNull @Positive BigDecimal qty, Long factoryId) {
@@ -106,7 +106,7 @@ public class PlanningService {
     public record MaterialRow(Long itemId, String code, String name, String unit, String itemType, BigDecimal gross,
                               BigDecimal openOrders, BigDecimal onHand, BigDecimal quarantine, BigDecimal onOrder,
                               BigDecimal suggested, Long supplierId, String supplierName, boolean supplierUsable,
-                              List<String> usedBy) {
+                              List<String> usedBy, BigDecimal unitCost) {
     }
 
     // ---------- 成品 ----------
@@ -165,6 +165,7 @@ public class PlanningService {
             lastFactory.putIfAbsent(m.getFgItemId(), m.getFactoryId());
         }
         Map<Long, Partner> pm = lookup.partnerMap();
+        Map<Long, BigDecimal> cost = master.unitCosts();
 
         List<FgRow> out = new ArrayList<>();
         for (Item fg : lookup.itemMap().values().stream()
@@ -185,7 +186,7 @@ public class PlanningService {
                     nearExpiry.getOrDefault(id, BigDecimal.ZERO), pending.getOrDefault(id, BigDecimal.ZERO),
                     wip.getOrDefault(id, BigDecimal.ZERO), r.projected(), r.safetyStock(), r.reorderPoint(),
                     r.daysOfSupply(), r.belowReorderPoint(), r.suggested(), f == null ? null : f.getId(),
-                    f == null ? null : f.getName()));
+                    f == null ? null : f.getName(), cost.get(id), fg.getListPrice()));
         }
         return out;
     }
@@ -279,7 +280,7 @@ public class PlanningService {
                     quarantine.getOrDefault(m.getId(), BigDecimal.ZERO), onOrder.getOrDefault(m.getId(), BigDecimal.ZERO),
                     Replenishment.netRequirement(need, have, lot), sup == null ? null : sup.getId(),
                     sup == null ? null : sup.getName(), sup != null && usable.getOrDefault(sup.getId(), false),
-                    usedBy.getOrDefault(m.getId(), List.of())));
+                    usedBy.getOrDefault(m.getId(), List.of()), m.getStdCost()));
         }
         return out;
     }

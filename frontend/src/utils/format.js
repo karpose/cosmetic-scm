@@ -1,8 +1,16 @@
-export function fmtQty(v) {
+export function fmtQty(v, digits = 4) {
   if (v === null || v === undefined || v === '') return '—'
   const n = Number(v)
   if (Number.isNaN(n)) return String(v)
-  return n.toLocaleString('zh-CN', { maximumFractionDigits: 4 })
+  return n.toLocaleString('zh-CN', { maximumFractionDigits: digits })
+}
+
+/** 金额：保留两位小数，带千分位；空值显示 — */
+export function fmtMoney(v) {
+  if (v === null || v === undefined || v === '') return '—'
+  const n = Number(v)
+  if (Number.isNaN(n)) return String(v)
+  return `¥${n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export function fmtDate(v) {

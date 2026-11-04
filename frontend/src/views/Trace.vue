@@ -22,6 +22,7 @@
             <span class="toolbar">
               <StatusTag :status="t.batch.status" :label="t.batch.statusLabel" />
               <span class="muted small">追溯用时 {{ elapsedText }} 毫秒</span>
+              <el-button size="small" @click="$router.push({ path: '/labels', query: { batches: t.batch.batchNo } })">打印标签</el-button>
             </span>
           </div>
         </template>
@@ -84,6 +85,11 @@
           </div>
         </section>
       </div>
+
+      <el-card shadow="never">
+        <AttachmentList owner-type="BATCH" :owner-id="t.batch.id" :can-upload="auth.canAttach()"
+                        title="批次附件（COA、检验报告、批生产记录）" />
+      </el-card>
 
       <el-card shadow="never" body-style="padding:0">
         <template #header>
@@ -154,6 +160,7 @@ import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
 import ShelfBar from '../components/ShelfBar.vue'
 import StatusTag from '../components/StatusTag.vue'
+import AttachmentList from '../components/AttachmentList.vue'
 import { useAuth } from '../stores/auth'
 import { ITEM_TYPE, fmtDate, fmtQty, fmtTime } from '../utils/format'
 

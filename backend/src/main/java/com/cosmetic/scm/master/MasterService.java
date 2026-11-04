@@ -98,6 +98,8 @@ public class MasterService {
         item.setFilingNo(req.itemType() == ItemType.FG ? blankToNull(req.filingNo()) : null);
         item.setNetG(req.itemType() == ItemType.FG ? req.netG() : null);
         item.setActive(req.active() == null || req.active());
+        item.setStdCost(req.stdCost());
+        item.setListPrice(req.itemType() == ItemType.FG ? req.listPrice() : null);
     }
 
     // ---------- 往来单位 ----------
@@ -287,11 +289,56 @@ public class MasterService {
 
     private BomView buildBomView(Item fg, Map<Long, Item> im) {
         return boms.findByFgItemId(fg.getId())
-                .map(b -> new BomView(fg.getId(), fg.getCode(), fg.getName(), fg.getNetG(), b.getUpdatedAt(), b.getUpdatedBy(),
-                        bomLines.findByBomIdOrderByLineNo(b.getId()).stream()
-                                .map(l -> lineView(fg, im.get(l.getItemId()), l.getQtyPer(), l.getSupplyMode()))
-                                .toList()))
-                .orElseGet(() -> new BomView(fg.getId(), fg.getCode(), fg.getName(), fg.getNetG(), null, null, List.of()));
+                .map(b -> {
+                    List<BomLine> ls = bomLines.findByBomIdOrderByLineNo(b.getId());
+                    Cost cost = materialCost(ls, im);
+                    return new BomView(fg.getId(), fg.getCode(), fg.getName(), fg.getNetG(), b.getUpdatedAt(), b.getUpdatedBy(),
+                            ls.stream().map(l -> lineView(fg, im.get(l.getItemId()), l.getQtyPer(), l.getSupplyMode())).toList(),
+                            cost.value(), cost.complete());
+                })
+                .orElseGet(() -> new BomView(fg.getId(), fg.getCode(), fg.getName(), fg.getNetG(), null, null, List.of(), null, false));
+    }
+
+    private record Cost(BigDecimal value, boolean complete) {
+    }
+
+    /** 每件成品的物料成本 = Σ 单耗 × 物料标准成本；有物料没填成本时 complete 为 false。 */
+    private static Cost materialCost(List<BomLine> lines, Map<Long, Item> im) {
+        if (lines.isEmpty()) {
+            return new Cost(null, false);
+        }
+        BigDecimal sum = BigDecimal.ZERO;
+        boolean complete = true;
+        for (BomLine l : lines) {
+            BigDecimal c = im.get(l.getItemId()).getStdCost();
+            if (c == null) {
+                complete = false;
+            } else {
+                sum = sum.add(c.multiply(l.getQtyPer()));
+            }
+        }
+        return new Cost(sum.setScale(4, java.math.RoundingMode.HALF_UP), complete);
+    }
+
+    /**
+     * 估值用的单位成本：填了标准成本就用标准成本；成品没填时用 BOM 物料成本（物料成本都齐时）；都没有为空。
+     * 看板、补货建议换算金额都走这里，口径一致。
+     */
+    @Transactional(readOnly = true)
+    public Map<Long, BigDecimal> unitCosts() {
+        Map<Long, Item> im = lookup.itemMap();
+        Map<Long, BigDecimal> out = new java.util.HashMap<>();
+        for (Item i : im.values()) {
+            if (i.getStdCost() != null) {
+                out.put(i.getId(), i.getStdCost());
+            } else if (i.getItemType() == ItemType.FG) {
+                Cost c = materialCost(bomLines(i.getId()), im);
+                if (c.complete()) {
+                    out.put(i.getId(), c.value());
+                }
+            }
+        }
+        return out;
     }
 
     private BomLineView lineView(Item fg, Item m, BigDecimal qtyPer, com.cosmetic.scm.domain.SupplyMode mode) {

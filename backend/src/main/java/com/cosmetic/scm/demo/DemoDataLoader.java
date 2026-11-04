@@ -129,17 +129,17 @@ public class DemoDataLoader implements ApplicationRunner {
         AppUser qso = users.findByUsername("qso1").orElseThrow();
 
         // ---------- 主数据 ----------
-        Item nia = as("admin", () -> rm("RM-NIA-001", "烟酰胺", "Niacinamide", null, 24));
-        Item gly = as("admin", () -> rm("RM-GLY-002", "甘油", "Glycerin", null, 36));
-        Item ha = as("admin", () -> rm("RM-HA-003", "透明质酸钠", "Sodium Hyaluronate", null, 24));
-        Item phe = as("admin", () -> rm("RM-PHE-004", "苯氧乙醇", "Phenoxyethanol", new BigDecimal("1.0"), 36));
-        Item squ = as("admin", () -> rm("RM-SQU-005", "角鲨烷", "Squalane", null, 24));
-        Item btl = as("admin", () -> pk("PK-BTL-001", "30ml 滴管精华瓶"));
-        Item box2 = as("admin", () -> pk("PK-BOX-002", "精华彩盒 v2"));
-        Item jar = as("admin", () -> pk("PK-JAR-003", "50g 面霜瓶"));
-        Item box4 = as("admin", () -> pk("PK-BOX-004", "面霜彩盒 v1"));
-        Item serum = as("admin", () -> fg("FG-SER-001", "烟酰胺精华液 30ml", "示例备案编号-0001", "30"));
-        Item cream = as("admin", () -> fg("FG-CRM-002", "角鲨烷修护面霜 50g", "示例备案编号-0002", "50"));
+        Item nia = as("admin", () -> rm("RM-NIA-001", "烟酰胺", "Niacinamide", null, 24, "180"));
+        Item gly = as("admin", () -> rm("RM-GLY-002", "甘油", "Glycerin", null, 36, "12"));
+        Item ha = as("admin", () -> rm("RM-HA-003", "透明质酸钠", "Sodium Hyaluronate", null, 24, "3600"));
+        Item phe = as("admin", () -> rm("RM-PHE-004", "苯氧乙醇", "Phenoxyethanol", new BigDecimal("1.0"), 36, "45"));
+        Item squ = as("admin", () -> rm("RM-SQU-005", "角鲨烷", "Squalane", null, 24, "260"));
+        Item btl = as("admin", () -> pk("PK-BTL-001", "30ml 滴管精华瓶", "2.80"));
+        Item box2 = as("admin", () -> pk("PK-BOX-002", "精华彩盒 v2", "1.20"));
+        Item jar = as("admin", () -> pk("PK-JAR-003", "50g 面霜瓶", "3.50"));
+        Item box4 = as("admin", () -> pk("PK-BOX-004", "面霜彩盒 v1", "1.50"));
+        Item serum = as("admin", () -> fg("FG-SER-001", "烟酰胺精华液 30ml", "示例备案编号-0001", "30", "199"));
+        Item cream = as("admin", () -> fg("FG-CRM-002", "角鲨烷修护面霜 50g", "示例备案编号-0002", "50", "259"));
 
         PartnerView hc = as("admin", () -> partner("SUP-HC", "华澄化工原料（示例）", PartnerKind.SUPPLIER,
                 "示例质量体系证书 QS-118", t.plusDays(300), null, null, null, 0, true));
@@ -282,16 +282,20 @@ public class DemoDataLoader implements ApplicationRunner {
         }
     }
 
-    private Item rm(String code, String name, String inci, BigDecimal limit, int shelf) {
-        return master.createItem(new ItemReq(code, name, ItemType.RM, "kg", inci, limit, false, shelf, null, null, true));
+    private Item rm(String code, String name, String inci, BigDecimal limit, int shelf, String cost) {
+        return master.createItem(new ItemReq(code, name, ItemType.RM, "kg", inci, limit, false, shelf, null, null, true,
+                new BigDecimal(cost), null));
     }
 
-    private Item pk(String code, String name) {
-        return master.createItem(new ItemReq(code, name, ItemType.PK, "个", null, null, false, null, null, null, true));
+    private Item pk(String code, String name, String cost) {
+        return master.createItem(new ItemReq(code, name, ItemType.PK, "个", null, null, false, null, null, null, true,
+                new BigDecimal(cost), null));
     }
 
-    private Item fg(String code, String name, String filing, String netG) {
-        return master.createItem(new ItemReq(code, name, ItemType.FG, "瓶", null, null, false, 36, filing, new BigDecimal(netG), true));
+    /** 成品不填标准成本，按 BOM 物料成本估算；只填指导价。 */
+    private Item fg(String code, String name, String filing, String netG, String price) {
+        return master.createItem(new ItemReq(code, name, ItemType.FG, "瓶", null, null, false, 36, filing, new BigDecimal(netG), true,
+                null, new BigDecimal(price)));
     }
 
     private PartnerView partner(String code, String name, PartnerKind kind, String license, LocalDate expiry,
