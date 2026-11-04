@@ -37,6 +37,11 @@ public final class Replenishment {
     public static Result calc(BigDecimal shippedInWindow, BigDecimal available, BigDecimal pipeline, Params p,
                               BigDecimal lotSize) {
         BigDecimal daily = nz(shippedInWindow).divide(BigDecimal.valueOf(p.windowDays()), 4, RoundingMode.HALF_UP);
+        return calcFromDaily(daily, available, pipeline, p, lotSize);
+    }
+
+    /** 日均需求由外部给出（如按预测算出的未来日均），其余算法相同。 */
+    public static Result calcFromDaily(BigDecimal daily, BigDecimal available, BigDecimal pipeline, Params p, BigDecimal lotSize) {
         BigDecimal safety = daily.multiply(BigDecimal.valueOf(p.safetyDays())).setScale(0, RoundingMode.UP);
         BigDecimal reorder = daily.multiply(BigDecimal.valueOf(p.leadDays())).setScale(0, RoundingMode.UP).add(safety);
         BigDecimal projected = nz(available).add(nz(pipeline));

@@ -176,6 +176,13 @@ public class MesService {
         }
     }
 
+    /** 是否已经开工：清过场或做过工序。开工后不能取消。 */
+    @Transactional(readOnly = true)
+    public boolean started(Long moId) {
+        return !clearances.findByMoId(moId).isEmpty()
+                || steps.findByMoIdOrderByStepNo(moId).stream().anyMatch(s -> s.getStatus() != StepStatus.PENDING);
+    }
+
     /** 完工入库前还缺什么；没有批记录的单子返回空。 */
     @Transactional(readOnly = true)
     public List<String> missing(Long moId) {

@@ -25,6 +25,8 @@ public class NotificationLog {
 
     private String channel;
 
+    private String recipient;
+
     private String subject;
 
     private Integer itemCount;

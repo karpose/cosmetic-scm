@@ -32,7 +32,7 @@ cp .env.example .env && docker compose up -d --build
 ## 架构
 
 - 后端 `backend/src/main/java/com/cosmetic/scm/`，按业务模块分包：master、purchase、inventory（含库存作业 StockOps、扫码 ScanService）、production、quality、sales、salesreturn、complaint、recall、oemportal、dealer、integration、planning、serial、analytics、attachment、plm、qms、mes、report、notify、trace、dashboard、audit、security、demo。跨模块只通过 Repository 读写，服务之间不互相注入，避免循环依赖。
-- `domain/rules/` 是纯 Java 业务规则（FefoAllocator、ShelfLife、FormulaCompliance、FormulaDiff），不依赖框架，有单元测试。新的计算规则优先放这里。
+- `domain/rules/` 是纯 Java 业务规则（FefoAllocator、ShelfLife、FormulaCompliance、FormulaDiff、Replenishment、DemandForecast），不依赖框架，有单元测试。新的计算规则优先放这里。
 - 实体之间只用 Long 外键字段，不用 JPA 关联映射；列表视图通过 `MasterLookup` 一次载入主数据 Map 再组装 record 视图。
 - 表结构只由 Flyway 管理（`ddl-auto: none`）。改表新增 `V{n}__xxx.sql`，**绝不修改已有迁移脚本**。SQL 需同时兼容 MySQL 8 和 H2 MySQL 模式。
 - 前端 `frontend/src/`：Vue 3 `<script setup>` + Element Plus，JavaScript（非 TS）。接口统一走 `src/api.js`（自动带 JWT，错误统一 `ElMessage` 提示，`{ silent: true }` 可静默）。主数据下拉用 `utils/refdata.js` 的 `useRefData()`。列表筛选 + 分页统一用 `utils/table.js` 的 `usePaged()` 和 `components/ListPager.vue`，加载失败用 `LoadError.vue`。
@@ -55,8 +55,10 @@ cp .env.example .env && docker compose up -d --build
 - 放行的前置检查在 `QualityService`：批次有未关闭的重大及以上偏差、注册证过期都不能放行。放行时写 `retain_sample`，这是留样台账的唯一入口。
 - 批记录（`MesService`）只对自产且发料时有工艺路线的单子生效，在发料事务里固化。`ProductionService.complete` 先查 `mes.missing()`，并把这张单的偏差挂到产出批次。工序记录提交后不提供修改接口。过程检验超限不阻止生产，但必须自动生成偏差。
 - 签批、复核、验证类操作的执行人不能是操作人本身（CAPA 完成人、工序操作人、配方发起人），规则写在服务层，不靠界面隐藏。
-- 导出在服务端生成（`ReportService` + `common/XlsxWriter`），每次写审计。单元格文本只写内联字符串，不写公式。新增报表在 `registry()` 里加一项。
-- 提醒内容直接取 `DashboardService.summary()` 的待办，不另算；新的到期规则加到总览待办就会进提醒。错误信息写库前要去掉 webhook 地址（含密钥）。
+- 导出在服务端生成（`ReportService` + `common/XlsxWriter`），每次写审计。单元格文本只写内联字符串，不写公式。新增报表在 `registry()` 里加一项。预测规则在 `domain/rules/DemandForecast`，历史按首次出库到上个完整月。
+- 提醒内容直接取 `DashboardService.summary()` 的待办，不另算；新的到期规则加到总览待办就会进提醒，新的待办类型要在 `TodoRouting` 里指定岗位，否则不进个人邮件。错误信息写库前要去掉 webhook 地址（含密钥）。
+- 生产单取消（`ProductionService.cancel`）：未发料直接取消；已发料未开工退料并删除 `mfg_issue`（否则追溯会显示批次流向这张单，流水和审计保留）；开工后（`mes.started`）或受托厂已回传生产中、已申报的不能取消。新增读生产单状态的代码要想到 CANCELLED。采购单：没收货 CANCELLED，部分收货 CLOSED。
+- 导出（`ReportService`）必须用 `listAll` 类查询，不能用页面的 Top300 查询；超过 `MAX_ROWS` 报错，不截断。页面列表到上限时用 `ListCapHint` 提示。
 - 登录失败计数要落库，`LoginService.login` 对 BizException 不回滚；密码规则统一走 `PasswordPolicy`。
 - 委托生产完工前必须确认受托厂已出厂放行；实际产量超出计划 95%–102% 必须填物料平衡说明；上市放行必须登记留样，保存期 = 有效期 + 6 个月。
 - 供应商 / 受托厂不在合格名录或资质过期，不能下单；禁用原料不能采购、不能进 BOM；限用原料按净含量校验浓度上限。
@@ -72,10 +74,10 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-04）
 
-- 后端 `mvn clean test` 56 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 17 项全部通过；GitHub Actions 在 PR 上跑这三项。
+- 后端 `mvn clean test` 71 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 19 项全部通过；GitHub Actions 在 PR 上跑这三项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 已升到 1.18.48（Boot 3.3 自带的 1.18.34 在 JDK 27 上编译崩溃）。判断“某 JDK 能编译”时务必 `mvn clean`。
-- 已完成：一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。
+- 已完成：一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。
 - Docker 部署已在本机 Colima（profile `cosmetic-scm`）上完整演练过：MySQL 8 上迁移和示例数据都正常，HTTPS、首次改密、备份恢复、数据库宕机时的健康检查都实测通过，记录见 `docs/csv/07-部署预验证记录-2026-11-03.md`（含 V5 升级和附件备份恢复的追加演练）。CSP、Permissions-Policy 和上传限制只有经过 nginx 才生效，开发服务器测不出来，改这些要走一遍 Docker。这台 Colima 没有共享宿主机目录，绑定挂载会是空目录；里面还有一套用 8088 端口的 `cosmetic-scm` 旧部署，不要动它。
 - 看板图表配色用 dataviz 参考调色板，已用校验脚本在浅色、深色下验过；图表是纯 HTML/CSS，没有引入图表库。
 - 示例数据含：精华液 V2 配方待签批且备案在途、面霜工艺路线、明瓶包装审核快到期、一条微小偏差和 CAPA；老批次精华液（效期门槛、呆滞）、退货隔离区 + 待处置退货、待上报的不良反应投诉、受托厂已排产的委托单、经销商待审核订单、一张缺货失败的电商订单、第一批精华液的 20 个防伪码。
@@ -86,4 +88,4 @@ cp .env.example .env && docker compose up -d --build
 2. 用真实 SKU、供应商、代工厂、客户替换示例主数据（CSV 导入），给受托厂和经销商开门户账号；质量部按 `docs/csv/` 执行 OQ / PQ 并签字。
 3. 选定电商 ERP（聚水潭、旺店通、吉客云等）后，在 `integration` 包里写报文适配和回调 / 定时拉取。
 4. 用现场工艺替换示例工艺路线，用真实邮箱和企业微信群验证提醒。
-5. 需要时：把补货算法升级为带季节性的预测；实际成本核算对接财务系统；设备台账和称量数据采集。
+5. 需要时：预测加促销等人工调整；实际成本核算对接财务系统；设备台账和称量数据采集；即时提醒。

@@ -31,6 +31,7 @@ import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.PoStatus;
 import com.cosmetic.scm.domain.SupplyMode;
 import com.cosmetic.scm.domain.WarehouseKind;
+import com.cosmetic.scm.domain.rules.DemandForecast;
 import com.cosmetic.scm.domain.rules.Replenishment;
 import com.cosmetic.scm.domain.rules.ShelfLife;
 import com.cosmetic.scm.inventory.Batch;
@@ -71,6 +72,7 @@ public class PlanningService {
     /** 成品默认按 100 件取整；包材按 1 个取整；原料保留 4 位小数。 */
     private static final BigDecimal FG_LOT = new BigDecimal("100");
     private static final double NEAR_EXPIRY = 0.5;
+    private static final int FORECAST_MONTHS = 3;
 
     private final SalesOrderRepository salesOrders;
     private final SoLineRepository soLines;
@@ -83,8 +85,13 @@ public class PlanningService {
     private final MasterLookup lookup;
     private final TimeProvider time;
 
+    /** useForecast：按未来 3 个月的预测算日均，而不是观察期的历史平均。 */
     public record PlanParams(@Min(7) @Max(365) int windowDays, @Min(0) @Max(180) int leadDays,
-                             @Min(0) @Max(180) int safetyDays, @Min(0) @Max(365) int coverDays) {
+                             @Min(0) @Max(180) int safetyDays, @Min(0) @Max(365) int coverDays, boolean useForecast) {
+
+        public PlanParams(int windowDays, int leadDays, int safetyDays, int coverDays) {
+            this(windowDays, leadDays, safetyDays, coverDays, false);
+        }
     }
 
     public record MonthQty(String month, BigDecimal qty) {
@@ -94,7 +101,8 @@ public class PlanningService {
                         BigDecimal dailyDemand, BigDecimal available, BigDecimal nearExpiry, BigDecimal pendingRelease,
                         BigDecimal wip, BigDecimal projected, BigDecimal safetyStock, BigDecimal reorderPoint,
                         Integer daysOfSupply, boolean belowReorderPoint, BigDecimal suggested, Long factoryId,
-                        String factoryName, BigDecimal unitCost, BigDecimal listPrice) {
+                        String factoryName, BigDecimal unitCost, BigDecimal listPrice, List<MonthQty> forecast,
+                        String forecastMethod, BigDecimal forecastDaily) {
     }
 
     public record PlanLine(@NotNull Long fgItemId, @NotNull @Positive BigDecimal qty, Long factoryId) {
@@ -118,10 +126,10 @@ public class PlanningService {
         LocalDate today = time.today();
         LocalDate from = today.minusDays(params.windowDays() - 1L);
         YearMonth thisMonth = YearMonth.from(today);
-        LocalDate monthFrom = thisMonth.minusMonths(2).atDay(1);
 
-        // 出库：观察期合计 + 近 3 个自然月
-        List<SalesOrder> sos = salesOrders.findByOrderDateGreaterThanEqual(from.isBefore(monthFrom) ? from : monthFrom);
+        // 出库：观察期合计 + 按月汇总（预测最多看 36 个月）
+        LocalDate historyFrom = thisMonth.minusMonths(DemandForecast.MAX_HISTORY_MONTHS).atDay(1);
+        List<SalesOrder> sos = salesOrders.findByOrderDateGreaterThanEqual(from.isBefore(historyFrom) ? from : historyFrom);
         Map<Long, LocalDate> soDate = sos.stream().collect(Collectors.toMap(SalesOrder::getId, SalesOrder::getOrderDate));
         Map<Long, BigDecimal> shipped = new HashMap<>();
         Map<Long, Map<YearMonth, BigDecimal>> monthly = new HashMap<>();
@@ -130,7 +138,7 @@ public class PlanningService {
             if (!d.isBefore(from)) {
                 shipped.merge(l.getItemId(), l.getQty(), BigDecimal::add);
             }
-            if (!d.isBefore(monthFrom)) {
+            if (!d.isBefore(historyFrom)) {
                 monthly.computeIfAbsent(l.getItemId(), k -> new HashMap<>()).merge(YearMonth.from(d), l.getQty(), BigDecimal::add);
             }
         }
@@ -173,8 +181,17 @@ public class PlanningService {
                 .sorted((a, b) -> a.getCode().compareTo(b.getCode())).toList()) {
             Long id = fg.getId();
             BigDecimal inPipe = pending.getOrDefault(id, BigDecimal.ZERO).add(wip.getOrDefault(id, BigDecimal.ZERO));
-            Replenishment.Result r = Replenishment.calc(shipped.getOrDefault(id, BigDecimal.ZERO),
-                    available.getOrDefault(id, BigDecimal.ZERO), inPipe, p, FG_LOT);
+            DemandForecast.Result fc = DemandForecast.forecast(history(monthly.getOrDefault(id, Map.of()), thisMonth), FORECAST_MONTHS);
+            BigDecimal fcDaily = fc.next().stream().reduce(BigDecimal.ZERO, BigDecimal::add)
+                    .divide(BigDecimal.valueOf(daysIn(thisMonth, FORECAST_MONTHS)), 4, RoundingMode.HALF_UP);
+            // 没有历史时没有预测可用，仍按观察期（结果就是不建议补货）
+            Replenishment.Result r = params.useForecast() && fc.method() != DemandForecast.Method.NONE
+                    ? Replenishment.calcFromDaily(fcDaily, available.getOrDefault(id, BigDecimal.ZERO), inPipe, p, FG_LOT)
+                    : Replenishment.calc(shipped.getOrDefault(id, BigDecimal.ZERO), available.getOrDefault(id, BigDecimal.ZERO), inPipe, p, FG_LOT);
+            List<MonthQty> forecast = new ArrayList<>();
+            for (int i = 0; i < fc.next().size(); i++) {
+                forecast.add(new MonthQty(thisMonth.plusMonths(i).toString(), fc.next().get(i)));
+            }
             List<MonthQty> months = new ArrayList<>();
             for (int i = 2; i >= 0; i--) {
                 YearMonth ym = thisMonth.minusMonths(i);
@@ -186,9 +203,25 @@ public class PlanningService {
                     nearExpiry.getOrDefault(id, BigDecimal.ZERO), pending.getOrDefault(id, BigDecimal.ZERO),
                     wip.getOrDefault(id, BigDecimal.ZERO), r.projected(), r.safetyStock(), r.reorderPoint(),
                     r.daysOfSupply(), r.belowReorderPoint(), r.suggested(), f == null ? null : f.getId(),
-                    f == null ? null : f.getName(), cost.get(id), fg.getListPrice()));
+                    f == null ? null : f.getName(), cost.get(id), fg.getListPrice(), forecast, fc.method().getLabel(), fcDaily));
         }
         return out;
+    }
+
+    /** 从首次出库到上个完整自然月的月度出库量（旧 → 新）。当月还没过完，不算。 */
+    private static List<BigDecimal> history(Map<YearMonth, BigDecimal> months, YearMonth thisMonth) {
+        YearMonth first = months.keySet().stream().filter(m -> m.isBefore(thisMonth)).min(YearMonth::compareTo).orElse(null);
+        List<BigDecimal> out = new ArrayList<>();
+        if (first != null) {
+            for (YearMonth m = first; m.isBefore(thisMonth); m = m.plusMonths(1)) {
+                out.add(months.getOrDefault(m, BigDecimal.ZERO));
+            }
+        }
+        return out;
+    }
+
+    private static long daysIn(YearMonth start, int months) {
+        return java.time.temporal.ChronoUnit.DAYS.between(start.atDay(1), start.plusMonths(months).atDay(1));
     }
 
     // ---------- 物料 ----------

@@ -60,4 +60,10 @@ public class MfgOrder {
 
     /** 这张单用的配方版本：未发料时跟随最新生效版本，发料后锁定。 */
     private Long formulaVersionId;
+
+    private String cancelReason;
+
+    private String cancelledBy;
+
+    private LocalDateTime cancelledAt;
 }

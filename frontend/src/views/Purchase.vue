@@ -5,7 +5,10 @@
         <h2>采购入库</h2>
         <p>只能向合格名录内、资质在有效期内的供应商下单；禁用原料不能采购。收货后物料批次进入“待检”，检验放行前不能发料。</p>
       </div>
-      <el-button v-if="canCreate" type="primary" @click="openCreate">新建采购单</el-button>
+      <div class="toolbar">
+        <ExportButton report="purchases" />
+        <el-button v-if="canCreate" type="primary" @click="openCreate">新建采购单</el-button>
+      </div>
     </div>
 
     <el-card shadow="never" body-style="padding:0 0 8px">
@@ -29,13 +32,15 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="100"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /></template></el-table-column>
-        <el-table-column label="" width="90" fixed="right">
+        <el-table-column label="状态" width="130"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /><div v-if="row.closeReason" class="muted small" :title="row.closedBy">{{ row.closeReason }}</div></template></el-table-column>
+        <el-table-column label="" width="150" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="row.status !== 'RECEIVED' && canReceive" size="small" @click="openReceive(row)">收货</el-button>
+            <el-button v-if="isOpen(row) && canReceive" size="small" @click="openReceive(row)">收货</el-button>
+            <el-button v-if="isOpen(row) && canCreate" size="small" text @click="closeOrder(row)">{{ row.status === 'PARTIAL' ? '关闭' : '取消' }}</el-button>
           </template>
         </el-table-column>
       </el-table>
+      <ListCapHint :count="orders.length" />
       <ListPager v-model:page="t.page.value" v-model:size="t.size.value" :total="t.total.value" />
     </el-card>
 
@@ -96,8 +101,10 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
+import ExportButton from '../components/ExportButton.vue'
+import ListCapHint from '../components/ListCapHint.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
@@ -120,6 +127,24 @@ const t = usePaged(orders, {
 })
 const canCreate = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
 const canReceive = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'WAREHOUSE'))
+const isOpen = (row) => row.status === 'OPEN' || row.status === 'PARTIAL'
+
+async function closeOrder(row) {
+  const partial = row.status === 'PARTIAL'
+  let reason
+  try {
+    reason = (await ElMessageBox.prompt(
+      partial ? '已收的批次不受影响；没到的余量不再收货，也不再计入补货建议的在途。' : '这张单还没收过货，取消后不能恢复，记录会保留。',
+      `${partial ? '关闭' : '取消'} ${row.poNo}`,
+      { inputPlaceholder: '原因', confirmButtonText: partial ? '关闭采购单' : '取消采购单', cancelButtonText: '返回', inputValidator: (v) => !!v?.trim() || '请填写原因' }
+    )).value
+  } catch {
+    return
+  }
+  await http.post(`/purchase-orders/${row.id}/close`, { reason })
+  ElMessage.success(partial ? '已关闭' : '已取消')
+  load()
+}
 
 const create = reactive({ visible: false, saving: false, supplierId: null, lines: [] })
 const recv = reactive({ visible: false, saving: false, po: null, lines: [] })

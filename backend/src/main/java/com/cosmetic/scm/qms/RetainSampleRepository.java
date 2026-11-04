@@ -10,5 +10,7 @@ public interface RetainSampleRepository extends JpaRepository<RetainSample, Long
 
     List<RetainSample> findTop300ByOrderByRetainUntilAsc();
 
+    List<RetainSample> findAllByOrderByRetainUntilAsc();
+
     List<RetainSample> findByStatus(RetainStatus status);
 }

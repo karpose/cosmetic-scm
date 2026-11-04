@@ -12,6 +12,8 @@ public interface ComplaintRepository extends JpaRepository<Complaint, Long> {
 
     List<Complaint> findTop300ByOrderByIdDesc();
 
+    List<Complaint> findAllByOrderByIdDesc();
+
     List<Complaint> findByStatus(CaseStatus status);
 
     List<Complaint> findByBatchIdIn(Collection<Long> batchIds);

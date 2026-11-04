@@ -41,6 +41,12 @@ public class ProductionController {
         return production.create(req);
     }
 
+    @PostMapping("/{id}/cancel")
+    @PreAuthorize("hasAnyRole('ADMIN','PRODUCTION')")
+    public ProductionService.MoView cancel(@PathVariable Long id, @jakarta.validation.Valid @RequestBody ProductionService.CancelReq req) {
+        return production.cancel(id, req);
+    }
+
     @PostMapping("/{id}/issue")
     @PreAuthorize("hasAnyRole('ADMIN','PRODUCTION','WAREHOUSE')")
     public MoView issue(@PathVariable Long id) {

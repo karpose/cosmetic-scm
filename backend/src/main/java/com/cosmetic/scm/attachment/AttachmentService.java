@@ -100,8 +100,9 @@ public class AttachmentService {
 
     @Transactional
     public AttachmentView uploadForOem(Long moId, MultipartFile file, String note) {
-        if (requireOwnMo(moId).getStatus() == MoStatus.COMPLETED) {
-            throw new BizException("这张委托单已完工入库，不能再上传附件；如需补充资料请联系品牌方");
+        MoStatus status = requireOwnMo(moId).getStatus();
+        if (status == MoStatus.COMPLETED || status == MoStatus.CANCELLED) {
+            throw new BizException("这张委托单" + (status == MoStatus.COMPLETED ? "已完工入库" : "已取消") + "，不能再上传附件；如需补充资料请联系品牌方");
         }
         return store(OwnerType.MFG_ORDER, moId, file, note);
     }

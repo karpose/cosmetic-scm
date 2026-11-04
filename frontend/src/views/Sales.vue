@@ -34,6 +34,7 @@
         </el-table-column>
         <el-table-column label="日期" width="110"><template #default="{ row }"><span class="mono">{{ row.orderDate }}</span></template></el-table-column>
       </el-table>
+      <ListCapHint :count="orders.length" />
       <ListPager v-model:page="t.page.value" v-model:size="t.size.value" :total="t.total.value" />
     </el-card>
 
@@ -91,6 +92,7 @@
 
 <script setup>
 import ExportButton from '../components/ExportButton.vue'
+import ListCapHint from '../components/ListCapHint.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import http from '../api'

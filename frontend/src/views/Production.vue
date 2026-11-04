@@ -23,14 +23,14 @@
       <LoadError v-if="loadError" :message="loadError" :loading="loading" @retry="load" />
       <el-table v-else :data="t.paged.value" v-loading="loading" empty-text="还没有生产或委托单">
         <el-table-column label="单号" width="150"><template #default="{ row }"><span class="mono">{{ row.moNo }}</span></template></el-table-column>
-        <el-table-column label="类型" width="100">
+        <el-table-column label="类型" width="90">
           <template #default="{ row }"><el-tag size="small" :type="row.moType === 'OEM' ? 'primary' : 'info'" disable-transitions>{{ row.moTypeLabel }}</el-tag></template>
         </el-table-column>
-        <el-table-column prop="factoryName" label="生产方" min-width="140" />
-        <el-table-column prop="fgName" label="成品" min-width="160" />
-        <el-table-column label="计划数量" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.plannedQty) }}</span></template></el-table-column>
-        <el-table-column label="计划日期" width="110"><template #default="{ row }"><span class="mono">{{ row.plannedDate }}</span></template></el-table-column>
-        <el-table-column label="状态" width="90"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /></template></el-table-column>
+        <el-table-column prop="factoryName" label="生产方" min-width="120" />
+        <el-table-column prop="fgName" label="成品" min-width="150" />
+        <el-table-column label="计划数量" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.plannedQty) }}</span></template></el-table-column>
+        <el-table-column label="计划日期" width="120"><template #default="{ row }"><span class="mono">{{ row.plannedDate }}</span></template></el-table-column>
+        <el-table-column label="状态" width="100"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /><div v-if="row.cancelReason" class="muted small" :title="`${row.cancelledBy} 于 ${fmtTime(row.cancelledAt)}`">{{ row.cancelReason }}</div></template></el-table-column>
         <el-table-column label="受托厂协同" width="130">
           <template #default="{ row }">
             <template v-if="row.moType === 'OEM'">
@@ -46,16 +46,18 @@
             <span v-if="row.yieldPct" class="muted small"> 收率 {{ row.yieldPct }}%</span>
           </template>
         </el-table-column>
-        <el-table-column label="" width="210" fixed="right">
+        <el-table-column label="" width="240" fixed="right">
           <template #default="{ row }">
             <div class="toolbar">
               <el-button size="small" @click="openDetail(row)">明细</el-button>
               <el-button v-if="row.status === 'PLANNED' && canOperate" size="small" @click="openDetail(row, 'issue')">发料</el-button>
               <el-button v-if="row.status === 'ISSUED' && canOperate" size="small" type="primary" @click="openComplete(row)">完工入库</el-button>
+              <el-button v-if="(row.status === 'PLANNED' || row.status === 'ISSUED') && canCancel" size="small" text @click="cancelOrder(row)">取消</el-button>
             </div>
           </template>
         </el-table-column>
       </el-table>
+      <ListCapHint :count="orders.length" />
       <ListPager v-model:page="t.page.value" v-model:size="t.size.value" :total="t.total.value" />
     </el-card>
 
@@ -202,6 +204,7 @@ import StatusTag from '../components/StatusTag.vue'
 import AttachmentList from '../components/AttachmentList.vue'
 import BatchRecord from '../components/BatchRecord.vue'
 import ExportButton from '../components/ExportButton.vue'
+import ListCapHint from '../components/ListCapHint.vue'
 import { useAuth } from '../stores/auth'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
@@ -221,6 +224,7 @@ const t = usePaged(orders, {
 })
 const canCreate = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
 const canOperate = computed(() => auth.hasAny('ADMIN', 'PRODUCTION', 'WAREHOUSE'))
+const canCancel = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
 const canReview = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
 
 const create = reactive({ visible: false, saving: false, factoryId: null, fgItemId: null, plannedQty: null, plannedDate: today() })
@@ -268,6 +272,23 @@ async function submitCreate() {
   } finally {
     create.saving = false
   }
+}
+
+async function cancelOrder(row) {
+  const issued = row.status === 'ISSUED'
+  let reason
+  try {
+    reason = (await ElMessageBox.prompt(
+      issued ? '已发的物料会退回原批次和原仓库，请确认实物已退回。已开工的单子不能取消，要登记偏差。' : '取消后不能恢复，单据和记录都会保留。',
+      `取消 ${row.moNo}`,
+      { inputPlaceholder: '取消原因', confirmButtonText: issued ? '退回物料并取消' : '取消这张单', cancelButtonText: '不取消', inputValidator: (v) => !!v?.trim() || '请填写取消原因' }
+    )).value
+  } catch {
+    return
+  }
+  await http.post(`/mfg-orders/${row.id}/cancel`, { reason })
+  ElMessage.success(issued ? '已取消，物料已退回' : '已取消')
+  load()
 }
 
 async function openDetail(row, mode = 'view') {

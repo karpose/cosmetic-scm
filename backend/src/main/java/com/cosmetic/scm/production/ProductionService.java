@@ -109,6 +109,9 @@ public class ProductionService {
                               @Valid List<ExtMaterialReq> extMaterials) {
     }
 
+    public record CancelReq(@NotBlank(message = "请填写取消原因") @Size(max = 300) String reason) {
+    }
+
     public record PickView(Long batchId, String batchNo, Long warehouseId, String warehouseName, BigDecimal qty,
                            LocalDate expDate) {
     }
@@ -122,7 +125,8 @@ public class ProductionService {
                          Long fgItemId, String fgCode, String fgName, BigDecimal plannedQty, LocalDate plannedDate,
                          MoStatus status, String statusLabel, String outBatchNo, BigDecimal actualQty,
                          BigDecimal yieldPct, String createdBy, LocalDateTime createdAt,
-                         String oemStageLabel, OemReportStatus oemReportStatus, String oemReportStatusLabel) {
+                         String oemStageLabel, OemReportStatus oemReportStatus, String oemReportStatusLabel,
+                         String cancelReason, String cancelledBy, LocalDateTime cancelledAt) {
     }
 
     public record MoDetail(MoView mo, List<RequirementView> requirements, Integer formulaVersionNo) {
@@ -135,7 +139,16 @@ public class ProductionService {
 
     @Transactional(readOnly = true)
     public List<MoView> list() {
-        List<MfgOrder> list = orders.findTop300ByOrderByIdDesc();
+        return views(orders.findTop300ByOrderByIdDesc());
+    }
+
+    /** 全部生产单，导出用（页面列表只取最近 300 张）。 */
+    @Transactional(readOnly = true)
+    public List<MoView> listAll() {
+        return views(orders.findAllByOrderByIdDesc());
+    }
+
+    private List<MoView> views(List<MfgOrder> list) {
         Map<Long, Item> im = lookup.itemMap();
         Map<Long, Partner> pm = lookup.partnerMap();
         Map<Long, String> outNos = batches.findAllById(list.stream().map(MfgOrder::getOutBatchId)
@@ -298,6 +311,51 @@ public class ProductionService {
         return toView(mo, lookup.itemMap(), lookup.partnerMap(), Map.of());
     }
 
+    /**
+     * 取消：未发料的直接取消；已发料的把物料退回原批次原仓库，前提是还没有开工。
+     * 开了工的不能取消，那已经是生产事实，要走偏差处理。取消后单据和审计都保留。
+     */
+    @Transactional
+    public MoView cancel(Long moId, CancelReq req) {
+        MfgOrder mo = require(moId);
+        if (mo.getStatus() != MoStatus.PLANNED && mo.getStatus() != MoStatus.ISSUED) {
+            throw new BizException(mo.getMoNo() + " 当前为" + mo.getStatus().getLabel() + "，不能取消");
+        }
+        String returned = "";
+        if (mo.getStatus() == MoStatus.ISSUED) {
+            if (mes.started(moId)) {
+                throw new BizException(mo.getMoNo() + " 的批生产记录已开始填写，不能取消；异常情况请登记偏差");
+            }
+            if (mo.getMoType() == MoType.OEM) {
+                if (oemReports.findFirstByMoIdAndStatus(moId, OemReportStatus.SUBMITTED).isPresent()) {
+                    throw new BizException("受托厂已申报完工，请先退回申报再取消");
+                }
+                boolean producing = oemProgress.findByMoIdInOrderByIdAsc(List.of(moId)).stream()
+                        .anyMatch(p -> p.getStage() == OemStage.PRODUCING || p.getStage() == OemStage.TESTING);
+                if (producing) {
+                    throw new BizException("受托厂已回传生产中，不能取消；异常情况请登记偏差");
+                }
+            }
+            List<String> detail = new ArrayList<>();
+            List<MfgIssue> issued = issues.findByMoId(moId);
+            for (MfgIssue i : issued) {
+                Batch b = inventory.batch(i.getBatchId());
+                inventory.change(b, i.getWarehouseId(), i.getQty(), TxnType.ISSUE_BACK, mo.getMoNo());
+                detail.add(b.getBatchNo() + "×" + plain(i.getQty()));
+            }
+            // 退回后这张单没有用料，追溯不能再显示这些批次流向了它；库存流水和审计里仍有记录
+            issues.deleteAll(issued);
+            returned = detail.isEmpty() ? "" : "，物料退回：" + String.join("，", detail);
+        }
+        mo.setStatus(MoStatus.CANCELLED);
+        mo.setCancelReason(req.reason().trim());
+        mo.setCancelledBy(currentUser.usernameOrSystem());
+        mo.setCancelledAt(time.now());
+        orders.save(mo);
+        audit.log("取消生产单", mo.getMoNo(), lookup.item(mo.getFgItemId()).getName() + " × " + plain(mo.getPlannedQty()) + returned, mo.getCancelReason());
+        return toView(mo, lookup.itemMap(), lookup.partnerMap(), Map.of());
+    }
+
     /** 完工入库：生成成品批次（待上市放行），记录批次谱系。 */
     @Transactional
     public MoView complete(Long moId, CompleteReq req) {
@@ -434,7 +492,8 @@ public class ProductionService {
                 f == null ? null : f.getName(), m.getFgItemId(), fg.getCode(), fg.getName(), m.getPlannedQty(),
                 m.getPlannedDate(), m.getStatus(), m.getStatus().getLabel(),
                 m.getOutBatchId() == null ? null : outNos.get(m.getOutBatchId()), m.getActualQty(), yieldPct,
-                m.getCreatedBy(), m.getCreatedAt(), oemStage, oemReport, oemReport == null ? null : oemReport.getLabel());
+                m.getCreatedBy(), m.getCreatedAt(), oemStage, oemReport, oemReport == null ? null : oemReport.getLabel(),
+                m.getCancelReason(), m.getCancelledBy(), m.getCancelledAt());
     }
 
     private static String plain(BigDecimal v) {

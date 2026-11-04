@@ -95,7 +95,16 @@ public class SalesService {
 
     @Transactional(readOnly = true)
     public List<SoView> list() {
-        List<SalesOrder> list = orders.findTop300ByOrderByIdDesc();
+        return views(orders.findTop300ByOrderByIdDesc());
+    }
+
+    /** 全部出库单，导出用（页面列表只取最近 300 张）。 */
+    @Transactional(readOnly = true)
+    public List<SoView> listAll() {
+        return views(orders.findAllByOrderByIdDesc());
+    }
+
+    private List<SoView> views(List<SalesOrder> list) {
         if (list.isEmpty()) {
             return List.of();
         }

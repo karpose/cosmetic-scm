@@ -50,6 +50,7 @@
         <div class="form-grid">
           <el-form-item label="账号"><el-input id="us-username" v-model="form.username" :disabled="!!form.id" /></el-form-item>
           <el-form-item label="姓名"><el-input id="us-name" v-model="form.displayName" /></el-form-item>
+          <el-form-item v-if="!portalRole" label="邮箱（选填，接收本岗位的每日待办）"><el-input id="us-email" v-model="form.email" maxlength="120" /></el-form-item>
           <el-form-item v-if="!form.id" label="初始密码"><el-input id="us-password" v-model="form.password" type="password" show-password autocomplete="new-password" /></el-form-item>
         </div>
         <p v-if="!form.id" class="muted small hint">{{ PASSWORD_RULE }}。对方首次登录须修改密码。</p>
@@ -106,7 +107,7 @@ const loading = ref(false)
 const error = ref('')
 const role = ref('')
 const t = usePaged(users, { match: textMatch('username', 'displayName', 'partnerName'), extra: (u) => !role.value || u.roles.includes(role.value) })
-const form = reactive({ visible: false, saving: false, id: null, username: '', displayName: '', password: '', roles: [], enabled: true, partnerId: null })
+const form = reactive({ visible: false, saving: false, id: null, username: '', displayName: '', password: '', roles: [], enabled: true, partnerId: null, email: '' })
 const reset = reactive({ visible: false, saving: false, id: null, username: '', password: '' })
 const portalRole = ref('')
 
@@ -140,7 +141,7 @@ function onPortal(v) {
 }
 
 function openCreate() {
-  Object.assign(form, { visible: true, id: null, username: '', displayName: '', password: '', roles: ['VIEWER'], enabled: true, partnerId: null })
+  Object.assign(form, { visible: true, id: null, username: '', displayName: '', password: '', roles: ['VIEWER'], enabled: true, partnerId: null, email: '' })
   portalRole.value = ''
 }
 
@@ -148,7 +149,7 @@ function openEdit(u) {
   const portal = u.roles.find((r) => PORTAL_ROLES[r]) || ''
   Object.assign(form, {
     visible: true, id: u.id, username: u.username, displayName: u.displayName, password: '',
-    roles: u.roles.filter((r) => !PORTAL_ROLES[r]), enabled: u.enabled, partnerId: u.partnerId
+    roles: u.roles.filter((r) => !PORTAL_ROLES[r]), enabled: u.enabled, partnerId: u.partnerId, email: u.email || ''
   })
   portalRole.value = portal
 }
@@ -160,9 +161,9 @@ async function save() {
   form.saving = true
   try {
     if (form.id) {
-      await http.put(`/users/${form.id}`, { displayName: form.displayName, enabled: form.enabled, roles, partnerId })
+      await http.put(`/users/${form.id}`, { displayName: form.displayName, enabled: form.enabled, roles, partnerId, email: form.email })
     } else {
-      await http.post('/users', { username: form.username, displayName: form.displayName, password: form.password, roles, partnerId })
+      await http.post('/users', { username: form.username, displayName: form.displayName, password: form.password, roles, partnerId, email: form.email })
     }
     ElMessage.success('已保存')
     form.visible = false

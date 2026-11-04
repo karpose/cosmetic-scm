@@ -125,8 +125,8 @@ public class OemPortalService {
     @Transactional
     public OemOrderView addProgress(Long moId, ProgressReq req) {
         MfgOrder mo = mine(moId);
-        if (mo.getStatus() == MoStatus.COMPLETED) {
-            throw new BizException(mo.getMoNo() + " 已完工入库，不再回传进度");
+        if (mo.getStatus() == MoStatus.COMPLETED || mo.getStatus() == MoStatus.CANCELLED) {
+            throw new BizException(mo.getMoNo() + " 已" + (mo.getStatus() == MoStatus.COMPLETED ? "完工入库" : "取消") + "，不再回传进度");
         }
         if (req.stage() == OemStage.NOTE && (req.note() == null || req.note().isBlank())) {
             throw new BizException("请填写备注内容");

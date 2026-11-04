@@ -54,7 +54,7 @@ public class UserService {
     /** passwordChangeRequired：null 不需要 / INITIAL 初始密码须修改 / EXPIRED 密码已过期 */
     public record UserView(Long id, String username, String displayName, boolean enabled, List<String> roles,
                            Long partnerId, String partnerName, LocalDateTime lockedUntil,
-                           String passwordChangeRequired) {
+                           String passwordChangeRequired, String email) {
     }
 
     public record CreateUserReq(
@@ -62,11 +62,13 @@ public class UserService {
             @NotBlank @Size(max = 64) String displayName,
             @NotBlank String password,
             @NotEmpty(message = "至少选择一个角色") Set<Role> roles,
-            Long partnerId) {
+            Long partnerId,
+            @jakarta.validation.constraints.Email(message = "邮箱格式不正确") @Size(max = 120) String email) {
     }
 
     public record UpdateUserReq(@NotBlank @Size(max = 64) String displayName, boolean enabled,
-                                @NotEmpty(message = "至少选择一个角色") Set<Role> roles, Long partnerId) {
+                                @NotEmpty(message = "至少选择一个角色") Set<Role> roles, Long partnerId,
+                                @jakarta.validation.constraints.Email(message = "邮箱格式不正确") @Size(max = 120) String email) {
     }
 
     public record PasswordReq(@NotBlank String password) {
@@ -95,7 +97,7 @@ public class UserService {
         LocalDateTime locked = u.getLockedUntil() != null && u.getLockedUntil().isAfter(time.now()) ? u.getLockedUntil() : null;
         return new UserView(u.getId(), u.getUsername(), u.getDisplayName(), u.isEnabled(),
                 u.getRoles().stream().map(Enum::name).sorted().toList(), u.getPartnerId(),
-                p == null ? null : p.getName(), locked, passwordChangeRequired(u));
+                p == null ? null : p.getName(), locked, passwordChangeRequired(u), u.getEmail());
     }
 
     /** 当前是否必须先改密码；返回 null 表示不需要。 */
@@ -121,6 +123,7 @@ public class UserService {
         requireStrong(req.password(), req.username());
         Long partnerId = checkRoles(req.roles(), req.partnerId());
         AppUser u = newUser(req.username(), req.displayName(), req.password(), req.roles(), partnerId, true);
+        u.setEmail(req.email() == null || req.email().isBlank() ? null : req.email().trim());
         audit.log("新增账号", u.getUsername(), "角色 " + u.getRoles() + describePartner(partnerId));
         return view(u);
     }
@@ -156,6 +159,7 @@ public class UserService {
         }
         Long partnerId = checkRoles(req.roles(), req.partnerId());
         u.setDisplayName(req.displayName());
+        u.setEmail(req.email() == null || req.email().isBlank() ? null : req.email().trim());
         u.setEnabled(req.enabled());
         u.setRoles(EnumSet.copyOf(req.roles()));
         u.setPartnerId(partnerId);

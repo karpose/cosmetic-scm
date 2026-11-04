@@ -16,7 +16,9 @@ import com.cosmetic.scm.common.BizException;
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.dashboard.DashboardService;
 import com.cosmetic.scm.dashboard.DashboardService.Todo;
+import com.cosmetic.scm.security.AppUser;
 import com.cosmetic.scm.security.CurrentUser;
+import com.cosmetic.scm.security.UserRepository;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,6 +35,7 @@ import org.springframework.web.client.RestClient;
 /**
  * 每日待办摘要：把总览里需要处理的事项（警告和严重两级）推送到邮件和企业微信群。
  * 内容就是总览的待办，不另算一套；一个渠道失败不影响另一个，结果写发送记录。
+ * 账号填了邮箱的，只收自己岗位的事项（{@link TodoRouting}）；配置的收件人和群收全量。
  * 消息里只有批号、产品和单号这类内部信息，不含消费者联系方式。
  */
 @Service
@@ -46,6 +49,7 @@ public class NotifyService {
 
     private final DashboardService dashboard;
     private final NotificationLogRepository logs;
+    private final UserRepository users;
     private final ObjectProvider<JavaMailSender> mailSender;
     private final AuditService audit;
     private final TimeProvider time;
@@ -67,13 +71,17 @@ public class NotifyService {
     public record Digest(String subject, List<Todo> items) {
     }
 
-    public record LogView(Long id, String channel, String subject, int itemCount, boolean success, String error,
+    /** 今天会收到个人邮件的人。 */
+    public record PersonView(String displayName, String email, List<String> roles, int itemCount) {
+    }
+
+    public record LogView(Long id, String channel, String recipient, String subject, int itemCount, boolean success, String error,
                           String triggered, LocalDateTime sentAt) {
     }
 
     /** 不返回 webhook 地址和 SMTP 密码。 */
     public record Status(boolean enabled, String cron, boolean mailConfigured, List<String> mailTo, boolean wecomConfigured,
-                         Digest preview, List<LogView> logs) {
+                         Digest preview, List<PersonView> people, List<LogView> logs) {
     }
 
     public record SendResult(int sent, int failed, int items) {
@@ -84,16 +92,43 @@ public class NotifyService {
         List<Todo> items = new ArrayList<>(dashboard.summary().todos().stream()
                 .filter(t -> "bad".equals(t.level()) || "warn".equals(t.level())).toList());
         items.sort(Comparator.comparingInt(t -> "bad".equals(t.level()) ? 0 : 1));
+        return digestOf(items);
+    }
+
+    private Digest digestOf(List<Todo> items) {
         long bad = items.stream().filter(t -> "bad".equals(t.level())).count();
         String subject = "供应链系统每日待办 " + time.today() + "：" + items.size() + " 项"
                 + (bad > 0 ? "（其中 " + bad + " 项紧急）" : "");
         return new Digest(subject, items);
     }
 
+    /** 填了邮箱的内部账号各自要收的事项。门户账号、停用账号不收；已在全量收件人里的不重复发；没有相关事项的不打扰。 */
+    private Map<AppUser, List<Todo>> personal(List<Todo> items) {
+        if (smtpHost.isBlank()) {
+            return Map.of();
+        }
+        List<String> full = recipients().stream().map(String::toLowerCase).toList();
+        Map<AppUser, List<Todo>> out = new java.util.LinkedHashMap<>();
+        for (AppUser u : users.findAll()) {
+            if (!u.isEnabled() || u.isPortal() || u.getEmail() == null || full.contains(u.getEmail().toLowerCase())) {
+                continue;
+            }
+            List<Todo> mine = items.stream().filter(t -> TodoRouting.concerns(t.kind(), u.getRoles())).toList();
+            if (!mine.isEmpty()) {
+                out.put(u, mine);
+            }
+        }
+        return out;
+    }
+
     @Transactional(readOnly = true)
     public Status status() {
-        return new Status(enabled, cron, mailConfigured(), recipients(), !wecomWebhook.isBlank(), digest(),
-                logs.findTop50ByOrderByIdDesc().stream().map(l -> new LogView(l.getId(), l.getChannel(), l.getSubject(),
+        Digest preview = digest();
+        List<PersonView> people = personal(preview.items()).entrySet().stream()
+                .map(e -> new PersonView(e.getKey().getDisplayName(), e.getKey().getEmail(),
+                        e.getKey().getRoles().stream().map(r -> r.getLabel()).sorted().toList(), e.getValue().size())).toList();
+        return new Status(enabled, cron, mailConfigured(), recipients(), !wecomWebhook.isBlank(), preview, people,
+                logs.findTop50ByOrderByIdDesc().stream().map(l -> new LogView(l.getId(), l.getChannel(), l.getRecipient(), l.getSubject(),
                         l.getItemCount(), l.isSuccess(), l.getError(), l.getTriggered(), l.getSentAt())).toList());
     }
 
@@ -112,7 +147,7 @@ public class NotifyService {
     @Transactional
     public SendResult sendNow() {
         if (!mailConfigured() && wecomWebhook.isBlank()) {
-            throw new BizException("还没有配置提醒渠道：请设置 SMTP 和收件人，或企业微信群机器人地址");
+            throw new BizException("还没有配置提醒渠道：请设置 SMTP 和收件人（或给账号填邮箱），或企业微信群机器人地址");
         }
         SendResult r = deliver(digest(), currentUser.usernameOrSystem());
         audit.log("手工发送每日待办", "消息提醒", "成功 " + r.sent() + " 个渠道，失败 " + r.failed() + " 个，共 " + r.items() + " 项");
@@ -122,15 +157,25 @@ public class NotifyService {
     private SendResult deliver(Digest d, String trigger) {
         int sent = 0;
         int failed = 0;
-        if (mailConfigured()) {
-            if (attempt("MAIL", d, trigger, () -> sendMail(d))) {
+        List<String> full = recipients();
+        if (!smtpHost.isBlank() && !full.isEmpty()) {
+            if (attempt("MAIL", String.join("，", full), d, trigger, () -> sendMail(d, full))) {
+                sent++;
+            } else {
+                failed++;
+            }
+        }
+        for (Map.Entry<AppUser, List<Todo>> e : personal(d.items()).entrySet()) {
+            String to = e.getKey().getEmail();
+            Digest mine = digestOf(e.getValue());
+            if (attempt("MAIL", to, mine, trigger, () -> sendMail(mine, List.of(to)))) {
                 sent++;
             } else {
                 failed++;
             }
         }
         if (!wecomWebhook.isBlank()) {
-            if (attempt("WECOM", d, trigger, () -> sendWecom(d))) {
+            if (attempt("WECOM", "群机器人", d, trigger, () -> sendWecom(d))) {
                 sent++;
             } else {
                 failed++;
@@ -139,9 +184,10 @@ public class NotifyService {
         return new SendResult(sent, failed, d.items().size());
     }
 
-    private boolean attempt(String channel, Digest d, String trigger, Runnable send) {
+    private boolean attempt(String channel, String recipient, Digest d, String trigger, Runnable send) {
         NotificationLog l = new NotificationLog();
         l.setChannel(channel);
+        l.setRecipient(recipient.length() > 120 ? recipient.substring(0, 120) : recipient);
         l.setSubject(d.subject());
         l.setItemCount(d.items().size());
         l.setTriggered(trigger);
@@ -158,7 +204,7 @@ public class NotifyService {
         return l.isSuccess();
     }
 
-    private void sendMail(Digest d) {
+    private void sendMail(Digest d, List<String> to) {
         JavaMailSender sender = mailSender.getIfAvailable();
         if (sender == null) {
             throw new IllegalStateException("没有可用的邮件服务配置");
@@ -167,7 +213,7 @@ public class NotifyService {
         if (!mailFrom.isBlank()) {
             m.setFrom(mailFrom);
         }
-        m.setTo(recipients().toArray(String[]::new));
+        m.setTo(to.toArray(String[]::new));
         m.setSubject(d.subject());
         m.setText(plainText(d));
         sender.send(m);
@@ -224,7 +270,8 @@ public class NotifyService {
     }
 
     private boolean mailConfigured() {
-        return !smtpHost.isBlank() && !recipients().isEmpty();
+        return !smtpHost.isBlank() && (!recipients().isEmpty()
+                || users.findAll().stream().anyMatch(u -> u.isEnabled() && !u.isPortal() && u.getEmail() != null));
     }
 
     private List<String> recipients() {

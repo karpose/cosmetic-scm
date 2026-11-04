@@ -110,6 +110,12 @@ public class DeviationService {
         return toViews(deviations.findTop300ByOrderByIdDesc());
     }
 
+    /** 全部偏差，导出用。 */
+    @Transactional(readOnly = true)
+    public List<DeviationView> listAll() {
+        return toViews(deviations.findAllByOrderByIdDesc());
+    }
+
     @Transactional(readOnly = true)
     public List<DeviationView> open() {
         return toViews(deviations.findByStatus(CaseStatus.OPEN));
@@ -197,6 +203,12 @@ public class DeviationService {
     @Transactional(readOnly = true)
     public List<CapaView> listCapas() {
         return capas.findTop300ByOrderByIdDesc().stream().map(this::toView).toList();
+    }
+
+    /** 全部 CAPA，导出用。 */
+    @Transactional(readOnly = true)
+    public List<CapaView> listAllCapas() {
+        return capas.findAllByOrderByIdDesc().stream().map(this::toView).toList();
     }
 
     @Transactional(readOnly = true)

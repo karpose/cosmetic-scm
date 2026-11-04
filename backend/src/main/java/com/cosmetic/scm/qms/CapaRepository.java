@@ -11,6 +11,8 @@ public interface CapaRepository extends JpaRepository<Capa, Long> {
 
     List<Capa> findTop300ByOrderByIdDesc();
 
+    List<Capa> findAllByOrderByIdDesc();
+
     List<Capa> findByDeviationId(Long deviationId);
 
     List<Capa> findByStatusIn(Collection<CapaStatus> statuses);

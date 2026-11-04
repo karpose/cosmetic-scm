@@ -39,4 +39,10 @@ public class PurchaseOrder {
     private String createdBy;
 
     private LocalDateTime createdAt;
+
+    private String closeReason;
+
+    private String closedBy;
+
+    private LocalDateTime closedAt;
 }

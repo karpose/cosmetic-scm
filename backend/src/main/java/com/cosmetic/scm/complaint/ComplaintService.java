@@ -93,6 +93,12 @@ public class ComplaintService {
         return toViews(complaints.findTop300ByOrderByIdDesc());
     }
 
+    /** 全部投诉，导出用。 */
+    @Transactional(readOnly = true)
+    public List<ComplaintView> listAll() {
+        return toViews(complaints.findAllByOrderByIdDesc());
+    }
+
     @Transactional(readOnly = true)
     public List<ComplaintView> open() {
         return toViews(complaints.findByStatus(CaseStatus.OPEN));

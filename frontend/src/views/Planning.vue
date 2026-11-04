@@ -13,6 +13,7 @@
         <label>交付周期 <el-input-number v-model="p.leadDays" :min="0" :max="180" :controls="false" size="small" /> 天</label>
         <label>安全库存 <el-input-number v-model="p.safetyDays" :min="0" :max="180" :controls="false" size="small" /> 天</label>
         <label>每次补够 <el-input-number v-model="p.coverDays" :min="0" :max="365" :controls="false" size="small" /> 天</label>
+        <label><el-switch id="pl-forecast" v-model="p.useForecast" @change="load" /> 按未来 3 个月预测算日均</label>
         <el-button :loading="loader.loading.value" @click="load">重新计算</el-button>
       </div>
       <p class="muted small formula">再订货点 = 日均 × 交付周期 + 日均 × 安全天数；预计可用（可售 + 待放行 + 在制）低于再订货点时，补到“再订货点 + 日均 × 补够天数”，按 100 件取整。</p>
@@ -35,6 +36,12 @@
         <el-table-column label="成品" min-width="170"><template #default="{ row }">{{ row.name }}<div class="muted small mono">{{ row.code }}</div></template></el-table-column>
         <el-table-column label="近 3 个月出库" width="220">
           <template #default="{ row }"><span v-for="mq in row.monthly" :key="mq.month" class="mq"><span class="muted small">{{ mq.month.slice(5) }}月</span> <span class="mono">{{ fmtQty(mq.qty) }}</span></span></template>
+        </el-table-column>
+        <el-table-column label="未来 3 个月预测" width="220">
+          <template #default="{ row }">
+            <template v-if="row.forecastMethod !== '无历史'"><span v-for="mq in row.forecast" :key="mq.month" class="mq"><span class="muted small">{{ mq.month.slice(5) }}月</span> <span class="mono">{{ fmtQty(mq.qty) }}</span></span></template>
+            <div class="muted small">{{ row.forecastMethod }}</div>
+          </template>
         </el-table-column>
         <el-table-column label="日均" width="80" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(Number(row.dailyDemand).toFixed(1)) }}</span></template></el-table-column>
         <el-table-column label="可售（临期）" width="120" align="right">
@@ -113,7 +120,7 @@ import { useRefData } from '../utils/refdata'
 const auth = useAuth()
 const router = useRouter()
 const rd = useRefData()
-const p = reactive({ windowDays: 90, leadDays: 30, safetyDays: 15, coverDays: 60 })
+const p = reactive({ windowDays: 90, leadDays: 30, safetyDays: 15, coverDays: 60, useForecast: false })
 const rows = ref([])
 const chosen = ref([])
 const fgTable = ref(null)

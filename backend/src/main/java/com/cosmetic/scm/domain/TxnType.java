@@ -10,7 +10,8 @@ public enum TxnType {
     ADJUST("盘点调整"),
     SCRAP("报废出库"),
     RETURN_IN("退货入库"),
-    RESTOCK("退货转可售");
+    RESTOCK("退货转可售"),
+    ISSUE_BACK("发料退回");
 
     private final String label;
 

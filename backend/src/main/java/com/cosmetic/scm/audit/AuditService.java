@@ -52,6 +52,14 @@ public class AuditService {
         return repository.search(q.trim(), page);
     }
 
+    /** 按日期范围（含首尾两天）查询，任何一端为空表示不限。limit 由调用方决定，不做 1000 条的截断。 */
+    @Transactional(readOnly = true)
+    public List<AuditLog> search(java.time.LocalDate from, java.time.LocalDate to, String q, int limit) {
+        java.time.LocalDateTime start = from == null ? java.time.LocalDate.of(2000, 1, 1).atStartOfDay() : from.atStartOfDay();
+        java.time.LocalDateTime end = to == null ? java.time.LocalDate.of(2999, 1, 1).atStartOfDay() : to.plusDays(1).atStartOfDay();
+        return repository.searchRange(start, end, q == null ? "" : q.trim(), PageRequest.of(0, Math.max(1, limit)));
+    }
+
     private static String truncate(String s, int max) {
         if (s == null) {
             return null;
