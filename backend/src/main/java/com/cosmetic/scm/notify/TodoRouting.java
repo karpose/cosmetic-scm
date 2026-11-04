@@ -28,6 +28,7 @@ final class TodoRouting {
             Map.entry("CAPA", QUALITY),
             Map.entry("SUPPLIER_AUDIT", Set.of(Role.QA, Role.QSO, Role.PURCHASE)),
             Map.entry("RETAIN", QUALITY),
+            Map.entry("EQUIPMENT", Set.of(Role.QA, Role.QSO, Role.PRODUCTION)),
             Map.entry("FORMULA", Set.of(Role.QSO)),
             Map.entry("FILING", Set.of(Role.QA, Role.QSO, Role.MASTER_DATA)));
 

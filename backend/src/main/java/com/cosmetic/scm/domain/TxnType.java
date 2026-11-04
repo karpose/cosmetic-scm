@@ -11,7 +11,8 @@ public enum TxnType {
     SCRAP("报废出库"),
     RETURN_IN("退货入库"),
     RESTOCK("退货转可售"),
-    ISSUE_BACK("发料退回");
+    ISSUE_BACK("发料退回"),
+    OPENING("期初入库");
 
     private final String label;
 

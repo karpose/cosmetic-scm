@@ -27,6 +27,7 @@
             <template v-if="s.ipcValue != null"><b class="mono" :class="{ bad: s.ipcPass === false }">实测 {{ fmtQty(s.ipcValue) }} {{ s.ipcUnit || '' }}</b><el-tag v-if="s.ipcPass === false" type="danger" size="small" disable-transitions> 超限</el-tag></template>
           </div>
           <div v-if="s.deviationNo" class="small bad">已生成偏差 <router-link class="mono" to="/qms">{{ s.deviationNo }}</router-link>，关闭前这批不能上市放行</div>
+          <div v-if="s.equipmentName" class="small">设备：<span class="mono">{{ s.equipmentName }}</span></div>
           <div v-if="s.note" class="small">备注：{{ s.note }}</div>
           <div v-if="s.operator" class="muted small">{{ s.operator }} · {{ fmtTime(s.doneAt) }}<template v-if="s.reviewer"> ｜ 复核 {{ s.reviewer }} · {{ fmtTime(s.reviewedAt) }}</template></div>
         </div>
@@ -51,6 +52,11 @@
           <el-input-number id="st-value" v-model="st.ipcValue" :controls="false" style="width:100%" />
         </el-form-item>
         <el-alert v-if="outOfSpec" type="error" :closable="false" show-icon title="超出限度：会自动生成重大偏差，关闭前这批不能上市放行。请在备注里写明现场情况。" style="margin-bottom:12px" />
+        <el-form-item v-if="st.step?.requiresEquipment" label="使用的设备（校准过期或停用的不能选）">
+          <el-select id="st-equipment" v-model="st.equipmentId" placeholder="选择设备" filterable style="width:100%">
+            <el-option v-for="e in equipment" :key="e.id" :value="e.id" :label="`${e.code} ${e.name}${e.usable ? '' : '（不可用）'}`" :disabled="!e.usable" />
+          </el-select>
+        </el-form-item>
         <el-form-item :label="outOfSpec ? '备注（必填）' : '备注（选填）'"><el-input id="st-note" v-model="st.note" type="textarea" :rows="2" maxlength="500" /></el-form-item>
         <p class="muted small" style="margin:0">记录提交后不能修改。</p>
       </el-form>
@@ -134,8 +140,12 @@ function limits(s) {
 }
 const printIt = () => router.push({ path: '/batch-record', query: { mo: props.moId } })
 
-const st = reactive({ visible: false, saving: false, step: null, ipcValue: undefined, note: '' })
-const openStep = (step) => Object.assign(st, { visible: true, step, ipcValue: undefined, note: '' })
+const st = reactive({ visible: false, saving: false, step: null, ipcValue: undefined, note: '', equipmentId: null })
+const equipment = ref([])
+async function openStep(step) {
+  Object.assign(st, { visible: true, step, ipcValue: undefined, note: '', equipmentId: null })
+  if (step.requiresEquipment) equipment.value = await http.get('/equipment')
+}
 const outOfSpec = computed(() => {
   const s = st.step
   if (!s?.ipcName || st.ipcValue == null) return false
@@ -144,7 +154,7 @@ const outOfSpec = computed(() => {
 async function saveStep() {
   st.saving = true
   try {
-    const r = await http.post(`/mes/records/${props.moId}/steps/${st.step.stepNo}`, { ipcValue: st.ipcValue ?? null, note: st.note })
+    const r = await http.post(`/mes/records/${props.moId}/steps/${st.step.stepNo}`, { ipcValue: st.ipcValue ?? null, note: st.note, equipmentId: st.equipmentId })
     applied(r)
     ElMessage.success(outOfSpec.value ? '已记录并生成偏差' : '工序已记录')
     st.visible = false

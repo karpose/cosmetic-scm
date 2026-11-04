@@ -37,11 +37,12 @@
 
       <h2>工序</h2>
       <table>
-        <thead><tr><th>#</th><th>工序</th><th>过程检验</th><th>实测</th><th>操作人 / 时间</th><th>复核人 / 时间</th><th>备注</th></tr></thead>
+        <thead><tr><th>#</th><th>工序</th><th>设备</th><th>过程检验</th><th>实测</th><th>操作人 / 时间</th><th>复核人 / 时间</th><th>备注</th></tr></thead>
         <tbody>
           <tr v-for="s in rec.steps" :key="s.stepNo">
             <td>{{ s.stepNo }}</td>
             <td>{{ s.name }}{{ s.critical ? '（关键）' : '' }}</td>
+            <td>{{ s.equipmentName || (s.requiresEquipment ? '未记录' : '—') }}</td>
             <td>{{ s.ipcName ? `${s.ipcName}：${limits(s)}` : '—' }}</td>
             <td>{{ s.ipcValue != null ? fmtQty(s.ipcValue) : '—' }}{{ s.ipcPass === false ? '（超限）' : '' }}</td>
             <td>{{ s.operator || '未执行' }}<br>{{ s.doneAt ? fmtTime(s.doneAt) : '' }}</td>

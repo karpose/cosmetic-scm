@@ -24,6 +24,7 @@ import com.cosmetic.scm.common.XlsxWriter;
 import com.cosmetic.scm.domain.AuditResult;
 import com.cosmetic.scm.domain.AuditType;
 import com.cosmetic.scm.domain.BatchStatus;
+import com.cosmetic.scm.domain.CalibrationResult;
 import com.cosmetic.scm.domain.CapaSource;
 import com.cosmetic.scm.domain.CapaStatus;
 import com.cosmetic.scm.domain.CapaType;
@@ -32,6 +33,7 @@ import com.cosmetic.scm.domain.ClearancePhase;
 import com.cosmetic.scm.domain.Decision;
 import com.cosmetic.scm.domain.DeviationArea;
 import com.cosmetic.scm.domain.DeviationLevel;
+import com.cosmetic.scm.domain.EquipmentStatus;
 import com.cosmetic.scm.domain.FilingType;
 import com.cosmetic.scm.domain.FormulaStatus;
 import com.cosmetic.scm.domain.ItemType;
@@ -41,6 +43,7 @@ import com.cosmetic.scm.domain.OemStage;
 import com.cosmetic.scm.domain.PoStatus;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.RetainStatus;
+import com.cosmetic.scm.domain.SourceType;
 import com.cosmetic.scm.domain.StepStatus;
 import com.cosmetic.scm.domain.rules.FormulaDiff;
 import com.cosmetic.scm.inventory.Batch;
@@ -54,8 +57,12 @@ import com.cosmetic.scm.master.MasterDtos.ItemReq;
 import com.cosmetic.scm.master.MasterService;
 import com.cosmetic.scm.master.Partner;
 import com.cosmetic.scm.master.PartnerRepository;
+import com.cosmetic.scm.mes.Equipment;
+import com.cosmetic.scm.mes.EquipmentRepository;
+import com.cosmetic.scm.mes.EquipmentService;
 import com.cosmetic.scm.mes.MesService;
 import com.cosmetic.scm.inventory.InventoryService;
+import com.cosmetic.scm.inventory.OpeningStockService;
 import com.cosmetic.scm.notify.NotificationLogRepository;
 import com.cosmetic.scm.notify.NotifyService;
 import com.cosmetic.scm.oemportal.OemProgress;
@@ -127,6 +134,9 @@ class QmsPlmMesReportTest {
     @Autowired NotifyService notify;
     @Autowired NotificationLogRepository notifyLogs;
     @Autowired TimeProvider time;
+    @Autowired OpeningStockService opening;
+    @Autowired EquipmentService equipment;
+    @Autowired EquipmentRepository equipmentRepo;
     @Autowired PurchaseService purchases;
     @Autowired MfgIssueRepository issues;
     @Autowired InventoryService inventory;
@@ -392,10 +402,11 @@ class QmsPlmMesReportTest {
         assertThatThrownBy(() -> mes.recordStep(mo.getId(), 2, new MesService.StepReq(new BigDecimal("75"), null))).hasMessageContaining("复核");
         assertThatThrownBy(() -> mes.review(mo.getId(), 1, user("prod1"))).hasMessageContaining("操作人以外");
         assertThat(mes.review(mo.getId(), 1, user("qa1")).steps().get(0).status()).isEqualTo(StepStatus.REVIEWED);
-        assertThatThrownBy(() -> mes.recordStep(mo.getId(), 2, ok)).hasMessageContaining("实测值");
-        mes.recordStep(mo.getId(), 2, new MesService.StepReq(new BigDecimal("75"), null));
+        assertThatThrownBy(() -> mes.recordStep(mo.getId(), 2, ok)).hasMessageContaining("选择使用的设备");
+        assertThatThrownBy(() -> mes.recordStep(mo.getId(), 2, new MesService.StepReq(null, null, equipmentId("EQ-EM-01")))).hasMessageContaining("实测值");
+        mes.recordStep(mo.getId(), 2, new MesService.StepReq(new BigDecimal("75"), null, equipmentId("EQ-EM-01")));
         mes.recordStep(mo.getId(), 3, new MesService.StepReq(new BigDecimal("6.2"), null));
-        mes.recordStep(mo.getId(), 4, new MesService.StepReq(new BigDecimal("50.5"), null));
+        mes.recordStep(mo.getId(), 4, new MesService.StepReq(new BigDecimal("50.5"), null, equipmentId("EQ-FL-01")));
         mes.review(mo.getId(), 4, user("qa1"));
         mes.recordStep(mo.getId(), 5, ok);
         assertThat(mes.record(mo.getId()).missing()).containsExactly("完工后清场未确认");
@@ -413,13 +424,13 @@ class QmsPlmMesReportTest {
         mes.recordStep(mo.getId(), 1, new MesService.StepReq(null, null));
         mes.review(mo.getId(), 1, user("qa1"));
         // 超限必须写明现场情况
-        assertThatThrownBy(() -> mes.recordStep(mo.getId(), 2, new MesService.StepReq(new BigDecimal("85"), null))).hasMessageContaining("超出限度");
-        var r = mes.recordStep(mo.getId(), 2, new MesService.StepReq(new BigDecimal("85"), "温控失灵，已停机调整"));
+        assertThatThrownBy(() -> mes.recordStep(mo.getId(), 2, new MesService.StepReq(new BigDecimal("85"), null, equipmentId("EQ-EM-01")))).hasMessageContaining("超出限度");
+        var r = mes.recordStep(mo.getId(), 2, new MesService.StepReq(new BigDecimal("85"), "温控失灵，已停机调整", equipmentId("EQ-EM-01")));
         var step = r.steps().get(1);
         assertThat(step.ipcPass()).isFalse();
         assertThat(step.deviationNo()).startsWith("DV-");
         mes.recordStep(mo.getId(), 3, new MesService.StepReq(new BigDecimal("6"), null));
-        mes.recordStep(mo.getId(), 4, new MesService.StepReq(new BigDecimal("50"), null));
+        mes.recordStep(mo.getId(), 4, new MesService.StepReq(new BigDecimal("50"), null, equipmentId("EQ-FL-01")));
         mes.review(mo.getId(), 4, user("qa1"));
         mes.recordStep(mo.getId(), 5, new MesService.StepReq(null, null));
         mes.clearance(mo.getId(), AFTER, user("qa1"));
@@ -641,6 +652,193 @@ class QmsPlmMesReportTest {
         PlanningService.FgRow fc = row.apply(true);
         assertThat(fc.dailyDemand()).isEqualByComparingTo(fc.forecastDaily());
         assertThat(fc.dailyDemand()).isNotEqualByComparingTo(history.dailyDemand());
+    }
+
+    // ---------- 设备 ----------
+
+    private Long equipmentId(String code) {
+        return equipmentRepo.findAll().stream().filter(e -> e.getCode().equals(code)).findFirst().orElseThrow().getId();
+    }
+
+    /** 走到需要设备的第 2 道工序前。 */
+    private MfgOrder readyForEquipmentStep() {
+        MfgOrder mo = issuedOwnOrder();
+        mes.clearance(mo.getId(), BEFORE, user("prod1"));
+        mes.recordStep(mo.getId(), 1, new MesService.StepReq(null, null));
+        mes.review(mo.getId(), 1, user("qa1"));
+        return mo;
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "prod1", roles = "PRODUCTION")
+    void expiredOrStoppedEquipmentCannotBeUsedInBatchRecord() {
+        MfgOrder mo = readyForEquipmentStep();
+        Long id = equipmentId("EQ-EM-01");
+        var req = new MesService.StepReq(new BigDecimal("75"), null, id);
+
+        Equipment e = equipmentRepo.findById(id).orElseThrow();
+        e.setNextDue(time.today().minusDays(1));
+        equipmentRepo.save(e);
+        assertThatThrownBy(() -> mes.recordStep(mo.getId(), 2, req)).hasMessageContaining("校准已于");
+
+        equipment.calibrate(id, new EquipmentService.CalibrationReq(time.today(), CalibrationResult.PASS, "CAL-1", null, null));
+        // 没填下次日期时按周期算
+        assertThat(equipmentRepo.findById(id).orElseThrow().getNextDue()).isEqualTo(time.today().plusMonths(12));
+        equipment.stop(id, new EquipmentService.StopReq("维修"));
+        assertThatThrownBy(() -> mes.recordStep(mo.getId(), 2, req)).hasMessageContaining("已停用");
+        equipment.resume(id);
+
+        var step = mes.recordStep(mo.getId(), 2, req).steps().get(1);
+        assertThat(step.equipmentName()).contains("EQ-EM-01");
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "prod1", roles = "PRODUCTION")
+    void failedCalibrationStopsEquipmentAndRaisesDeviationListingOrders() {
+        Long id = equipmentId("EQ-EM-01");
+        assertThatThrownBy(() -> equipment.calibrate(id, new EquipmentService.CalibrationReq(time.today(), CalibrationResult.PASS, null, null, null))).hasMessageContaining("证书");
+        assertThatThrownBy(() -> equipment.calibrate(id, new EquipmentService.CalibrationReq(time.today(), CalibrationResult.FAIL, null, null, null))).hasMessageContaining("写明情况");
+        assertThatThrownBy(() -> equipment.calibrate(id, new EquipmentService.CalibrationReq(time.today().plusDays(1), CalibrationResult.PASS, "C", null, null))).hasMessageContaining("晚于今天");
+
+        MfgOrder mo = readyForEquipmentStep();
+        mes.recordStep(mo.getId(), 2, new MesService.StepReq(new BigDecimal("75"), null, id));
+
+        var v = equipment.calibrate(id, new EquipmentService.CalibrationReq(time.today(), CalibrationResult.FAIL, null, null, "偏差超出允差"));
+        assertThat(v.status()).isEqualTo(EquipmentStatus.STOPPED);
+        assertThat(v.usable()).isFalse();
+        var dv = deviations.open().stream().filter(d -> d.title().contains("EQ-EM-01")).findFirst().orElseThrow();
+        assertThat(dv.level()).isEqualTo(DeviationLevel.MAJOR);
+        assertThat(dv.description()).contains("偏差超出允差").contains(mo.getMoNo());
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "qa1", roles = "QA")
+    void equipmentDueSoonShowsInDashboardAndExports() throws Exception {
+        assertThat(notify.digest().items()).extracting(DashboardTodoKind::of).contains("EQUIPMENT"); // 示例里电子秤 20 天后到期
+        assertThat(unzip(reports.export("equipment", null, null).content()).get("xl/worksheets/sheet1.xml")).contains("EQ-SC-01");
+    }
+
+    // ---------- 期初库存 ----------
+
+    private static final BatchStatus REL = BatchStatus.RELEASED;
+
+    private OpeningStockService.OpeningRow row(String code, String batch, String wh, String qty, BatchStatus st, String report, Integer retain, String loc) {
+        return new OpeningStockService.OpeningRow(code, batch, "EXT-" + batch, time.today().minusMonths(2), null, wh, new BigDecimal(qty), st, null, report, retain, loc);
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "qso1", roles = "QSO")
+    void openingStockCreatesBatchesWithDecisionsAndRetainSamples() {
+        var rows = List.of(
+                row("RM-GLY-002", "OPEN-RM-1", "WH-MAIN", "12.5", REL, "COA-OLD-1", null, null),
+                row("RM-GLY-002", "OPEN-RM-2", "WH-MAIN", "3", BatchStatus.QUARANTINE, null, null, null),
+                row("FG-SER-001", "OPEN-FG-1", "WH-MAIN", "100", REL, "QC-OLD-1", 6, "留样室 C-1"));
+        // 预检不写库
+        var dry = opening.run(new OpeningStockService.OpeningReq(rows, true, null), null);
+        assertThat(dry.errors()).isEmpty();
+        assertThat(dry.applied()).isFalse();
+        assertThat(batches.findAll()).noneMatch(b -> b.getBatchNo().startsWith("OPEN-"));
+
+        var done = opening.run(new OpeningStockService.OpeningReq(rows, false, DEMO), user("qso1"));
+        assertThat(done.applied()).isTrue();
+        assertThat(done.created()).isEqualTo(3);
+        Batch rel = batches.findAll().stream().filter(b -> b.getBatchNo().equals("OPEN-RM-1")).findFirst().orElseThrow();
+        assertThat(rel.getStatus()).isEqualTo(REL);
+        assertThat(rel.getSourceType()).isEqualTo(SourceType.OPEN);
+        assertThat(rel.getExpDate()).isNotNull(); // 没填有效期时按保质期算
+        assertThat(inventory.onHand(rel.getId())).isEqualByComparingTo("12.5");
+        Batch fg = batches.findAll().stream().filter(b -> b.getBatchNo().equals("OPEN-FG-1")).findFirst().orElseThrow();
+        assertThat(quality.decisionsOf(fg.getId()).get(0).signedByName()).isEqualTo(user("qso1").getDisplayName());
+        assertThat(retainSamples.findAll()).anyMatch(s -> s.getBatchId().equals(fg.getId()) && s.getQty() == 6);
+        // 期初已放行的成品能被出库分配到，和正常批次一样
+        assertThat(inventory.listStock(null, null, "OPEN-FG-1", false)).hasSize(1);
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "qso1", roles = "QSO")
+    void openingStockIsAllOrNothingAndReportsEveryBadRow() {
+        var rows = List.of(
+                row("RM-GLY-002", "OK-1", "WH-MAIN", "1", REL, "COA", null, null),
+                row("NOPE", "BAD-1", "WH-MAIN", "1", REL, "COA", null, null),
+                row("RM-GLY-002", "BAD-2", "WH-NOPE", "1", REL, "COA", null, null),
+                row("RM-GLY-002", "BAD-3", "WH-MAIN", "1", REL, null, null, null),
+                row("FG-SER-001", "BAD-4", "WH-MAIN", "1", REL, "QC", null, null),
+                row("FG-SER-001", "BAD-5", "WH-MAIN", "1", BatchStatus.QUARANTINE, null, null, null),
+                row("RM-GLY-002", "BAD-6", "WH-MAIN", "1", BatchStatus.PENDING_RELEASE, null, null, null),
+                new OpeningStockService.OpeningRow("RM-GLY-002", "BAD-7", null, time.today().minusYears(5), time.today().minusDays(1), "WH-MAIN", BigDecimal.ONE, REL, null, "COA", null, null),
+                row("RM-GLY-002", "BAD-8", "WH-RTN", "1", BatchStatus.QUARANTINE, null, null, null),
+                new OpeningStockService.OpeningRow("RM-GLY-002", null, null, null, null, "WH-MAIN", BigDecimal.ZERO, REL, null, "COA", null, null));
+        var r = opening.run(new OpeningStockService.OpeningReq(rows, false, DEMO), user("qso1"));
+        assertThat(r.applied()).isFalse();
+        assertThat(r.errors()).hasSize(9);
+        assertThat(r.errors().get(0).line()).isEqualTo(3); // 按 Excel 行号
+        assertThat(batches.findAll()).noneMatch(b -> b.getBatchNo().equals("OK-1"));
+        assertThat(r.errors()).anyMatch(x -> x.message().contains("退货隔离区"));
+
+        // 批号已存在
+        String existing = batches.findAll().get(0).getBatchNo();
+        var dup = opening.run(new OpeningStockService.OpeningReq(List.of(row("RM-GLY-002", existing, "WH-MAIN", "1", BatchStatus.QUARANTINE, null, null, null)), true, null), null);
+        assertThat(dup.errors().get(0).message()).contains("已存在");
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "qso1", roles = "QSO")
+    void sameBatchAcrossWarehousesMergesAndRejectsConflicts() {
+        Long main = ownWarehouse();
+        String other = master.listWarehouses().stream().filter(w -> !w.id().equals(main) && !"RETURN".equals(w.kind().name())).findFirst().orElseThrow().code();
+        var ok = opening.run(new OpeningStockService.OpeningReq(List.of(
+                row("RM-GLY-002", "MULTI-1", "WH-MAIN", "5", BatchStatus.QUARANTINE, null, null, null),
+                row("RM-GLY-002", "MULTI-1", other, "7", BatchStatus.QUARANTINE, null, null, null)), false, DEMO), user("qso1"));
+        assertThat(ok.applied()).isTrue();
+        assertThat(ok.created()).isEqualTo(1);
+        Batch b = batches.findAll().stream().filter(x -> x.getBatchNo().equals("MULTI-1")).findFirst().orElseThrow();
+        assertThat(b.getQtyIn()).isEqualByComparingTo("12");
+        assertThat(inventory.onHand(b.getId())).isEqualByComparingTo("12");
+
+        var conflict = opening.run(new OpeningStockService.OpeningReq(List.of(
+                row("RM-GLY-002", "MULTI-2", "WH-MAIN", "5", BatchStatus.QUARANTINE, null, null, null),
+                row("RM-SQU-005", "MULTI-2", other, "7", BatchStatus.QUARANTINE, null, null, null),
+                row("RM-GLY-002", "MULTI-3", "WH-MAIN", "5", BatchStatus.QUARANTINE, null, null, null),
+                row("RM-GLY-002", "MULTI-3", "WH-MAIN", "1", BatchStatus.QUARANTINE, null, null, null)), true, null), null);
+        assertThat(conflict.errors()).hasSize(2);
+    }
+
+    @Test
+    void openingStockReportsMissingFieldsPerRowThroughTheApi() throws Exception {
+        var qso = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("qso1").roles("QSO");
+        // 缺生产日期、数量为空：要按行报错，不是整个请求 400
+        mvc.perform(post("/api/opening-stock").contentType("application/json").with(qso)
+                        .content("{\"rows\":[{\"itemCode\":\"RM-GLY-002\",\"batchNo\":\"API-1\",\"warehouseCode\":\"WH-MAIN\",\"status\":\"QUARANTINE\"}],\"dryRun\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.errors[0].line").value(2))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.errors[0].code").value("API-1"));
+        // 真正导入不带密码：明确提示，不是系统错误
+        mvc.perform(post("/api/opening-stock").contentType("application/json").with(qso)
+                        .content("{\"rows\":[{\"itemCode\":\"RM-GLY-002\",\"batchNo\":\"API-2\",\"mfgDate\":\"2026-01-01\",\"warehouseCode\":\"WH-MAIN\",\"qty\":1,\"status\":\"QUARANTINE\"}],\"dryRun\":false}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message").value("请输入签批密码"));
+    }
+
+    @Test
+    void wrongUrlsAreClientErrorsNotServerErrors() throws Exception {
+        var qa = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("qa1").roles("QA");
+        mvc.perform(get("/api/no-such-endpoint").with(qa)).andExpect(status().isNotFound());
+        mvc.perform(post("/api/qms/retains").with(qa)).andExpect(status().isMethodNotAllowed());
+        mvc.perform(get("/api/reports/stock").param("from", "不是日期").with(qa)).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void openingStockOnlyForQso() throws Exception {
+        var as = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("admin").roles("ADMIN");
+        mvc.perform(post("/api/opening-stock").contentType("application/json")
+                .content("{\"rows\":[{\"itemCode\":\"X\",\"batchNo\":\"Y\",\"mfgDate\":\"2026-01-01\",\"warehouseCode\":\"W\",\"qty\":1,\"status\":\"RELEASED\"}],\"dryRun\":true}")
+                .with(as)).andExpect(status().isForbidden());
     }
 
     // ---------- 提醒 ----------

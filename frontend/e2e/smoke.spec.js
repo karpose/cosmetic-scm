@@ -337,9 +337,13 @@ test('自产批生产记录：清场、复核、过程检验超限生成偏差�
     await toast(page, '清场已确认')
     await expect(drawer.locator('.clr.done').filter({ hasText: name })).toBeVisible()
   }
-  const run = async (name, value, note) => {
+  const run = async (name, value, note, equip) => {
     await step(name).getByRole('button', { name: '执行' }).click()
     if (value != null) await page.locator('#st-value').fill(String(value))
+    if (equip) {
+      await page.locator('.el-dialog').filter({ hasText: name }).locator('.el-select').first().click()
+      await page.locator('.el-select-dropdown__item:visible').filter({ hasText: equip }).click()
+    }
     if (note) await page.locator('#st-note').fill(note)
     await page.locator('.el-dialog').filter({ hasText: name }).getByRole('button', { name: '提交工序记录' }).click()
   }
@@ -368,12 +372,12 @@ test('自产批生产记录：清场、复核、过程检验超限生成偏差�
 
   await login(page, 'prod1')
   await openDetail()
-  await run('乳化', 85, '温控失灵，已停机调整')
+  await run('乳化', 85, '温控失灵，已停机调整', 'EQ-EM-01')
   await toast(page, '已记录并生成偏差')
   await expect(step('乳化').getByText('超限')).toBeVisible()
   await expect(step('乳化').getByText('关闭前这批不能上市放行')).toBeVisible()
   await run('冷却', 6.2)
-  await run('灌装', 50.5)
+  await run('灌装', 50.5, null, 'EQ-FL-01')
   await expect(step('灌装').getByText('已执行')).toBeVisible()
 
   // 记录没做完不能入库：页面列出缺什么
@@ -477,6 +481,64 @@ test('审计日志按日期查询，补货建议显示预测', async ({ page }) 
   await inputs.nth(1).fill('2020-01-31')
   await inputs.nth(1).press('Enter')
   await expect(page.getByText('没有记录')).toBeVisible()
+})
+
+test('期初库存导入：预检报错，改对后签批写入，能查到批次和留样', async ({ page }) => {
+  await login(page, 'qso1')
+  await page.goto('/inventory-ops')
+  await page.getByRole('button', { name: '期初库存导入' }).click()
+  const d = dialog(page, '批量导入期初库存')
+  const header = '物料编码,批号,状态,仓库编码,数量,生产日期,有效期,外部批号,来源单位编码,检验报告编号,留样数量,留样地点'
+  const csv = (rows) => ({ name: 'opening.csv', mimeType: 'text/csv', buffer: Buffer.from('﻿' + [header, ...rows].join('\r\n') + '\r\n') })
+  const input = d.locator('input[type=file]')
+  await input.setInputFiles(csv(['NOPE,E2E-OB-X,已放行,WH-MAIN,1,2026-09-01,,,,COA,,', 'FG-SER-001,E2E-OB-Y,已放行,WH-MAIN,1,2026-09-01,,,,QC,,']))
+  await expect(d.getByText('物料编码 NOPE 不存在')).toBeVisible()
+  await expect(d.getByText('留样数量和留样地点')).toBeVisible()
+  await expect(d.getByRole('button', { name: /确认导入/ })).toBeDisabled()
+
+  await input.setInputFiles(csv(['RM-GLY-002,E2E-OB-RM,已放行,WH-MAIN,12.5,2026-09-01,,SUP-1,,COA-OLD,,', 'FG-SER-001,E2E-OB-FG,已放行,WH-MAIN,100,2026-09-01,,,,QC-OLD,6,留样室 Z-1']))
+  await expect(d.getByText('预检通过：2 个批次')).toBeVisible()
+  await d.getByRole('button', { name: /确认导入/ }).click()
+  await toast(page, '请输入签批密码')
+  await d.locator('#im-pwd').fill(DEMO)
+  await d.getByRole('button', { name: /确认导入/ }).click()
+  await toast(page, '已导入 2 个批次')
+
+  await page.goto('/trace')
+  await page.locator('#trace-no').fill('E2E-OB-FG')
+  await page.getByRole('button', { name: '追溯' }).click()
+  await expect(page.getByText('期初导入').first()).toBeVisible()
+  await page.goto('/qms?tab=retains')
+  await expect(page.locator('.el-table__row').filter({ hasText: 'E2E-OB-FG' }).getByText('留样室 Z-1')).toBeVisible()
+
+  // 其它角色看不到入口
+  await login(page, 'qa1')
+  await page.goto('/inventory-ops')
+  await expect(page.getByRole('button', { name: '期初库存导入' })).toHaveCount(0)
+})
+
+test('设备校准：不合格自动停用并生成偏差，批记录不能选用', async ({ page }) => {
+  await login(page, 'qa1')
+  await page.goto('/qms?tab=equipment')
+  const row = page.locator('.el-table__row').filter({ hasText: 'EQ-SC-01' })
+  await expect(row.getByText('天后到期')).toBeVisible()
+  await row.getByRole('button', { name: '登记校准' }).click()
+  const d = dialog(page, '登记校准')
+  await page.locator('#cal-cert').fill('CAL-E2E-1')
+  await d.getByRole('button', { name: '登记校准结果' }).click()
+  await toast(page, '校准结果已登记')
+  await expect(row.getByText('天后到期')).toHaveCount(0)
+
+  await row.getByRole('button', { name: '登记校准' }).click()
+  await d.locator('.el-form-item').filter({ hasText: '结论' }).locator('.el-select').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: '不合格' }).click()
+  await page.locator('#cal-note').fill('偏差超出允差')
+  await d.getByRole('button', { name: '登记校准结果' }).click()
+  await toast(page, '设备已停用并生成偏差')
+  await expect(row.getByText('停用')).toBeVisible()
+
+  await page.goto('/qms')
+  await expect(page.locator('.el-table__row').filter({ hasText: 'EQ-SC-01' }).getByText('重大偏差')).toBeVisible()
 })
 
 test('门户账号进不了内部页面', async ({ page }) => {

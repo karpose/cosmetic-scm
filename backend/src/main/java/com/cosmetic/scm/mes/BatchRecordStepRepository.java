@@ -9,5 +9,7 @@ public interface BatchRecordStepRepository extends JpaRepository<BatchRecordStep
 
     List<BatchRecordStep> findByMoIdOrderByStepNo(Long moId);
 
+    List<BatchRecordStep> findByEquipmentId(Long equipmentId);
+
     Optional<BatchRecordStep> findByMoIdAndStepNo(Long moId, Integer stepNo);
 }

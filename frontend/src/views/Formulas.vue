@@ -113,6 +113,7 @@
                 <div class="srow">
                   <el-input v-model="s.name" :disabled="!canRoute" placeholder="工序名称" style="flex:1 1 180px" maxlength="100" />
                   <el-checkbox v-model="s.critical" :disabled="!canRoute">关键工序（须他人复核）</el-checkbox>
+                  <el-checkbox v-model="s.requiresEquipment" :disabled="!canRoute">须记录设备</el-checkbox>
                 </div>
                 <el-input v-model="s.instruction" :disabled="!canRoute" placeholder="操作要求（选填）" maxlength="500" />
                 <div class="srow">
@@ -383,7 +384,7 @@ async function withdraw(row) {
 }
 
 // ---------- 工艺路线 ----------
-const emptyStep = () => ({ name: '', instruction: '', critical: false, ipcName: '', ipcMin: undefined, ipcMax: undefined, ipcUnit: '' })
+const emptyStep = () => ({ name: '', instruction: '', critical: false, ipcName: '', ipcMin: undefined, ipcMax: undefined, ipcUnit: '', requiresEquipment: false })
 const rt = reactive({ fgItemId: null, steps: [], saving: false })
 async function loadRouting() {
   const list = await http.get(`/mes/routings/${rt.fgItemId}`)
@@ -396,7 +397,7 @@ function move(i, d) {
 async function saveRouting() {
   rt.saving = true
   try {
-    await http.put(`/mes/routings/${rt.fgItemId}`, { steps: rt.steps.map(({ name, instruction, critical, ipcName, ipcMin, ipcMax, ipcUnit }) => ({ name, instruction, critical, ipcName, ipcMin: ipcMin ?? null, ipcMax: ipcMax ?? null, ipcUnit })) })
+    await http.put(`/mes/routings/${rt.fgItemId}`, { steps: rt.steps.map(({ name, instruction, critical, ipcName, ipcMin, ipcMax, ipcUnit, requiresEquipment }) => ({ name, instruction, critical, ipcName, ipcMin: ipcMin ?? null, ipcMax: ipcMax ?? null, ipcUnit, requiresEquipment })) })
     ElMessage.success('工艺路线已保存，之后发料的工单按新路线')
     loadRouting()
   } finally {

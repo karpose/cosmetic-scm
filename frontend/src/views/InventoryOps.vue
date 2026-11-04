@@ -6,6 +6,7 @@
         <p>仓间调拨、盘点调整和报废出库。每张单据的数量变化都写入库存流水和审计日志；报废须质量人员再次输入密码签批。退货隔离区的货请在“销售退货”里处置。</p>
       </div>
       <div class="toolbar">
+        <el-button v-if="isQso" @click="openingOpen = true">期初库存导入</el-button>
         <el-button v-if="canMove" @click="open('TRANSFER')">仓间调拨</el-button>
         <el-button v-if="canMove" @click="open('ADJUST')">盘点调整</el-button>
         <el-button v-if="canScrap" type="danger" plain @click="open('SCRAP')">报废出库</el-button>
@@ -117,6 +118,7 @@
         <el-button :type="d.mode === 'SCRAP' ? 'danger' : 'primary'" :loading="d.saving" @click="submit">{{ SUBMIT[d.mode] }}</el-button>
       </template>
     </el-dialog>
+    <ImportDialog v-model="openingOpen" kind="opening" @done="load" />
   </div>
 </template>
 
@@ -125,6 +127,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
+import ImportDialog from '../components/ImportDialog.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
@@ -145,6 +148,8 @@ const docs = ref([])
 const type = ref('')
 const canMove = computed(() => auth.hasAny('ADMIN', 'WAREHOUSE'))
 const canScrap = computed(() => auth.hasAny('QA', 'QSO'))
+const isQso = computed(() => auth.hasAny('QSO'))
+const openingOpen = ref(false)
 
 const loader = useLoader(async () => { docs.value = await http.get('/inventory-docs') })
 const load = () => loader.run()

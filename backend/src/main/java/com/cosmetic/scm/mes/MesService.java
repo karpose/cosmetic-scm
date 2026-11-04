@@ -51,6 +51,8 @@ public class MesService {
     private final MfgOrderRepository orders;
     private final DeviationService deviationService;
     private final DeviationRepository deviations;
+    private final EquipmentRepository equipment;
+    private final EquipmentService equipmentService;
     private final MasterLookup lookup;
     private final AuditService audit;
     private final TimeProvider time;
@@ -62,14 +64,19 @@ public class MesService {
                                  @Size(max = 60) String ipcName,
                                  BigDecimal ipcMin,
                                  BigDecimal ipcMax,
-                                 @Size(max = 20) String ipcUnit) {
+                                 @Size(max = 20) String ipcUnit,
+                                 boolean requiresEquipment) {
+
+        public RoutingStepReq(String name, String instruction, boolean critical, String ipcName, BigDecimal ipcMin, BigDecimal ipcMax, String ipcUnit) {
+            this(name, instruction, critical, ipcName, ipcMin, ipcMax, ipcUnit, false);
+        }
     }
 
     public record RoutingReq(@NotEmpty(message = "至少一道工序") @Valid List<RoutingStepReq> steps) {
     }
 
     public record RoutingStepView(Long id, int stepNo, String name, String instruction, boolean critical, String ipcName,
-                                  BigDecimal ipcMin, BigDecimal ipcMax, String ipcUnit) {
+                                  BigDecimal ipcMin, BigDecimal ipcMax, String ipcUnit, boolean requiresEquipment) {
     }
 
     public record ClearanceReq(@NotNull ClearancePhase phase,
@@ -82,7 +89,11 @@ public class MesService {
                                @NotBlank(message = "请输入签批密码") String password) {
     }
 
-    public record StepReq(BigDecimal ipcValue, @Size(max = 500) String note) {
+    public record StepReq(BigDecimal ipcValue, @Size(max = 500) String note, Long equipmentId) {
+
+        public StepReq(BigDecimal ipcValue, String note) {
+            this(ipcValue, note, null);
+        }
     }
 
     public record ReviewReq(@NotBlank(message = "请输入签批密码") String password) {
@@ -91,7 +102,7 @@ public class MesService {
     public record StepView(int stepNo, String name, String instruction, boolean critical, String ipcName, BigDecimal ipcMin,
                            BigDecimal ipcMax, String ipcUnit, StepStatus status, String statusLabel, BigDecimal ipcValue,
                            Boolean ipcPass, String note, String operator, LocalDateTime doneAt, String reviewer,
-                           LocalDateTime reviewedAt, Long deviationId, String deviationNo) {
+                           LocalDateTime reviewedAt, Long deviationId, String deviationNo, boolean requiresEquipment, String equipmentName) {
     }
 
     public record ClearanceView(ClearancePhase phase, String phaseLabel, String area, String prevProduct, String note,
@@ -109,7 +120,7 @@ public class MesService {
     public List<RoutingStepView> routing(Long fgItemId) {
         return routing.findByFgItemIdOrderByStepNo(fgItemId).stream()
                 .map(r -> new RoutingStepView(r.getId(), r.getStepNo(), r.getName(), r.getInstruction(), r.isCritical(),
-                        r.getIpcName(), r.getIpcMin(), r.getIpcMax(), r.getIpcUnit())).toList();
+                        r.getIpcName(), r.getIpcMin(), r.getIpcMax(), r.getIpcUnit(), r.isRequiresEquipment())).toList();
     }
 
     @Transactional
@@ -146,6 +157,7 @@ public class MesService {
             r.setIpcMin(s.ipcMin());
             r.setIpcMax(s.ipcMax());
             r.setIpcUnit(blankToNull(s.ipcUnit()));
+            r.setRequiresEquipment(s.requiresEquipment());
             routing.save(r);
         }
         audit.log("保存工艺路线", fg.getCode(), req.steps().size() + " 道工序：" + String.join(" → ", req.steps().stream().map(RoutingStepReq::name).toList()));
@@ -171,6 +183,7 @@ public class MesService {
             s.setIpcMin(r.getIpcMin());
             s.setIpcMax(r.getIpcMax());
             s.setIpcUnit(r.getIpcUnit());
+            s.setRequiresEquipment(r.isRequiresEquipment());
             s.setStatus(StepStatus.PENDING);
             steps.save(s);
         }
@@ -265,6 +278,18 @@ public class MesService {
         }
         String operator = currentUser.usernameOrSystem();
         String detail = s.getName();
+        if (s.isRequiresEquipment()) {
+            if (req.equipmentId() == null) {
+                throw new BizException("第 " + stepNo + " 道工序“" + s.getName() + "”请选择使用的设备");
+            }
+            Equipment e = equipment.findById(req.equipmentId()).orElseThrow(() -> BizException.notFound("设备"));
+            String unusable = equipmentService.unusableReason(e);
+            if (unusable != null) {
+                throw new BizException(unusable + "，不能用于生产，请换设备或先处理");
+            }
+            s.setEquipmentId(e.getId());
+            detail += "，设备 " + e.getCode();
+        }
         Deviation deviation = null;
         if (s.getIpcName() != null) {
             if (req.ipcValue() == null) {
@@ -344,7 +369,8 @@ public class MesService {
         List<StepView> stepViews = list.stream().map(s -> new StepView(s.getStepNo(), s.getName(), s.getInstruction(), s.isCritical(),
                 s.getIpcName(), s.getIpcMin(), s.getIpcMax(), s.getIpcUnit(), s.getStatus(), s.getStatus().getLabel(), s.getIpcValue(),
                 s.getIpcPass(), s.getNote(), s.getOperator(), s.getDoneAt(), s.getReviewer(), s.getReviewedAt(), s.getDeviationId(),
-                s.getDeviationId() == null ? null : deviations.findById(s.getDeviationId()).map(Deviation::getDeviationNo).orElse(null))).toList();
+                s.getDeviationId() == null ? null : deviations.findById(s.getDeviationId()).map(Deviation::getDeviationNo).orElse(null),
+                s.isRequiresEquipment(), s.getEquipmentId() == null ? null : equipment.findById(s.getEquipmentId()).map(e -> e.getCode() + " " + e.getName()).orElse(null))).toList();
         List<ClearanceView> clearanceViews = clearances.findByMoId(mo.getId()).stream()
                 .map(c -> new ClearanceView(c.getPhase(), c.getPhase().getLabel(), c.getArea(), c.getPrevProduct(), c.getNote(), c.getSignedBy(), c.getSignedAt()))
                 .toList();

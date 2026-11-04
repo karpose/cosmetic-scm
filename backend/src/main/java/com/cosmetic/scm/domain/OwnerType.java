@@ -8,7 +8,8 @@ public enum OwnerType {
     COMPLAINT("投诉"),
     RECALL("召回"),
     SALES_RETURN("退货单"),
-    PARTNER("往来单位");
+    PARTNER("往来单位"),
+    EQUIPMENT("设备");
 
     private final String label;
 
