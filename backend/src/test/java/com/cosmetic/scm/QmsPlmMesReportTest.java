@@ -134,6 +134,7 @@ class QmsPlmMesReportTest {
     @Autowired NotifyService notify;
     @Autowired NotificationLogRepository notifyLogs;
     @Autowired TimeProvider time;
+    @Autowired com.cosmetic.scm.dashboard.DashboardService dashboard;
     @Autowired OpeningStockService opening;
     @Autowired EquipmentService equipment;
     @Autowired EquipmentRepository equipmentRepo;
@@ -839,6 +840,65 @@ class QmsPlmMesReportTest {
         mvc.perform(post("/api/opening-stock").contentType("application/json")
                 .content("{\"rows\":[{\"itemCode\":\"X\",\"batchNo\":\"Y\",\"mfgDate\":\"2026-01-01\",\"warehouseCode\":\"W\",\"qty\":1,\"status\":\"RELEASED\"}],\"dryRun\":true}")
                 .with(as)).andExpect(status().isForbidden());
+    }
+
+    // ---------- 数据量大时的正确性 ----------
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "qso1", roles = "QSO")
+    void nearExpiryAlertFindsOldBatchesEvenWithManyNewerOnes() {
+        // 最老的批次最可能临期：不能只看最近几百个批次
+        LocalDate mfg = time.today().minusMonths(32);
+        opening.run(new OpeningStockService.OpeningReq(List.of(new OpeningStockService.OpeningRow("FG-SER-001", "OLD-NEAR-EXP", null, mfg, null, "WH-MAIN",
+                BigDecimal.TEN, REL, null, "QC", 6, "留样室")), false, DEMO), user("qso1"));
+        Item rm = item("RM-GLY-002");
+        for (int i = 0; i < 520; i++) {
+            Batch b = new Batch();
+            b.setBatchNo("NEWER-" + i);
+            b.setItemId(rm.getId());
+            b.setMfgDate(time.today());
+            b.setExpDate(time.today().plusYears(2));
+            b.setStatus(BatchStatus.QUARANTINE);
+            b.setSourceType(SourceType.OPEN);
+            b.setSourceNo("T");
+            b.setQtyIn(BigDecimal.ONE);
+            b.setCreatedAt(time.now());
+            batches.save(b);
+        }
+        assertThat(dashboard.summary().todos()).anyMatch(t -> "NEAR_EXPIRY".equals(t.kind()) && "OLD-NEAR-EXP".equals(t.ref()));
+    }
+
+    @Test
+    void shortCacheComputesOnceAndExpires() throws Exception {
+        var cache = new com.cosmetic.scm.common.ShortCache(30);
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(8);
+        var futures = new java.util.ArrayList<java.util.concurrent.Future<Integer>>();
+        for (int i = 0; i < 8; i++) {
+            futures.add(pool.submit(() -> cache.get("k", () -> {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return calls.incrementAndGet();
+            })));
+        }
+        for (var f : futures) {
+            assertThat(f.get()).isEqualTo(1);
+        }
+        pool.shutdown();
+        assertThat(calls.get()).isEqualTo(1);
+        // 丢弃后重新计算
+        cache.evictPrefix("k");
+        assertThat(cache.get("k", calls::incrementAndGet)).isEqualTo(2);
+        calls.set(1);
+        // ttl 为 0 时不缓存
+        var off = new com.cosmetic.scm.common.ShortCache(0);
+        off.get("k", calls::incrementAndGet);
+        off.get("k", calls::incrementAndGet);
+        assertThat(calls.get()).isEqualTo(3);
     }
 
     // ---------- 提醒 ----------

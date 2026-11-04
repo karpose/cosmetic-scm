@@ -147,7 +147,7 @@ public class FilingService {
     }
 
     private ProductFiling require(Long id) {
-        return filings.findById(id).orElseThrow(() -> BizException.notFound("备案记录"));
+        return filings.lockById(id).orElseThrow(() -> BizException.notFound("备案记录"));
     }
 
     private FilingView toView(ProductFiling f) {

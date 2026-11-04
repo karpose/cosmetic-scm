@@ -8,7 +8,7 @@
 
 | 层 | 技术 |
 | --- | --- |
-| 后端 | Java 17+（已验证 17 与 27）、Spring Boot 3.3、Spring Data JPA、Spring Security（JWT）、Flyway |
+| 后端 | Java 17+（已验证 17 与 27）、Spring Boot 3.5、Spring Data JPA、Spring Security（JWT）、Flyway |
 | 数据库 | MySQL 8（生产）；本地开发用 H2 文件库，免安装 |
 | 前端 | Vue 3、Vite 5、Element Plus、Pinia、Vue Router |
 | 部署 | Docker Compose（MySQL + 后端 + nginx） |
@@ -133,6 +133,10 @@ docker compose start backend
 ```
 
 后端有健康检查 `GET /api/health`（数据库不通时返回 503），compose 会等后端健康后再启动前端。
+
+### 容量
+
+实测（MySQL 8、4 核 6 GB 虚拟机）：3 万批次、10 万库存流水、2 万出库单、30 万审计日志，30 人不间断操作，约 146 次请求 / 秒，P95 0.96 秒，无错误。单次接口都在 0.7 秒内。看板和补货建议有 30 秒短时缓存（`scm.cache.ttl-seconds`），所以出库后最多 30 秒才反映到这两页；在补货建议点“重新计算”或生产单有增减时立即刷新。总览和各业务列表是实时的。
 
 ### 计算机化系统验证
 
@@ -278,6 +282,8 @@ mvn test
 - `CostAttachmentScanTest`：成品成本按 BOM 卷算并进入看板金额；附件校验（假文件、文件被改动、文件丢失）；受托厂只能传本厂未完工的单子；扫码卡片标出不可用批次、核对结果写审计。
 - `QmsPlmMesReportTest`：配方只能走签批变更、原料变化先备案、已发料单保留版本、注册证过期拦放行；重大偏差挡放行直到 CAPA 验证有效；审核不合格移出名录；留样未到期不能销毁；批记录的顺序、复核、清场和超限偏差；各岗位权限；Excel 内容转义且不产生公式；每张报表可导出并写审计；提醒只含警告和紧急，渠道失败有记录。
 - 同一个类还覆盖：期初库存（全成或全不成、按行报错、跨仓合并、仅 QSO）；设备校准（过期和停用不能用、不合格生成偏差）；写错地址返回 4xx 而不是 500；导出超过页面 300 条时数据完整；审计导出按日期范围；生产单取消和退料（含开工后拒绝）；采购单取消和关闭；预测接入补货建议；个人邮件只含本岗位事项。
+- `ConcurrencyIntegrationTest`：同一操作同时发 8 次（完工、取消、发料和取消、收货、留样领用、跨批次出库），业务结果只生效一次，不超卖，库存够时都能出。
+- `TokenSecurityTest`：账号停用和角色调整立即生效；改密后旧令牌失效；管理员不能改自己的角色；伪造请求头绕不过扫码限流。
 - `DemandForecastTest`：移动平均、同比（增长率封顶）、季节指数（旺季、近期水平、最多看 3 年）。
 - `PasswordPolicyTest`、`ReplenishmentTest`、`SerialCodesTest`：密码复杂度、补货计算、防伪码生成与规范化规则。
 

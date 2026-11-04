@@ -120,7 +120,7 @@ public class QualityService {
     /** 物料（原料、包材）检验放行或拒收。 */
     @Transactional
     public BatchView materialDecision(Long batchId, MaterialDecisionReq req, AppUser signer) {
-        Batch b = inventory.batch(batchId);
+        Batch b = lockBatch(batchId);
         Item item = lookup.item(b.getItemId());
         if (item.getItemType() == ItemType.FG) {
             throw new BizException("成品批次请走上市放行");
@@ -146,7 +146,7 @@ public class QualityService {
     /** 成品上市放行或不予放行。 */
     @Transactional
     public BatchView marketRelease(Long batchId, ReleaseReq req, AppUser signer) {
-        Batch b = inventory.batch(batchId);
+        Batch b = lockBatch(batchId);
         Item item = lookup.item(b.getItemId());
         if (item.getItemType() != ItemType.FG) {
             throw new BizException("只有成品批次需要上市放行");
@@ -226,7 +226,7 @@ public class QualityService {
     public List<String> freeze(FreezeReq req, AppUser signer) {
         List<String> done = new ArrayList<>();
         for (String no : req.batchNos()) {
-            Batch b = inventory.batchByNo(no);
+            Batch b = batches.lockByBatchNo(no == null ? null : no.trim()).orElseThrow(() -> BizException.notFound("批次 " + no + " "));
             if (b.getStatus() == BatchStatus.FROZEN || b.getStatus() == BatchStatus.REJECTED) {
                 continue;
             }
@@ -245,7 +245,7 @@ public class QualityService {
 
     @Transactional
     public BatchView unfreeze(Long batchId, UnfreezeReq req, AppUser signer) {
-        Batch b = inventory.batch(batchId);
+        Batch b = lockBatch(batchId);
         if (b.getStatus() != BatchStatus.FROZEN) {
             throw new BizException("批次 " + b.getBatchNo() + " 没有被冻结");
         }
@@ -256,6 +256,10 @@ public class QualityService {
         batches.save(b);
         audit.log("解冻批次", b.getBatchNo(), "恢复为" + back.getLabel() + "，签批人 " + signer.getDisplayName(), req.reason().trim());
         return single(b);
+    }
+
+    private Batch lockBatch(Long id) {
+        return batches.lockById(id).orElseThrow(() -> BizException.notFound("批次"));
     }
 
     /** 微小偏差不挡放行；重大及以上的必须先关闭。 */

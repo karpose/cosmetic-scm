@@ -290,7 +290,7 @@ public class FormulaService {
     }
 
     private FormulaVersion require(Long id) {
-        return versions.findById(id).orElseThrow(() -> BizException.notFound("配方版本"));
+        return versions.lockById(id).orElseThrow(() -> BizException.notFound("配方版本"));
     }
 
     private static void requireStatus(FormulaVersion v, FormulaStatus expected, String action) {

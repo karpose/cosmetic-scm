@@ -154,8 +154,14 @@ public class UserService {
     public UserView update(Long id, UpdateUserReq req) {
         AppUser u = user(id);
         AppUser me = currentUser.get();
-        if (u.getId().equals(me.getId()) && (!req.enabled() || !req.roles().contains(Role.ADMIN))) {
-            throw new BizException("不能停用自己，或移除自己的管理员角色");
+        if (u.getId().equals(me.getId())) {
+            if (!req.enabled()) {
+                throw new BizException("不能停用自己");
+            }
+            // 否则管理员可以给自己加质量安全负责人，绕过放行的职责分离
+            if (!Set.copyOf(u.getRoles()).equals(Set.copyOf(req.roles()))) {
+                throw new BizException("不能修改自己的角色，请让另一位管理员操作");
+            }
         }
         Long partnerId = checkRoles(req.roles(), req.partnerId());
         u.setDisplayName(req.displayName());

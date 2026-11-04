@@ -7,6 +7,8 @@ spring:
     driver-class-name: org.h2.Driver
 
 scm:
+  cache:
+    ttl-seconds: 0
   demo-data: true
   security:
     force-password-change: false   # 本地演示不强制改密

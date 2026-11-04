@@ -204,7 +204,7 @@ public class DealerService {
     @Transactional
     public List<RecallNoticeView> acknowledgeRecall(Long noticeId) {
         Long me = currentUser.portalPartnerId();
-        RecallNotice n = notices.findById(noticeId).filter(x -> me.equals(x.getCustomerId()))
+        RecallNotice n = notices.lockById(noticeId).filter(x -> me.equals(x.getCustomerId()))
                 .orElseThrow(() -> BizException.notFound("召回通知"));
         if (n.getNotifiedAt() != null) {
             throw new BizException("该召回通知已于 " + n.getNotifiedAt().toLocalDate() + " 确认");
@@ -262,12 +262,12 @@ public class DealerService {
 
     private DealerOrder mine(Long id) {
         Long me = currentUser.portalPartnerId();
-        return orders.findById(id).filter(o -> me.equals(o.getCustomerId()))
+        return orders.lockById(id).filter(o -> me.equals(o.getCustomerId()))
                 .orElseThrow(() -> BizException.notFound("订单"));
     }
 
     private DealerOrder pending(Long id) {
-        DealerOrder o = orders.findById(id).orElseThrow(() -> BizException.notFound("经销商订单"));
+        DealerOrder o = orders.lockById(id).orElseThrow(() -> BizException.notFound("经销商订单"));
         if (o.getStatus() != DealerOrderStatus.SUBMITTED) {
             throw new BizException("订单当前为" + o.getStatus().getLabel() + "，不能再审核");
         }

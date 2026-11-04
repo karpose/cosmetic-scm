@@ -10,6 +10,8 @@ server:
   port: 8090
 
 scm:
+  cache:
+    ttl-seconds: 0
   demo-data: true
   security:
     force-password-change: false

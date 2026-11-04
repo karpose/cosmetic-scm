@@ -1,5 +1,7 @@
 package com.cosmetic.scm.inventory;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -40,6 +42,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class InventoryService {
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     private final BatchRepository batches;
     private final StockRepository stocks;
@@ -92,7 +97,7 @@ public class InventoryService {
         if (delta == null || delta.signum() == 0) {
             throw new IllegalArgumentException("库存变动数量不能为 0");
         }
-        Stock s = stocks.lockByBatchAndWarehouse(batch.getId(), warehouseId).orElseGet(() -> {
+        Stock s = lockStock(batch.getId(), warehouseId).orElseGet(() -> {
             Stock n = new Stock();
             n.setBatchId(batch.getId());
             n.setItemId(batch.getItemId());
@@ -122,6 +127,19 @@ public class InventoryService {
     }
 
     /**
+     * 锁结存行并读到最新数量。同一事务里分配时可能已读过这一行：直接用锁查询，Hibernate 发现版本变了会报冲突，
+     * 并发出库就会互相失败；所以先取 ID 再带锁刷新，排队后按实际库存判断够不够。
+     */
+    private java.util.Optional<Stock> lockStock(Long batchId, Long warehouseId) {
+        return stocks.findIdByBatchAndWarehouse(batchId, warehouseId).map(id -> {
+            entityManager.flush();
+            Stock s = entityManager.find(Stock.class, id);
+            entityManager.refresh(s, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+            return s;
+        });
+    }
+
+    /**
      * 盘点：锁住结存行后按实盘数量调整，返回差异（实盘 - 账面）。差异为 0 时不写流水。
      */
     @Transactional(propagation = Propagation.MANDATORY)
@@ -129,8 +147,7 @@ public class InventoryService {
         if (counted == null || counted.signum() < 0) {
             throw new BizException("实盘数量不能为负");
         }
-        BigDecimal book = stocks.lockByBatchAndWarehouse(batch.getId(), warehouseId)
-                .map(Stock::getQty).orElse(BigDecimal.ZERO);
+        BigDecimal book = lockStock(batch.getId(), warehouseId).map(Stock::getQty).orElse(BigDecimal.ZERO);
         BigDecimal delta = counted.subtract(book);
         if (delta.signum() != 0) {
             change(batch, warehouseId, delta, TxnType.ADJUST, refNo);
@@ -144,7 +161,10 @@ public class InventoryService {
     @Transactional(propagation = Propagation.MANDATORY)
     public void consume(List<FefoAllocator.Pick> picks, TxnType type, String refNo) {
         for (FefoAllocator.Pick p : picks) {
+            // 锁住批次再判断状态：冻结和出库不会同时进行，冻结提交后这里一定能看到
             Batch b = batch(p.batchId());
+            entityManager.flush();
+            entityManager.refresh(b, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
             if (b.getStatus() != BatchStatus.RELEASED) {
                 throw new BizException("批次 " + b.getBatchNo() + " 当前状态为" + b.getStatus().getLabel() + "，不能出库");
             }
@@ -162,9 +182,22 @@ public class InventoryService {
      */
     @Transactional(readOnly = true)
     public FefoAllocator.Result allocate(Long itemId, BigDecimal qty, Collection<Long> warehouseIds, double minRatio) {
+        return allocateFrom(stocks.findByItemIdAndQtyGreaterThan(itemId, BigDecimal.ZERO), qty, warehouseIds, minRatio);
+    }
+
+    /**
+     * 真正要扣库存时用：锁住这个物料的结存行再分配。并发出库同一物料时排队，
+     * 后到的按前一单扣完后的最新库存分配，不会因为读到旧数据而误报“库存不足”。必须在写事务里调用。
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public FefoAllocator.Result allocateForUpdate(Long itemId, BigDecimal qty, Collection<Long> warehouseIds, double minRatio) {
+        return allocateFrom(stocks.lockByItemWithStock(itemId, BigDecimal.ZERO), qty, warehouseIds, minRatio);
+    }
+
+    private FefoAllocator.Result allocateFrom(List<Stock> all, BigDecimal qty, Collection<Long> warehouseIds, double minRatio) {
         // 退货隔离区的货等待质量处置，任何情况下都不参与分配
         Map<Long, Warehouse> wm = lookup.warehouseMap();
-        List<Stock> rows = stocks.findByItemIdAndQtyGreaterThan(itemId, BigDecimal.ZERO).stream()
+        List<Stock> rows = all.stream()
                 .filter(s -> warehouseIds == null || warehouseIds.isEmpty() || warehouseIds.contains(s.getWarehouseId()))
                 .filter(s -> wm.get(s.getWarehouseId()).getKind() != WarehouseKind.RETURN)
                 .toList();

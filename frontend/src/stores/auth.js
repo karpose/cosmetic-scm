@@ -45,7 +45,11 @@ export const useAuth = defineStore('auth', {
       this.user = await http.get('/auth/me', { silent: true })
     },
     async changePassword(oldPassword, newPassword) {
-      this.user = await http.post('/auth/password', { oldPassword, newPassword })
+      // 改密后旧令牌失效，换用接口返回的新令牌
+      const resp = await http.post('/auth/password', { oldPassword, newPassword })
+      this.token = resp.token
+      this.user = resp.user
+      localStorage.setItem(TOKEN_KEY, resp.token)
     },
     logout() {
       this.token = null

@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class ProductionController {
 
     private final ProductionService production;
+    private final com.cosmetic.scm.common.ShortCache cache;
 
     @GetMapping
     public List<MoView> list() {
@@ -38,13 +39,18 @@ public class ProductionController {
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN','PRODUCTION')")
     public MoView create(@Valid @RequestBody CreateMoReq req) {
-        return production.create(req);
+        MoView mo = production.create(req);
+        // 在制量变了：补货建议不能再用缓存，否则建议量没变，用户可能重复生成
+        cache.evictPrefix("planning:");
+        return mo;
     }
 
     @PostMapping("/{id}/cancel")
     @PreAuthorize("hasAnyRole('ADMIN','PRODUCTION')")
     public ProductionService.MoView cancel(@PathVariable Long id, @jakarta.validation.Valid @RequestBody ProductionService.CancelReq req) {
-        return production.cancel(id, req);
+        ProductionService.MoView mo = production.cancel(id, req);
+        cache.evictPrefix("planning:");
+        return mo;
     }
 
     @PostMapping("/{id}/issue")

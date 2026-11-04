@@ -54,7 +54,8 @@ public class PublicVerifyController {
     }
 
     private static String clientIp(HttpServletRequest http) {
-        String fwd = http.getHeader("X-Forwarded-For");
-        return fwd == null || fwd.isBlank() ? http.getRemoteAddr() : fwd.split(",")[0].trim();
+        // X-Forwarded-For 第一段是客户端自己填的，换个值就能绕过限流；X-Real-IP 由 nginx 覆盖写入，不能伪造
+        String real = http.getHeader("X-Real-IP");
+        return real == null || real.isBlank() ? http.getRemoteAddr() : real.trim();
     }
 }
