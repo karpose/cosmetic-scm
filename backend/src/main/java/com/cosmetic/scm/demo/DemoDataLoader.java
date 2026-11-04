@@ -277,13 +277,7 @@ public class DemoDataLoader implements ApplicationRunner {
         // ---------- 第一批精华液生成 20 个一物一码，可在“一物一码”里导出、在扫码页查询 ----------
         as("qa1", () -> serials.generate(new SerialService.GenerateReq(done1.outBatchNo(), 20)));
 
-        // ---------- 配方与备案：两个成品已备案；精华液有一个提高透明质酸钠用量的变更，备案还在途，所以暂时不能签批生效 ----------
-        for (Item fg : List.of(serum, cream)) {
-            as("admin", () -> {
-                FilingService.FilingView f = filings.create(new FilingService.FilingReq(fg.getId(), FilingType.GENERAL, null, t.minusDays(400), null));
-                return filings.complete(f.id(), new FilingService.CompleteReq(fg.getFilingNo(), t.minusDays(390), null));
-            });
-        }
+        // ---------- 配方与备案：精华液有一个提高透明质酸钠用量的变更，备案还在途，所以暂时不能签批生效 ----------
         FormulaService.VersionView v2 = as("admin", () -> formulas.createDraft(serum.getId(), new FormulaService.DraftReq(
                 "透明质酸钠由 0.1% 提到 0.17%，改善肤感（示例）", List.of(
                 new BomLineReq(nia.getId(), new BigDecimal("0.0015"), SupplyMode.BRAND),

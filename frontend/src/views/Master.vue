@@ -147,7 +147,10 @@
           <el-form-item label=" "><el-checkbox id="it-banned" v-model="item.banned">禁用原料（不可采购、不可进入 BOM）</el-checkbox></el-form-item>
         </div>
         <div v-if="item.itemType === 'FG'" class="form-grid">
-          <el-form-item label="备案 / 注册编号"><el-input id="it-filing" v-model="item.filingNo" /></el-form-item>
+          <el-form-item label="备案 / 注册编号">
+            <el-input id="it-filing" v-model="item.filingNo" :disabled="item.filingLocked" />
+            <span v-if="item.filingLocked" class="muted small">要修改请到“配方与备案 → 备案登记”登记新的备案</span>
+          </el-form-item>
           <el-form-item label="净含量（g）"><el-input-number id="it-net" v-model="item.netG" :min="0" :precision="3" :controls="false" style="width:100%" /></el-form-item>
         </div>
         <el-checkbox id="it-active" v-model="item.active">启用</el-checkbox>
@@ -318,11 +321,11 @@ function onAdd() {
 }
 
 function openItem(row) {
-  Object.assign(item, emptyItem(), row ? { ...row } : {}, { visible: true })
+  Object.assign(item, emptyItem(), row ? { ...row } : {}, { visible: true, filingLocked: !!row?.filingNo })
 }
 
 async function saveItem() {
-  const { visible, saving, id, ...body } = item
+  const { visible, saving, id, filingLocked, ...body } = item
   item.saving = true
   try {
     if (id) await http.put(`/items/${id}`, body)

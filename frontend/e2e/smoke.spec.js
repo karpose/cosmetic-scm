@@ -410,6 +410,12 @@ test('报表导出 Excel 并写审计，消息提醒页只显示渠道状态', a
   await page.goto('/audit')
   await expect(page.getByText('导出报表').first()).toBeVisible()
 
+  // 已有备案记录的成品，主数据里不能直接改编号
+  await page.goto('/master')
+  await page.locator('.el-table__row').filter({ hasText: 'FG-SER-001' }).getByRole('button', { name: '编辑' }).click()
+  await expect(page.locator('#it-filing')).toBeDisabled()
+  await expect(page.getByText('登记新的备案')).toBeVisible()
+
   await page.goto('/notifications')
   await expect(page.getByText('未配置').first()).toBeVisible()
   await expect(page.getByRole('button', { name: '立即发送一次' })).toBeDisabled()

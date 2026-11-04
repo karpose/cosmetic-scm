@@ -14,6 +14,8 @@ import lombok.RequiredArgsConstructor;
 import com.cosmetic.scm.audit.AuditService;
 import com.cosmetic.scm.common.BizException;
 import com.cosmetic.scm.common.TimeProvider;
+import com.cosmetic.scm.domain.FilingStatus;
+import com.cosmetic.scm.domain.FilingType;
 import com.cosmetic.scm.domain.FormulaStatus;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.PartnerKind;
@@ -31,6 +33,8 @@ import com.cosmetic.scm.plm.FormulaLine;
 import com.cosmetic.scm.plm.FormulaLineRepository;
 import com.cosmetic.scm.plm.FormulaVersion;
 import com.cosmetic.scm.plm.FormulaVersionRepository;
+import com.cosmetic.scm.plm.ProductFiling;
+import com.cosmetic.scm.plm.ProductFilingRepository;
 import com.cosmetic.scm.security.CurrentUser;
 
 import org.springframework.stereotype.Service;
@@ -50,6 +54,7 @@ public class MasterService {
     private final BomLineRepository bomLines;
     private final FormulaVersionRepository formulaVersions;
     private final FormulaLineRepository formulaLines;
+    private final ProductFilingRepository filings;
     private final MasterLookup lookup;
     private final AuditService audit;
     private final TimeProvider time;
@@ -73,6 +78,7 @@ public class MasterService {
         item.setCode(req.code().trim());
         applyItem(item, req);
         items.save(item);
+        recordFilingFromMaster(item);
         audit.log("新增物料", item.getCode(), item.getName() + "（" + item.getItemType().getLabel() + "）");
         return item;
     }
@@ -86,9 +92,37 @@ public class MasterService {
         if (item.getItemType() != req.itemType()) {
             throw new BizException("物料类型创建后不能修改");
         }
+        String oldFiling = item.getFilingNo();
+        String newFiling = item.getItemType() == ItemType.FG ? blankToNull(req.filingNo()) : null;
+        boolean filingChanged = !java.util.Objects.equals(oldFiling, newFiling);
+        if (filingChanged && !filings.findByFgItemIdAndStatusOrderByIdDesc(id, FilingStatus.FILED).isEmpty()) {
+            throw new BizException(item.getName() + " 的备案编号由备案记录决定，修改请到“配方与备案 → 备案登记”登记新的备案");
+        }
         applyItem(item, req);
+        if (filingChanged) {
+            recordFilingFromMaster(item);
+        }
         audit.log("修改物料", item.getCode(), item.getName());
         return item;
+    }
+
+    /**
+     * 上线初始化时可以在主数据（或 CSV）里直接填已有的备案编号，这里同时补一条已完成的备案记录。
+     * 有了记录之后编号只能走备案登记改，上市放行看到的编号都能追溯到记录。
+     */
+    private void recordFilingFromMaster(Item item) {
+        if (item.getItemType() != ItemType.FG || item.getFilingNo() == null) {
+            return;
+        }
+        ProductFiling f = new ProductFiling();
+        f.setFgItemId(item.getId());
+        f.setFilingType(FilingType.GENERAL);
+        f.setFilingNo(item.getFilingNo());
+        f.setStatus(FilingStatus.FILED);
+        f.setNote("主数据录入的已有编号，请核对类型和日期");
+        f.setCreatedBy(currentUser.usernameOrSystem());
+        f.setCreatedAt(time.now());
+        filings.save(f);
     }
 
     private void applyItem(Item item, ItemReq req) {

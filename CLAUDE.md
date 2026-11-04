@@ -51,6 +51,7 @@ cp .env.example .env && docker compose up -d --build
 - `spring.servlet.multipart` 的上限必须高于 nginx 的 `client_max_body_size`（现在 30 MB 对 25 MB）。业务上限（20 MB）在 `AttachmentService` 判断。反过来配置会让后端没读完请求体就回错误，和 nginx 互相等待到超时。
 - 金额是标准成本估值：`MasterService.unitCosts()` 优先用标准成本，成品退回 BOM 物料成本；没成本的物料不计入，并显示数量提示。不要当账面成本用。
 - 配方：`bom` / `bom_line` 永远是当前生效版本的内容，其它模块照常读。生效配方不能直接改（`MasterService.saveBom` 只接受首版），要走 `FormulaService`：草稿 → 提交 → QSO 签批，发起人不能批自己的；原料变化必须有该版本 FILED 的 `product_filing`。生产单 `formula_version_id`：未发料跟随生效版本，发料后锁定，用量按版本读（`MasterService.versionLines`）。
+- 备案编号：首次可在主数据或 CSV 里填（同时生成一条 FILED 记录，便于上线初始化）；有已完成的记录后只能走 `FilingService`，`MasterService.updateItem` 拒绝直接修改。
 - 放行的前置检查在 `QualityService`：批次有未关闭的重大及以上偏差、注册证过期都不能放行。放行时写 `retain_sample`，这是留样台账的唯一入口。
 - 批记录（`MesService`）只对自产且发料时有工艺路线的单子生效，在发料事务里固化。`ProductionService.complete` 先查 `mes.missing()`，并把这张单的偏差挂到产出批次。工序记录提交后不提供修改接口。过程检验超限不阻止生产，但必须自动生成偏差。
 - 签批、复核、验证类操作的执行人不能是操作人本身（CAPA 完成人、工序操作人、配方发起人），规则写在服务层，不靠界面隐藏。
@@ -71,7 +72,7 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-04）
 
-- 后端 `mvn clean test` 55 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 17 项全部通过；GitHub Actions 在 PR 上跑这三项。
+- 后端 `mvn clean test` 56 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 17 项全部通过；GitHub Actions 在 PR 上跑这三项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 已升到 1.18.48（Boot 3.3 自带的 1.18.34 在 JDK 27 上编译崩溃）。判断“某 JDK 能编译”时务必 `mvn clean`。
 - 已完成：一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。

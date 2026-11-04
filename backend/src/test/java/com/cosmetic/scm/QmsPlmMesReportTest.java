@@ -33,6 +33,7 @@ import com.cosmetic.scm.domain.DeviationArea;
 import com.cosmetic.scm.domain.DeviationLevel;
 import com.cosmetic.scm.domain.FilingType;
 import com.cosmetic.scm.domain.FormulaStatus;
+import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.MoStatus;
 import com.cosmetic.scm.domain.MoType;
 import com.cosmetic.scm.domain.PartnerKind;
@@ -46,6 +47,7 @@ import com.cosmetic.scm.master.Item;
 import com.cosmetic.scm.master.ItemRepository;
 import com.cosmetic.scm.master.MasterDtos.BomLineReq;
 import com.cosmetic.scm.master.MasterDtos.BomReq;
+import com.cosmetic.scm.master.MasterDtos.ItemReq;
 import com.cosmetic.scm.master.MasterService;
 import com.cosmetic.scm.master.Partner;
 import com.cosmetic.scm.master.PartnerRepository;
@@ -215,6 +217,35 @@ class QmsPlmMesReportTest {
         assertThatThrownBy(() -> filings.complete(f.id(), new FilingService.CompleteReq("注册证-1", time.today().minusYears(5), null))).hasMessageContaining("有效期");
         filings.complete(f.id(), new FilingService.CompleteReq("注册证-1", time.today().minusYears(5), time.today().minusDays(1)));
         assertThatThrownBy(() -> quality.marketRelease(pending.getId(), releaseReq(), user("qso1"))).hasMessageContaining("到期");
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "admin", roles = "ADMIN")
+    void filingNumberOnlyChangesThroughTheRegisterOnceRecorded() {
+        Item fg = item("FG-SER-001");
+        var same = new ItemReq(fg.getCode(), fg.getName() + "（改名）", ItemType.FG, fg.getUnit(), null, null, false, fg.getShelfMonths(),
+                fg.getFilingNo(), fg.getNetG(), true, null, null);
+        // 其它字段照常能改；编号不变不受影响
+        assertThat(master.updateItem(fg.getId(), same).getName()).endsWith("（改名）");
+        var changed = new ItemReq(fg.getCode(), fg.getName(), ItemType.FG, fg.getUnit(), null, null, false, fg.getShelfMonths(),
+                "改过的编号", fg.getNetG(), true, null, null);
+        assertThatThrownBy(() -> master.updateItem(fg.getId(), changed)).hasMessageContaining("备案登记");
+        var cleared = new ItemReq(fg.getCode(), fg.getName(), ItemType.FG, fg.getUnit(), null, null, false, fg.getShelfMonths(),
+                null, fg.getNetG(), true, null, null);
+        assertThatThrownBy(() -> master.updateItem(fg.getId(), cleared)).hasMessageContaining("备案登记");
+
+        // 初始化：新成品填已有编号时同时生成已完成的记录；之后同样不能直接改
+        Item fresh = master.createItem(new ItemReq("FG-NEW-T", "新品", ItemType.FG, "瓶", null, null, false, 36, "历史编号-1",
+                new BigDecimal("30"), true, null, null));
+        assertThat(filings.list().stream().filter(f -> f.fgItemId().equals(fresh.getId())).findFirst().orElseThrow().filingNo()).isEqualTo("历史编号-1");
+        // 没有编号的成品后来补填，也会补记录
+        Item blank = master.createItem(new ItemReq("FG-NEW-U", "新品二", ItemType.FG, "瓶", null, null, false, 36, null,
+                new BigDecimal("30"), true, null, null));
+        assertThat(filings.list().stream().noneMatch(f -> f.fgItemId().equals(blank.getId()))).isTrue();
+        master.updateItem(blank.getId(), new ItemReq("FG-NEW-U", "新品二", ItemType.FG, "瓶", null, null, false, 36, "历史编号-2",
+                new BigDecimal("30"), true, null, null));
+        assertThat(filings.list().stream().filter(f -> f.fgItemId().equals(blank.getId())).count()).isEqualTo(1);
     }
 
     private static QualityService.ReleaseReq releaseReq() {
