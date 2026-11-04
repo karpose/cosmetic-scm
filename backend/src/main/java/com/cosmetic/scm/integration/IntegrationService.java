@@ -219,7 +219,7 @@ public class IntegrationService {
         }
         PushResult r = fulfil(id);
         log("IN", o.getPlatform(), "手工重试", o.getPlatformOrderNo(), r.status() == ChannelOrderStatus.SHIPPED,
-                r.error() == null ? "出库单 " + r.soNo() : r.error());
+                r.error() != null ? r.error() : r.soNo() != null ? "出库单 " + r.soNo() : r.statusLabel());
         return r;
     }
 
@@ -293,7 +293,11 @@ public class IntegrationService {
             });
         } catch (BizException e) {
             return tx.execute(s -> {
-                ChannelOrder o = orders.findById(id).orElseThrow();
+                ChannelOrder o = orders.lockById(id).orElseThrow();
+                // 出库失败回滚后到这里之间，订单可能已被取消。不能盖掉，否则取消的单又能重试出库
+                if (o.getStatus() == ChannelOrderStatus.SHIPPED || o.getStatus() == ChannelOrderStatus.CANCELLED) {
+                    return result(o, false);
+                }
                 o.setStatus(ChannelOrderStatus.FAILED);
                 o.setError(truncate(e.getMessage(), 500));
                 o.setAttempts(o.getAttempts() + 1);

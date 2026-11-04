@@ -103,7 +103,10 @@ public class RecallService {
 
     @Transactional
     public RecallView create(RecallReq req, AppUser signer) {
-        Batch b = inventory.batchByNo(req.batchNo());
+        // 先锁批次再查“是否已有进行中的召回”，否则同时发起会开出多个召回单。必须是事务里第一句：
+        // MySQL 可重复读下，锁之前有过普通查询的话，后面的查询读不到别人刚提交的召回
+        Batch b = batches.lockByBatchNo(req.batchNo() == null ? null : req.batchNo().trim())
+                .orElseThrow(() -> BizException.notFound("批号 " + req.batchNo() + " "));
         Item item = lookup.item(b.getItemId());
         if (item.getItemType() != ItemType.FG) {
             throw new BizException("召回针对成品批次；物料问题请在批次追溯里冻结受影响批次");
@@ -117,7 +120,7 @@ public class RecallService {
         }
         Complaint complaint = null;
         if (req.complaintId() != null) {
-            complaint = complaints.findById(req.complaintId()).orElseThrow(() -> BizException.notFound("投诉"));
+            complaint = complaints.lockById(req.complaintId()).orElseThrow(() -> BizException.notFound("投诉"));
             if (complaint.getRecallId() != null) {
                 throw new BizException("投诉 " + complaint.getComplaintNo() + " 已关联召回");
             }

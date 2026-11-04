@@ -39,7 +39,7 @@
         <el-table-column label="已生码" width="150">
           <template #default="{ row }">
             <span class="mono">{{ fmtQty(row.generated) }}</span>
-            <el-progress v-if="row.generated" :percentage="Math.min(100, Math.round(row.generated / Number(row.qtyIn) * 100))" :stroke-width="6" :show-text="false" />
+            <el-progress v-if="row.generated" aria-label="已生码比例" :percentage="Math.min(100, Math.round(row.generated / Number(row.qtyIn) * 100))" :stroke-width="6" :show-text="false" />
           </template>
         </el-table-column>
         <el-table-column label="被扫码 / 扫码次数" width="150" align="right">

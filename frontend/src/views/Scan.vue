@@ -15,7 +15,7 @@
 
     <el-card v-if="mode !== 'lookup'" shadow="never" body-style="padding:14px 18px">
       <div class="pick">
-        <el-select v-model="refId" filterable :placeholder="mode === 'MO' ? '选择生产 / 委托单' : '选择出库单'" style="width:min(420px, 100%)" @change="loadRef">
+        <el-select aria-label="选择单据" v-model="refId" filterable :placeholder="mode === 'MO' ? '选择生产 / 委托单' : '选择出库单'" style="width:min(420px, 100%)" @change="loadRef">
           <el-option v-for="r in refs" :key="r.id" :value="r.id" :label="r.label" />
         </el-select>
         <span v-if="expected.length" class="muted small">应扫 {{ expected.length }} 个批次，已核对 {{ matchedCount }} 个</span>

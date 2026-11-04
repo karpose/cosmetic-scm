@@ -61,11 +61,11 @@
           <template #default="{ row }"><span class="mono">{{ fmtMoney(row.unitCost) }}</span><div v-if="row.listPrice" class="muted small mono">{{ fmtMoney(row.listPrice) }}</div></template>
         </el-table-column>
         <el-table-column label="计划数量" width="130">
-          <template #default="{ row }"><el-input-number v-model="qty[row.itemId]" :min="0" :step="100" :precision="0" :controls="false" size="small" style="width:100%" /></template>
+          <template #default="{ row }"><el-input-number aria-label="建议生产数量" v-model="qty[row.itemId]" :min="0" :step="100" :precision="0" :controls="false" size="small" style="width:100%" /></template>
         </el-table-column>
         <el-table-column label="生产方" width="170">
           <template #default="{ row }">
-            <el-select v-model="factory[row.itemId]" size="small" placeholder="选择生产方">
+            <el-select aria-label="生产方" v-model="factory[row.itemId]" size="small" placeholder="选择生产方">
               <el-option v-for="f in rd.factories.value" :key="f.id" :value="f.id" :label="f.name" :disabled="!f.usable" />
             </el-select>
           </template>
@@ -91,11 +91,11 @@
         <el-table-column label="在库 / 待检 / 在途" width="160" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.onHand) }} / {{ fmtQty(row.quarantine) }} / {{ fmtQty(row.onOrder) }}</span></template></el-table-column>
         <el-table-column label="单价" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.unitCost) }}</span></template></el-table-column>
         <el-table-column label="采购数量" width="130">
-          <template #default="{ row }"><el-input-number v-model="buy[row.itemId]" :min="0" :precision="row.itemType === 'PK' ? 0 : 4" :controls="false" size="small" style="width:100%" /> <span class="muted small">{{ row.unit }}</span></template>
+          <template #default="{ row }"><el-input-number aria-label="建议采购数量" v-model="buy[row.itemId]" :min="0" :precision="row.itemType === 'PK' ? 0 : 4" :controls="false" size="small" style="width:100%" /> <span class="muted small">{{ row.unit }}</span></template>
         </el-table-column>
         <el-table-column label="供应商" width="190">
           <template #default="{ row }">
-            <el-select v-model="supplier[row.itemId]" size="small" placeholder="选择供应商">
+            <el-select aria-label="供应商" v-model="supplier[row.itemId]" size="small" placeholder="选择供应商">
               <el-option v-for="s in rd.suppliers.value" :key="s.id" :value="s.id" :label="s.name" :disabled="!s.usable" />
             </el-select>
           </template>

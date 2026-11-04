@@ -10,10 +10,10 @@
     <el-card shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="toolbar">
-          <el-select id="st-type" v-model="f.type" placeholder="全部类型" clearable style="width:120px" @change="load">
+          <el-select aria-label="按类型筛选" id="st-type" v-model="f.type" placeholder="全部类型" clearable style="width:120px" @change="load">
             <el-option value="FG" label="成品" /><el-option value="RM" label="原料" /><el-option value="PK" label="包材" />
           </el-select>
-          <el-select id="st-wh" v-model="f.warehouseId" placeholder="全部仓库" clearable style="width:160px" @change="load">
+          <el-select aria-label="按仓库筛选" id="st-wh" v-model="f.warehouseId" placeholder="全部仓库" clearable style="width:160px" @change="load">
             <el-option v-for="w in warehouses" :key="w.id" :value="w.id" :label="w.kind === 'RETURN' ? `${w.name}（待处置退货）` : w.name" />
           </el-select>
           <el-input id="st-q" v-model="f.q" placeholder="搜索物料或批号" clearable style="width:220px" @change="load" />

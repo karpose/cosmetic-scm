@@ -31,7 +31,7 @@
         </el-table-column>
         <el-table-column label="订购数量" width="170">
           <template #default="{ row }">
-            <el-input-number v-model="cart[row.itemId]" :min="0" :max="Number(row.available)" :precision="0" :disabled="!Number(row.available)" :controls="false" placeholder="0" style="width:100%" />
+            <el-input-number aria-label="订购数量" v-model="cart[row.itemId]" :min="0" :max="Number(row.available)" :precision="0" :disabled="!Number(row.available)" :controls="false" placeholder="0" style="width:100%" />
           </template>
         </el-table-column>
       </el-table>
