@@ -109,7 +109,9 @@ const SPECS = {
       { header: '保质期（月）', key: 'shelfMonths', conv: int('保质期'), example: '36' },
       { header: '备案编号', key: 'filingNo', conv: text, example: '' },
       { header: '净含量（g）', key: 'netG', conv: num('净含量'), example: '' },
-      { header: '启用', key: 'active', conv: yesDefault(true), show: yn, example: '是' }
+      { header: '启用', key: 'active', conv: yesDefault(true), show: yn, example: '是' },
+      { header: '标准成本（元）', key: 'stdCost', conv: num('标准成本'), example: '12' },
+      { header: '指导价（元）', key: 'listPrice', conv: num('指导价'), example: '' }
     ]
   },
   partners: {

@@ -15,6 +15,12 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  servlet:
+    multipart:
+      # 故意高于 nginx 的 25 MB 和业务上限 20 MB（scm.storage.max-file-mb）：
+      # 在这里中途拒绝的话，后端没读完请求体就回错误，和 nginx 互相等待直到超时
+      max-file-size: 30MB
+      max-request-size: 30MB
   jackson:
     time-zone: Asia/Shanghai
     serialization:
@@ -40,6 +46,10 @@ scm:
   integration:
     # 电商 ERP 调用 /api/integration/** 时在请求头 X-Api-Key 里带上；留空则关闭对接接口
     api-key: ${SCM_INTEGRATION_API_KEY:}
+  storage:
+    # 附件文件目录；Docker 部署时是一个卷（见 docker-compose.yml），备份容器会一起打包
+    dir: ${SCM_STORAGE_DIR:./data/files}
+    max-file-mb: 20
   serial:
     # 一物一码导出给印刷厂时拼在码前面的扫码地址，生产环境改成正式域名，如 https://scm.example.com/v/
     verify-url-prefix: ${SCM_VERIFY_URL_PREFIX:http://localhost:5173/v/}

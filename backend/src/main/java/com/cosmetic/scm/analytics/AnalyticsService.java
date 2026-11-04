@@ -77,12 +77,21 @@ public class AnalyticsService {
     private final QualityDecisionRepository decisions;
     private final ComplaintRepository complaints;
     private final PlanningService planning;
+    private final com.cosmetic.scm.master.MasterService master;
     private final TraceService trace;
     private final MasterLookup lookup;
     private final TimeProvider time;
 
     public record Headline(BigDecimal fgOnHand, Double nearExpiryShare, Integer medianDaysOfSupply, Double onTimeRate,
                            Double avgReleaseDays, Double complaintsPer10k, long traceAvgMs) {
+    }
+
+    /**
+     * 库存金额（按 {@link com.cosmetic.scm.master.MasterService#unitCosts()} 的单位成本）。
+     * 没有成本的物料不计入金额，个数放在 itemsWithoutCost，提醒去主数据补。
+     */
+    public record Money(BigDecimal inventoryValue, BigDecimal fgValue, BigDecimal materialValue, BigDecimal nearExpiryValue,
+                        BigDecimal slowMovingValue, BigDecimal returnAreaValue, int itemsWithoutCost) {
     }
 
     /** 成品按剩余效期分档：<1/3、1/3–1/2、1/2–2/3、≥2/3。 */
@@ -94,7 +103,7 @@ public class AnalyticsService {
     }
 
     public record SlowRow(String batchNo, String itemName, String itemType, BigDecimal qty, String unit, LocalDate mfgDate,
-                          Double shelfRatio) {
+                          Double shelfRatio, BigDecimal value) {
     }
 
     public record FactoryRow(String factoryName, String kindLabel, int completed, int onTime, Double onTimeRate,
@@ -115,7 +124,7 @@ public class AnalyticsService {
     public record TraceStats(int sampled, long avgMs, long maxMs, long targetMs) {
     }
 
-    public record Kpi(LocalDateTime generatedAt, Headline headline, List<ShelfBuckets> shelf, List<SupplyRow> supply,
+    public record Kpi(LocalDateTime generatedAt, Headline headline, Money money, List<ShelfBuckets> shelf, List<SupplyRow> supply,
                       List<SlowRow> slowMoving, List<FactoryRow> factories, QualityCycle quality,
                       ComplaintStats complaints, TraceStats trace) {
     }
@@ -128,6 +137,34 @@ public class AnalyticsService {
         List<Stock> rows = stocks.findByQtyGreaterThan(BigDecimal.ZERO);
         Map<Long, Batch> bm = batches.findAllById(rows.stream().map(Stock::getBatchId).distinct().toList()).stream()
                 .collect(Collectors.toMap(Batch::getId, Function.identity()));
+        Map<Long, BigDecimal> cost = master.unitCosts();
+
+        // ---------- 库存金额 ----------
+        BigDecimal fgValue = BigDecimal.ZERO;
+        BigDecimal matValue = BigDecimal.ZERO;
+        BigDecimal nearValue = BigDecimal.ZERO;
+        BigDecimal returnValue = BigDecimal.ZERO;
+        Set<Long> noCost = new HashSet<>();
+        for (Stock s : rows) {
+            BigDecimal c = cost.get(s.getItemId());
+            if (c == null) {
+                noCost.add(s.getItemId());
+                continue;
+            }
+            BigDecimal v = c.multiply(s.getQty());
+            Batch b = bm.get(s.getBatchId());
+            if (wm.get(s.getWarehouseId()).getKind() == WarehouseKind.RETURN) {
+                returnValue = returnValue.add(v);
+            } else if (im.get(s.getItemId()).getItemType() == ItemType.FG) {
+                fgValue = fgValue.add(v);
+                Double r = ShelfLife.remainingRatio(b.getMfgDate(), b.getExpDate(), today);
+                if (b.getStatus() == BatchStatus.RELEASED && r != null && r < 0.5) {
+                    nearValue = nearValue.add(v);
+                }
+            } else {
+                matValue = matValue.add(v);
+            }
+        }
 
         // ---------- 成品效期分布 ----------
         Map<Long, BigDecimal[]> buckets = new LinkedHashMap<>();
@@ -177,8 +214,10 @@ public class AnalyticsService {
                         && b.getMfgDate() != null && b.getMfgDate().isBefore(today.minusDays(SLOW_MOVING_DAYS)))
                 .map(b -> {
                     Item i = im.get(b.getItemId());
+                    BigDecimal c = cost.get(i.getId());
                     return new SlowRow(b.getBatchNo(), i.getName(), i.getItemType().getLabel(), qtyByBatch.get(b.getId()),
-                            i.getUnit(), b.getMfgDate(), ShelfLife.remainingRatio(b.getMfgDate(), b.getExpDate(), today));
+                            i.getUnit(), b.getMfgDate(), ShelfLife.remainingRatio(b.getMfgDate(), b.getExpDate(), today),
+                            c == null ? null : money(c.multiply(qtyByBatch.get(b.getId()))));
                 })
                 .sorted(Comparator.comparing(SlowRow::mfgDate))
                 .limit(10).toList();
@@ -277,7 +316,14 @@ public class AnalyticsService {
         Headline headline = new Headline(fgTotal, fgTotal.signum() == 0 ? null : round1(fgNear.doubleValue() * 100 / fgTotal.doubleValue()),
                 medianDos, allDone == 0 ? null : round1(allOnTime * 100.0 / allDone), quality.avgReleaseDays(), per10k,
                 traceStats.avgMs());
-        return new Kpi(time.now(), headline, shelf, supply, slow, factories, quality, complaintStats, traceStats);
+        BigDecimal slowValue = slow.stream().map(SlowRow::value).filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
+        Money moneyView = new Money(money(fgValue.add(matValue)), money(fgValue), money(matValue), money(nearValue),
+                money(slowValue), money(returnValue), noCost.size());
+        return new Kpi(time.now(), headline, moneyView, shelf, supply, slow, factories, quality, complaintStats, traceStats);
+    }
+
+    private static BigDecimal money(BigDecimal v) {
+        return v.setScale(2, RoundingMode.HALF_UP);
     }
 
     private static Double avg(List<Double> xs) {

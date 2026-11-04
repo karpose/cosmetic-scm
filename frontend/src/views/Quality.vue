@@ -81,6 +81,8 @@
         <el-descriptions-item label="供应商">{{ qc.batch.partnerName }} · 来料批号 {{ qc.batch.extBatchNo || '—' }}</el-descriptions-item>
         <el-descriptions-item label="数量">{{ fmtQty(qc.batch.qtyIn) }} {{ qc.batch.unit }}</el-descriptions-item>
       </el-descriptions>
+      <AttachmentList v-if="qc.batch" style="margin-top:12px" owner-type="BATCH" :owner-id="qc.batch.id" :can-upload="auth.canAttach()"
+                      title="供应商 COA / 检验报告" empty-text="还没有上传 COA 或检验报告" />
       <el-form label-position="top" style="margin-top:12px" @submit.prevent>
         <el-form-item label="结论">
           <el-radio-group id="qc-decision" v-model="qc.decision">
@@ -155,6 +157,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
+import AttachmentList from '../components/AttachmentList.vue'
 import { useAuth } from '../stores/auth'
 import { fmtDate, fmtQty, fmtTime } from '../utils/format'
 

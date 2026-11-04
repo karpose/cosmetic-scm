@@ -21,7 +21,7 @@
     <el-card shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="card-h">
-          <b>成品</b>
+          <span><b>成品</b> <span v-if="fgPlanValue" class="muted small">勾选计划的物料成本约 <b class="mono">{{ fmtMoney(fgPlanValue) }}</b></span></span>
           <span class="toolbar">
             <span class="muted small">已选 {{ chosen.length }} 个</span>
             <el-button :disabled="!chosen.length" :loading="m.loading" @click="calcMaterials">计算物料需求</el-button>
@@ -50,6 +50,9 @@
             <el-tag v-else type="success" size="small" disable-transitions><el-icon class="ti"><CircleCheckFilled /></el-icon>充足</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="单位成本 / 指导价" width="130" align="right">
+          <template #default="{ row }"><span class="mono">{{ fmtMoney(row.unitCost) }}</span><div v-if="row.listPrice" class="muted small mono">{{ fmtMoney(row.listPrice) }}</div></template>
+        </el-table-column>
         <el-table-column label="计划数量" width="130">
           <template #default="{ row }"><el-input-number v-model="qty[row.itemId]" :min="0" :step="100" :precision="0" :controls="false" size="small" style="width:100%" /></template>
         </el-table-column>
@@ -66,7 +69,7 @@
     <el-card v-if="m.rows" shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="card-h">
-          <b>品牌供料物料需求</b>
+          <span><b>品牌供料物料需求</b> <span v-if="buyValue" class="muted small">采购金额约 <b class="mono">{{ fmtMoney(buyValue) }}</b></span></span>
           <span class="toolbar">
             <span class="muted small">需要采购 {{ toBuy.length }} 种，涉及 {{ supplierGroups.length }} 家供应商</span>
             <el-button v-if="canPo" type="primary" :disabled="!toBuy.length" :loading="creatingPo" @click="createPos">按供应商生成采购单</el-button>
@@ -79,6 +82,7 @@
         <el-table-column label="本次需求" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.gross) }}</span></template></el-table-column>
         <el-table-column label="已计划占用" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.openOrders) }}</span></template></el-table-column>
         <el-table-column label="在库 / 待检 / 在途" width="160" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.onHand) }} / {{ fmtQty(row.quarantine) }} / {{ fmtQty(row.onOrder) }}</span></template></el-table-column>
+        <el-table-column label="单价" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.unitCost) }}</span></template></el-table-column>
         <el-table-column label="采购数量" width="130">
           <template #default="{ row }"><el-input-number v-model="buy[row.itemId]" :min="0" :precision="row.itemType === 'PK' ? 0 : 4" :controls="false" size="small" style="width:100%" /> <span class="muted small">{{ row.unit }}</span></template>
         </el-table-column>
@@ -102,7 +106,7 @@ import { CircleCheckFilled, WarningFilled } from '@element-plus/icons-vue'
 import http from '../api'
 import LoadError from '../components/LoadError.vue'
 import { useAuth } from '../stores/auth'
-import { fmtQty } from '../utils/format'
+import { fmtMoney, fmtQty } from '../utils/format'
 import { useLoader } from '../utils/loader'
 import { useRefData } from '../utils/refdata'
 
@@ -137,6 +141,9 @@ const m = reactive({ loading: false, rows: null })
 const buy = reactive({})
 const supplier = reactive({})
 const toBuy = computed(() => (m.rows || []).filter((r) => buy[r.itemId] > 0))
+// 金额只算有成本的行；没有成本的物料不计入
+const buyValue = computed(() => toBuy.value.reduce((a, r) => a + (r.unitCost != null ? Number(r.unitCost) * buy[r.itemId] : 0), 0))
+const fgPlanValue = computed(() => chosen.value.reduce((a, r) => a + (r.unitCost != null ? Number(r.unitCost) * (qty[r.itemId] || 0) : 0), 0))
 const supplierGroups = computed(() => [...new Set(toBuy.value.map((r) => supplier[r.itemId]).filter(Boolean))])
 
 async function calcMaterials() {

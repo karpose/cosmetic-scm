@@ -14,3 +14,5 @@ scm:
     force-password-change: false
   integration:
     api-key: test-integration-key
+  storage:
+    dir: ${java.io.tmpdir}/scm-test-files

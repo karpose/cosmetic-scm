@@ -221,9 +221,9 @@ class MainLineIntegrationTest {
     @WithMockUser(username = "admin")
     void importIsAllOrNothingAndReportsEveryBadRow() {
         long before = items.count();
-        ItemReq ok = new ItemReq("RM-IMP-001", "导入测试原料", ItemType.RM, "kg", null, null, false, 24, null, null, true);
-        ItemReq noShelf = new ItemReq("FG-IMP-002", "导入测试成品", ItemType.FG, "瓶", null, null, false, null, null, null, true);
-        ItemReq badCode = new ItemReq("坏 编码", "名称", ItemType.RM, "kg", null, null, false, null, null, null, true);
+        ItemReq ok = new ItemReq("RM-IMP-001", "导入测试原料", ItemType.RM, "kg", null, null, false, 24, null, null, true, null, null);
+        ItemReq noShelf = new ItemReq("FG-IMP-002", "导入测试成品", ItemType.FG, "瓶", null, null, false, null, null, null, true, null, null);
+        ItemReq badCode = new ItemReq("坏 编码", "名称", ItemType.RM, "kg", null, null, false, null, null, null, true, null, null);
 
         MasterImportService.ImportResult bad = importer.importItems(
                 new MasterImportService.ItemImportReq(List.of(ok, noShelf, badCode, ok), false));

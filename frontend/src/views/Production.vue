@@ -113,6 +113,9 @@
             </template>
           </el-table-column>
         </el-table>
+        <h4 class="sec">附件</h4>
+        <AttachmentList owner-type="MFG_ORDER" :owner-id="detail.data.mo.id" :can-upload="auth.canAttach()"
+                        :title="detail.data.mo.moType === 'OEM' ? '受托厂出厂报告、批生产记录等（受托厂可在门户上传）' : '批生产记录、检验报告等'" />
         <template v-if="detail.data.mo.moType === 'OEM' && detail.trail">
           <h4 class="sec">受托厂门户回传</h4>
           <el-timeline v-if="detail.trail.progress.length" class="tl">
@@ -191,6 +194,7 @@ import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import BatchNo from '../components/BatchNo.vue'
 import StatusTag from '../components/StatusTag.vue'
+import AttachmentList from '../components/AttachmentList.vue'
 import { useAuth } from '../stores/auth'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'

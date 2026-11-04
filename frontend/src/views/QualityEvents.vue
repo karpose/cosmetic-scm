@@ -39,6 +39,7 @@
                   <div v-if="row.conclusion"><span class="muted">调查结论：</span>{{ row.conclusion }}</div>
                   <div v-if="row.capa"><span class="muted">纠正预防措施：</span>{{ row.capa }}</div>
                   <div v-if="row.closedBy" class="muted small">{{ row.closedBy }} 于 {{ fmtTime(row.closedAt) }} 关闭</div>
+                  <AttachmentList owner-type="COMPLAINT" :owner-id="row.id" :can-upload="auth.canAttach()" title="投诉附件（照片、聊天记录、留样复检报告）" />
                 </div>
               </template>
             </el-table-column>
@@ -250,6 +251,9 @@
           </el-table-column>
         </el-table>
 
+        <h4 class="sec">附件</h4>
+        <AttachmentList owner-type="RECALL" :owner-id="dr.recall.id" :can-upload="auth.canAttach()" title="召回附件（通知函、回收与销毁记录）" />
+
         <template v-if="dr.recall.status === 'OPEN' && isQso">
           <h4 class="sec">关闭召回</h4>
           <el-form label-position="top" @submit.prevent>
@@ -272,6 +276,7 @@ import BatchNo from '../components/BatchNo.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
+import AttachmentList from '../components/AttachmentList.vue'
 import { useAuth } from '../stores/auth'
 import { COMPLAINT_CATEGORY, COMPLAINT_CHANNELS, SEVERITY, fmtQty, fmtTime, today } from '../utils/format'
 import { useLoader } from '../utils/loader'

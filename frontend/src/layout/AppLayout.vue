@@ -70,7 +70,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  ArrowDown, Box, Coin, Connection, DataAnalysis, DataBoard, Document, Expand, Fold, Goods, Guide, OfficeBuilding,
+  ArrowDown, Box, Coin, Connection, DataAnalysis, DataBoard, Document, Expand, Fold, Goods, Guide, Iphone, OfficeBuilding,
   Operation, Postcard, RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, TrendCharts, User, Van, WarningFilled
 } from '@element-plus/icons-vue'
 import { useAuth, PASSWORD_RULE, ROLE_LABELS } from '../stores/auth'
@@ -100,6 +100,7 @@ const groups = computed(() => {
         { path: '/quality', title: '质量放行', icon: Stamp },
         { path: '/stock', title: '库存', icon: Box },
         { path: '/inventory-ops', title: '库存作业', icon: Operation },
+        { path: '/scan', title: '扫码作业', icon: Iphone },
         { path: '/sales', title: '销售出库', icon: Van },
         { path: '/returns', title: '销售退货', icon: RefreshLeft },
         { path: '/dealer-orders', title: '经销商订单', icon: Tickets },

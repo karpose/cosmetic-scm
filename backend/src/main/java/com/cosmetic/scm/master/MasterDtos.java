@@ -40,7 +40,9 @@ public final class MasterDtos {
             @Min(1) @Max(120) Integer shelfMonths,
             @Size(max = 80) String filingNo,
             @Positive BigDecimal netG,
-            Boolean active) {
+            Boolean active,
+            @DecimalMin(value = "0", message = "标准成本不能为负") BigDecimal stdCost,
+            @DecimalMin(value = "0", message = "指导价不能为负") BigDecimal listPrice) {
     }
 
     public record PartnerReq(
@@ -91,7 +93,9 @@ public final class MasterDtos {
                               BigDecimal concentrationPct, String checkMessage) {
     }
 
+    /** materialCost：按 BOM 和物料标准成本算出的每件物料成本；costComplete 为 false 表示有物料没填标准成本 */
     public record BomView(Long fgItemId, String fgCode, String fgName, BigDecimal netG,
-                          LocalDateTime updatedAt, String updatedBy, List<BomLineView> lines) {
+                          LocalDateTime updatedAt, String updatedBy, List<BomLineView> lines,
+                          BigDecimal materialCost, boolean costComplete) {
     }
 }

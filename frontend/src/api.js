@@ -16,9 +16,12 @@ http.interceptors.request.use((cfg) => {
 // 统一取 data；后端错误统一为 { message }，直接提示给用户
 http.interceptors.response.use(
   (resp) => resp.data,
-  (err) => {
+  async (err) => {
     const status = err.response?.status
-    const msg = err.response?.data?.message || (status ? `请求失败（${status}）` : '无法连接服务器，请检查网络或后端是否已启动')
+    // 下载类请求的错误体也是 Blob，要读出来才能拿到后端的中文提示
+    let data = err.response?.data
+    if (data instanceof Blob) data = await data.text().then(JSON.parse).catch(() => null)
+    const msg = data?.message || (status ? `请求失败（${status}）` : '无法连接服务器，请检查网络或后端是否已启动')
     const isLogin = err.config?.url?.endsWith('/auth/login')
     if (status === 401 && !isLogin && !err.config?.public) {
       localStorage.removeItem(TOKEN_KEY)

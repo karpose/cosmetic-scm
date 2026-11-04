@@ -4,6 +4,8 @@ import AppLayout from './layout/AppLayout.vue'
 
 const routes = [
   { path: '/login', name: 'login', component: () => import('./views/Login.vue'), meta: { public: true, title: '登录' } },
+  // 批次标签打印页：不套主布局，白底便于打印；需要登录
+  { path: '/labels', name: 'labels', component: () => import('./views/Labels.vue'), meta: { title: '批次标签' } },
   // 消费者扫码页：不需要登录，二维码里的地址是 /v/防伪码
   { path: '/v/:code?', name: 'verify', component: () => import('./views/Verify.vue'), meta: { public: true, title: '正品查询' } },
   {
@@ -14,6 +16,7 @@ const routes = [
       { path: 'analytics', name: 'analytics', component: () => import('./views/Analytics.vue'), meta: { title: '经营看板' } },
       { path: 'planning', name: 'planning', component: () => import('./views/Planning.vue'), meta: { title: '补货建议' } },
       { path: 'serials', name: 'serials', component: () => import('./views/Serials.vue'), meta: { title: '一物一码' } },
+      { path: 'scan', name: 'scan', component: () => import('./views/Scan.vue'), meta: { title: '扫码作业' } },
       { path: 'purchase', name: 'purchase', component: () => import('./views/Purchase.vue'), meta: { title: '采购入库' } },
       { path: 'production', name: 'production', component: () => import('./views/Production.vue'), meta: { title: '生产与委托' } },
       { path: 'quality', name: 'quality', component: () => import('./views/Quality.vue'), meta: { title: '质量放行' } },

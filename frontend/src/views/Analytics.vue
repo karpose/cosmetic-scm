@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h2>经营看板</h2>
-        <p>库存健康、受托厂交付、放行周期、投诉和追溯响应。系统里还没有成本和售价，所以全部按数量统计。<span v-if="k" class="muted">数据生成于 {{ fmtTime(k.generatedAt) }}。</span></p>
+        <p>库存金额与健康、受托厂交付、放行周期、投诉和追溯响应。金额按物料标准成本估值（成品没填标准成本时按 BOM 物料成本估算），其余指标按数量统计。<span v-if="k" class="muted">数据生成于 {{ fmtTime(k.generatedAt) }}。</span></p>
       </div>
       <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
     </div>
@@ -11,6 +11,16 @@
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
 
     <template v-if="k">
+      <!-- 金额（按标准成本；成品没填时按 BOM 物料成本估算） -->
+      <div class="money glass">
+        <div v-for="m in moneyTiles" :key="m.k" class="mt">
+          <div class="hk">{{ m.k }}</div>
+          <div class="mv mono">{{ fmtMoney(m.v) }}</div>
+        </div>
+        <div v-if="k.money.itemsWithoutCost" class="mnote small"><el-icon class="ti"><WarningFilled /></el-icon>{{ k.money.itemsWithoutCost }} 个在库物料没有成本，未计入金额，请在主数据补齐</div>
+        <div v-else class="mnote small muted">按标准成本估值；成品没填标准成本时按 BOM 物料成本估算</div>
+      </div>
+
       <!-- 头条数字 -->
       <div class="tiles">
         <div v-for="h in headline" :key="h.k" class="tile glass">
@@ -141,6 +151,7 @@
             <el-table-column label="物料" min-width="130"><template #default="{ row }">{{ row.itemName }}<div class="muted small">{{ row.itemType }}</div></template></el-table-column>
             <el-table-column label="在库" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }} {{ row.unit }}</span></template></el-table-column>
             <el-table-column label="剩余效期" width="120"><template #default="{ row }"><ShelfBar :ratio="row.shelfRatio" /></template></el-table-column>
+            <el-table-column label="金额" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.value) }}</span></template></el-table-column>
           </el-table>
         </el-card>
       </div>
@@ -152,12 +163,12 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { CircleCheckFilled } from '@element-plus/icons-vue'
+import { CircleCheckFilled, WarningFilled } from '@element-plus/icons-vue'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
 import LoadError from '../components/LoadError.vue'
 import ShelfBar from '../components/ShelfBar.vue'
-import { fmtQty, fmtTime } from '../utils/format'
+import { fmtMoney, fmtQty, fmtTime } from '../utils/format'
 import { useLoader } from '../utils/loader'
 
 // 剩余效期分档：有序，用同一色相由浅到深（深色模式反过来），越“新鲜”越醒目
@@ -173,6 +184,18 @@ const k = ref(null)
 const tables = reactive({ shelf: false, supply: false, complaints: false })
 const loader = useLoader(async () => { k.value = await http.get('/analytics/kpi') })
 const load = () => loader.run()
+
+const moneyTiles = computed(() => {
+  const m = k.value.money
+  return [
+    { k: '库存金额', v: m.inventoryValue },
+    { k: '其中成品', v: m.fgValue },
+    { k: '其中物料', v: m.materialValue },
+    { k: '临期成品', v: m.nearExpiryValue },
+    { k: '呆滞', v: m.slowMovingValue },
+    { k: '退货隔离区', v: m.returnAreaValue }
+  ]
+})
 
 const headline = computed(() => {
   const h = k.value.headline
@@ -222,6 +245,10 @@ onMounted(load)
 .hk, .hd { font-size: 12px; color: var(--el-text-color-secondary); }
 .hv { font-size: 28px; font-weight: 650; margin: 6px 0 2px; letter-spacing: -0.02em; }
 .hv small { font-size: 13px; font-weight: 500; color: var(--el-text-color-secondary); }
+.money { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px 18px; padding: 14px 18px; border-radius: 18px; }
+.mt .mv { font-size: 20px; font-weight: 650; margin-top: 4px; letter-spacing: -0.01em; }
+.mnote { grid-column: 1 / -1; padding-top: 4px; color: var(--el-color-warning); }
+.mnote.muted { color: var(--el-text-color-secondary); }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .ch { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cap { margin: -4px 0 10px; }

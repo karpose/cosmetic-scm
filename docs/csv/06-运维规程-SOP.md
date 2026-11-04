@@ -3,7 +3,7 @@
 ## SOP-01 备份与恢复
 
 1. **自动备份**：docker compose 的 `backup` 服务每天 `SCM_BACKUP_AT`（默认 02:30）用 `mysqldump --single-transaction`
-   备份到 `./backups/cosmetic_scm-日期-时间.sql.gz`，自动校验压缩包，保留 `SCM_BACKUP_KEEP_DAYS`（默认 30）天。
+   备份到 `./backups/cosmetic_scm-日期-时间.sql.gz`，并把附件卷打包到 `./backups/files-日期-时间.tar.gz`，自动校验压缩包，保留 `SCM_BACKUP_KEEP_DAYS`（默认 30）天。
 2. **异地保存**：运维每天把 `./backups` 同步到另一台机器或对象存储（如 `rclone sync` / 云厂商同步工具）。
    本系统不自动做这一步，因为目标位置和凭据由公司 IT 决定。
 3. **手工备份**（升级、迁移前必做）：`docker compose exec backup /scripts/backup.sh once`
@@ -11,9 +11,13 @@
    ```bash
    docker compose stop backend
    docker compose exec backup /scripts/restore.sh /backups/cosmetic_scm-20261103-0230.sql.gz   # 按提示输入 YES
+   # 恢复附件：用同一时间点的压缩包；卷名是“项目名_files-data”
+   docker compose run --rm --no-deps -v cosmetic-scm_files-data:/restore --entrypoint tar backup -xzf /backups/files-20261103-0230.tar.gz -C /restore
    docker compose start backend
    ```
-   恢复后抽查几个批号的追溯，并在变更记录中登记。
+   恢复后抽查几个批号的追溯，下载一个附件确认能打开，并在变更记录中登记。
+   备份时先导数据库、再打包附件，所以同一时间点的压缩包一定包含数据库里登记的所有附件；
+   恢复后卷里可能多出备份之后才上传的文件，它们没有数据库记录，不影响使用。
 5. **恢复演练**：每季度在验证环境恢复一次最近的备份，记录耗时和抽查结果。
 
 ## SOP-02 变更控制
@@ -35,7 +39,7 @@
 
 ## SOP-04 审计日志复核
 
-1. 质量部每月在“审计日志”中复核：上市放行、拒收、冻结 / 解冻、报废、召回、账号变更、主数据导入。
+1. 质量部每月在“审计日志”中复核：上市放行、拒收、冻结 / 解冻、报废、召回、账号变更、主数据导入、扫码核对不一致的记录。
 2. 关注：非工作时间的签批、同一人短时间大量操作、“登录锁定”记录。
 3. 发现异常记录原因和处理结果。审计日志在系统中只增不改，不提供修改和删除功能。
 

@@ -41,7 +41,8 @@ public class MasterImportService {
             Map.entry("filingNo", "备案编号"), Map.entry("netG", "净含量"), Map.entry("kind", "类别"),
             Map.entry("licenseNo", "资质编号"), Map.entry("licenseExpiry", "资质有效期"), Map.entry("licenseScope", "许可范围"),
             Map.entry("batchPrefix", "批号前缀"), Map.entry("channel", "渠道"), Map.entry("minShelfPct", "最低剩余效期"),
-            Map.entry("contact", "联系人"), Map.entry("address", "地址"));
+            Map.entry("contact", "联系人"), Map.entry("address", "地址"), Map.entry("stdCost", "标准成本"),
+            Map.entry("listPrice", "指导价"));
 
     private final MasterService master;
     private final ItemRepository items;
