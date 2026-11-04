@@ -166,7 +166,7 @@ public class RecallService {
 
     @Transactional
     public RecallView notify(Long noticeId, NotifyReq req) {
-        RecallNotice n = notices.findById(noticeId).orElseThrow(() -> BizException.notFound("召回通知"));
+        RecallNotice n = notices.lockById(noticeId).orElseThrow(() -> BizException.notFound("召回通知"));
         Recall r = recall(n.getRecallId());
         if (r.getStatus() != CaseStatus.OPEN) {
             throw new BizException("召回 " + r.getRecallNo() + " 已关闭");
@@ -204,7 +204,7 @@ public class RecallService {
     }
 
     private Recall recall(Long id) {
-        return recalls.findById(id).orElseThrow(() -> BizException.notFound("召回"));
+        return recalls.lockById(id).orElseThrow(() -> BizException.notFound("召回"));
     }
 
     /** 批次按客户汇总的出库量，保持出库先后顺序。 */

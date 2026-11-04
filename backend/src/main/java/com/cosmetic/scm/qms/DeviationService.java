@@ -288,11 +288,11 @@ public class DeviationService {
     }
 
     private Deviation require(Long id) {
-        return deviations.findById(id).orElseThrow(() -> BizException.notFound("偏差"));
+        return deviations.lockById(id).orElseThrow(() -> BizException.notFound("偏差"));
     }
 
     private Capa requireCapa(Long id) {
-        return capas.findById(id).orElseThrow(() -> BizException.notFound("CAPA"));
+        return capas.lockById(id).orElseThrow(() -> BizException.notFound("CAPA"));
     }
 
     private DeviationView single(Deviation d) {

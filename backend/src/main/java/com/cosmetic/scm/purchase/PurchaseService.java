@@ -169,7 +169,7 @@ public class PurchaseService {
     /** 结束采购单：没收过货的取消，收过一部分的关闭（余量不再收，也不再算在途）。 */
     @Transactional
     public PoView close(Long poId, CloseReq req) {
-        PurchaseOrder po = orders.findById(poId).orElseThrow(() -> BizException.notFound("采购单"));
+        PurchaseOrder po = orders.lockById(poId).orElseThrow(() -> BizException.notFound("采购单"));
         if (po.getStatus() != PoStatus.OPEN && po.getStatus() != PoStatus.PARTIAL) {
             throw new BizException("采购单 " + po.getPoNo() + " 当前为" + po.getStatus().getLabel() + "，不能取消或关闭");
         }
@@ -186,7 +186,7 @@ public class PurchaseService {
     /** 收货：每行生成一个待检批次并入库。返回新批号。 */
     @Transactional
     public List<String> receive(Long poId, ReceiveReq req) {
-        PurchaseOrder po = orders.findById(poId).orElseThrow(() -> BizException.notFound("采购单"));
+        PurchaseOrder po = orders.lockById(poId).orElseThrow(() -> BizException.notFound("采购单"));
         if (po.getStatus() != PoStatus.OPEN && po.getStatus() != PoStatus.PARTIAL) {
             throw new BizException("采购单 " + po.getPoNo() + " 当前为" + po.getStatus().getLabel() + "，不能收货");
         }

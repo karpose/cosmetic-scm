@@ -27,8 +27,11 @@ public class InventoryController {
     public List<StockRow> stock(@RequestParam(required = false) ItemType type,
                                 @RequestParam(required = false) Long warehouseId,
                                 @RequestParam(required = false) String q,
-                                @RequestParam(defaultValue = "false") boolean includeZero) {
-        return inventory.listStock(type, warehouseId, q, includeZero);
+                                @RequestParam(defaultValue = "false") boolean includeZero,
+                                @RequestParam(defaultValue = "5000") int limit) {
+        // 页面列表设上限：不筛选时可能有几万行，全部发给浏览器会卡死。完整数据用导出
+        List<StockRow> all = inventory.listStock(type, warehouseId, q, includeZero);
+        return all.size() <= limit ? all : all.subList(0, Math.max(0, limit));
     }
 
     @GetMapping("/batches")

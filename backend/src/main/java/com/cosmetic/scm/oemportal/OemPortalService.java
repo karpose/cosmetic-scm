@@ -124,7 +124,7 @@ public class OemPortalService {
 
     @Transactional
     public OemOrderView addProgress(Long moId, ProgressReq req) {
-        MfgOrder mo = mine(moId);
+        MfgOrder mo = mineLocked(moId);
         if (mo.getStatus() == MoStatus.COMPLETED || mo.getStatus() == MoStatus.CANCELLED) {
             throw new BizException(mo.getMoNo() + " 已" + (mo.getStatus() == MoStatus.COMPLETED ? "完工入库" : "取消") + "，不再回传进度");
         }
@@ -150,7 +150,7 @@ public class OemPortalService {
     /** 提交完工与出厂放行申报。校验口径和品牌方完工入库一致，避免申报了却入不了库。 */
     @Transactional
     public OemOrderView submitReport(Long moId, ReportReq req) {
-        MfgOrder mo = mine(moId);
+        MfgOrder mo = mineLocked(moId);
         if (mo.getStatus() != MoStatus.ISSUED) {
             throw new BizException(mo.getStatus() == MoStatus.PLANNED
                     ? "品牌方还没有发料，暂不能申报完工" : mo.getMoNo() + " 已完工入库");
@@ -227,6 +227,13 @@ public class OemPortalService {
     private MfgOrder mine(Long moId) {
         Long factoryId = currentUser.portalPartnerId();
         return orders.findById(moId)
+                .filter(m -> m.getMoType() == MoType.OEM && factoryId.equals(m.getFactoryId()))
+                .orElseThrow(() -> BizException.notFound("委托单"));
+    }
+
+    private MfgOrder mineLocked(Long moId) {
+        Long factoryId = currentUser.portalPartnerId();
+        return orders.lockById(moId)
                 .filter(m -> m.getMoType() == MoType.OEM && factoryId.equals(m.getFactoryId()))
                 .orElseThrow(() -> BizException.notFound("委托单"));
     }

@@ -15,9 +15,10 @@ import org.springframework.web.bind.annotation.RestController;
 public class AnalyticsController {
 
     private final AnalyticsService analytics;
+    private final com.cosmetic.scm.common.ShortCache cache;
 
     @GetMapping("/kpi")
     public Kpi kpi() {
-        return analytics.kpi();
+        return cache.get("analytics:kpi", analytics::kpi);
     }
 }

@@ -136,12 +136,12 @@ public class SalesService {
     /** 只计算分配结果，不扣库存，供页面预览。 */
     @Transactional(readOnly = true)
     public PreviewView preview(SoReq req) {
-        return toPreview(plan(req));
+        return toPreview(plan(req, false));
     }
 
     @Transactional
     public SoView create(SoReq req) {
-        Plan plan = plan(req);
+        Plan plan = plan(req, true);
         if (!plan.fulfilled()) {
             List<String> shortages = new ArrayList<>();
             for (int i = 0; i < plan.items().size(); i++) {
@@ -190,7 +190,8 @@ public class SalesService {
                 .orElseThrow(() -> BizException.notFound("出库单"));
     }
 
-    private Plan plan(SoReq req) {
+    /** forUpdate：真正出库时锁库存行再分配；预览只读，不加锁。 */
+    private Plan plan(SoReq req, boolean forUpdate) {
         Partner customer = lookup.partner(req.customerId());
         if (customer.getKind() != PartnerKind.CUSTOMER) {
             throw new BizException(customer.getName() + " 不是客户");
@@ -212,7 +213,8 @@ public class SalesService {
                 throw new BizException(item.getName() + " 重复，请合并为一行");
             }
             items.add(item);
-            results.add(inventory.allocate(item.getId(), l.qty(), List.of(wh.getId()), minRatio));
+            results.add(forUpdate ? inventory.allocateForUpdate(item.getId(), l.qty(), List.of(wh.getId()), minRatio)
+                    : inventory.allocate(item.getId(), l.qty(), List.of(wh.getId()), minRatio));
         }
         return new Plan(customer, wh, items, req.lines(), results);
     }

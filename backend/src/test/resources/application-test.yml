@@ -9,6 +9,8 @@ spring:
       ddl-auto: validate   # 测试时校验实体与 Flyway 表结构一致
 
 scm:
+  cache:
+    ttl-seconds: 0
   demo-data: true
   security:
     force-password-change: false

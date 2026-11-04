@@ -33,6 +33,7 @@
         <el-table-column label="有效期至" width="110"><template #default="{ row }"><span class="mono">{{ fmtDate(row.expDate) }}</span></template></el-table-column>
         <el-table-column label="剩余效期" width="130"><template #default="{ row }"><ShelfBar :ratio="row.shelfRatio" /></template></el-table-column>
       </el-table>
+      <ListCapHint :count="rows.length" :cap="5000" />
       <ListPager v-model:page="t.page.value" v-model:size="t.size.value" :total="t.total.value" />
     </el-card>
   </div>
@@ -48,6 +49,7 @@ import LoadError from '../components/LoadError.vue'
 import ShelfBar from '../components/ShelfBar.vue'
 import StatusTag from '../components/StatusTag.vue'
 import ExportButton from '../components/ExportButton.vue'
+import ListCapHint from '../components/ListCapHint.vue'
 import { ITEM_TYPE, fmtDate, fmtQty } from '../utils/format'
 import { usePaged } from '../utils/table'
 

@@ -26,13 +26,11 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
-import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 
 /**
- * 无状态 JWT 认证：登录换取令牌，令牌里带角色，接口用 @PreAuthorize 按角色控制。
+ * 无状态 JWT 认证：登录换取令牌，角色每次从数据库读（见 {@link DbJwtAuthenticationConverter}），接口用 @PreAuthorize 按角色控制。
  * URL 层再划一道边界：门户账号只能访问自己的 /api/portal/**；其余业务接口只对内部角色开放；
  * /api/integration/** 走 X-Api-Key（{@link IntegrationKeyFilter}），不接受用户令牌。
  */
@@ -70,13 +68,10 @@ public class SecurityConfig {
             .map(Enum::name).toArray(String[]::new);
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http, @Value("${scm.integration.api-key:}") String integrationKey)
+    SecurityFilterChain securityFilterChain(HttpSecurity http, @Value("${scm.integration.api-key:}") String integrationKey,
+                                            UserRepository users, @Value("${scm.timezone:Asia/Shanghai}") String timezone)
             throws Exception {
-        JwtGrantedAuthoritiesConverter authorities = new JwtGrantedAuthoritiesConverter();
-        authorities.setAuthoritiesClaimName("roles");
-        authorities.setAuthorityPrefix("ROLE_");
-        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
-        converter.setJwtGrantedAuthoritiesConverter(authorities);
+        DbJwtAuthenticationConverter converter = new DbJwtAuthenticationConverter(users, java.time.ZoneId.of(timezone));
 
         http
                 .csrf(csrf -> csrf.disable())

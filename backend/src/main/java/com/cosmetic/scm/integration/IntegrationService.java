@@ -225,7 +225,7 @@ public class IntegrationService {
 
     public PushResult cancelOrder(Long id, String reason) {
         PushResult r = tx.execute(s -> {
-            ChannelOrder o = orders.findById(id).orElseThrow(() -> BizException.notFound("电商订单"));
+            ChannelOrder o = orders.lockById(id).orElseThrow(() -> BizException.notFound("电商订单"));
             if (o.getStatus() == ChannelOrderStatus.SHIPPED) {
                 throw new BizException("订单 " + o.getPlatformOrderNo() + " 已出库，不能取消；请走销售退货");
             }
@@ -269,7 +269,11 @@ public class IntegrationService {
     private PushResult fulfil(Long id) {
         try {
             return tx.execute(s -> {
-                ChannelOrder o = orders.findById(id).orElseThrow();
+                // 锁住订单再判断：连点两次重试，或重试和取消同时发生，都不能重复出库
+                ChannelOrder o = orders.lockById(id).orElseThrow();
+                if (o.getStatus() == ChannelOrderStatus.SHIPPED || o.getStatus() == ChannelOrderStatus.CANCELLED) {
+                    return result(o, false);
+                }
                 List<ChannelOrderLine> ls = lines.findByOrderIdIn(List.of(id));
                 List<String> unmatched = ls.stream().filter(l -> l.getItemId() == null).map(ChannelOrderLine::getSku).toList();
                 if (!unmatched.isEmpty()) {

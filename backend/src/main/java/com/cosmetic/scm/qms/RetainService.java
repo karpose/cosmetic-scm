@@ -130,7 +130,7 @@ public class RetainService {
     }
 
     private RetainSample require(Long id) {
-        return samples.findById(id).orElseThrow(() -> BizException.notFound("留样记录"));
+        return samples.lockById(id).orElseThrow(() -> BizException.notFound("留样记录"));
     }
 
     private List<SampleView> toViews(List<RetainSample> list) {

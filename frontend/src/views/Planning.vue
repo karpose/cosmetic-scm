@@ -129,8 +129,9 @@ const factory = reactive({})
 const canMo = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
 const canPo = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
 
-const loader = useLoader(async () => {
-  rows.value = await http.get('/planning/finished-goods', { params: { ...p } })
+// fresh：不用服务端的短时缓存。打开页面可以用缓存，用户主动计算、生成单据之后必须是最新结果
+const loader = useLoader(async (fresh = false) => {
+  rows.value = await http.get('/planning/finished-goods', { params: { ...p, fresh } })
   for (const r of rows.value) {
     qty[r.itemId] = Number(r.suggested)
     factory[r.itemId] = factory[r.itemId] ?? r.factoryId
@@ -139,7 +140,8 @@ const loader = useLoader(async () => {
   await nextTick()
   rows.value.filter((r) => r.belowReorderPoint).forEach((r) => fgTable.value?.toggleRowSelection(r, true))
 })
-const load = () => loader.run()
+// 用户主动点“重新计算”、切换开关时要最新结果；打开页面可以用服务端的短时缓存
+const load = () => loader.run(true)
 
 const planLines = () => chosen.value.filter((r) => qty[r.itemId] > 0).map((r) => ({ fgItemId: r.itemId, qty: qty[r.itemId], factoryId: factory[r.itemId] }))
 
@@ -213,7 +215,7 @@ async function createPos() {
   }
 }
 
-onMounted(() => Promise.all([load(), rd.load()]))
+onMounted(() => Promise.all([loader.run(false), rd.load()]))
 </script>
 
 <style scoped>

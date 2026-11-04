@@ -348,8 +348,9 @@ public class MesService {
         return orders.findById(moId).orElseThrow(() -> BizException.notFound("生产单"));
     }
 
+    /** 写批记录前锁工单：同一工单的工序、清场、复核和完工入库排队执行。 */
     private MfgOrder requireRunning(Long moId) {
-        MfgOrder mo = requireMo(moId);
+        MfgOrder mo = orders.lockById(moId).orElseThrow(() -> BizException.notFound("生产单"));
         if (mo.getStatus() != MoStatus.ISSUED) {
             throw new BizException(mo.getMoNo() + " 当前为" + mo.getStatus().getLabel() + "，批记录只能在已发料、未入库时填写");
         }

@@ -269,7 +269,7 @@ public class ProductionService {
     /** 品牌供料部分按 FEFO 从自有仓发料。任何一种物料不足，整单不发。 */
     @Transactional
     public MoView issue(Long moId) {
-        MfgOrder mo = require(moId);
+        MfgOrder mo = lock(moId);
         if (mo.getStatus() != MoStatus.PLANNED) {
             throw new BizException(mo.getMoNo() + " 当前状态为" + mo.getStatus().getLabel() + "，不能发料");
         }
@@ -280,7 +280,7 @@ public class ProductionService {
             if (r.mode() != SupplyMode.BRAND) {
                 continue;
             }
-            FefoAllocator.Result a = inventory.allocate(r.item().getId(), r.qty(), own, 0);
+            FefoAllocator.Result a = inventory.allocateForUpdate(r.item().getId(), r.qty(), own, 0);
             if (!a.fulfilled()) {
                 shortages.add(r.item().getName() + " 缺 " + plain(a.shortQty()) + " " + r.item().getUnit());
             }
@@ -317,7 +317,7 @@ public class ProductionService {
      */
     @Transactional
     public MoView cancel(Long moId, CancelReq req) {
-        MfgOrder mo = require(moId);
+        MfgOrder mo = lock(moId);
         if (mo.getStatus() != MoStatus.PLANNED && mo.getStatus() != MoStatus.ISSUED) {
             throw new BizException(mo.getMoNo() + " 当前为" + mo.getStatus().getLabel() + "，不能取消");
         }
@@ -359,7 +359,7 @@ public class ProductionService {
     /** 完工入库：生成成品批次（待上市放行），记录批次谱系。 */
     @Transactional
     public MoView complete(Long moId, CompleteReq req) {
-        MfgOrder mo = require(moId);
+        MfgOrder mo = lock(moId);
         if (mo.getStatus() != MoStatus.ISSUED) {
             throw new BizException(mo.getMoNo() + " 当前状态为" + mo.getStatus().getLabel() + "，不能完工入库");
         }
@@ -472,6 +472,10 @@ public class ProductionService {
 
     private List<Long> ownWarehouseIds() {
         return warehouses.findByKind(WarehouseKind.OWN).stream().map(Warehouse::getId).toList();
+    }
+
+    private MfgOrder lock(Long id) {
+        return orders.lockById(id).orElseThrow(() -> BizException.notFound("生产单"));
     }
 
     private MfgOrder require(Long id) {

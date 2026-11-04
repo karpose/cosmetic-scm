@@ -22,6 +22,7 @@ import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.rules.SerialCodes;
 import com.cosmetic.scm.domain.rules.ShelfLife;
 import com.cosmetic.scm.inventory.Batch;
+import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.inventory.InventoryService;
 import com.cosmetic.scm.inventory.InventoryService.BatchView;
 import com.cosmetic.scm.master.Item;
@@ -45,6 +46,7 @@ public class SerialService {
     public static final int MAX_PER_REQUEST = 20000;
 
     private final SerialCodeRepository codes;
+    private final BatchRepository batches;
     private final RecallRepository recalls;
     private final InventoryService inventory;
     private final MasterLookup lookup;
@@ -92,7 +94,8 @@ public class SerialService {
 
     @Transactional
     public BatchCodes generate(GenerateReq req) {
-        Batch b = inventory.batchByNo(req.batchNo());
+        // 锁批次：同时生码时不能超过入库数
+        Batch b = batches.lockByBatchNo(req.batchNo() == null ? null : req.batchNo().trim()).orElseThrow(() -> BizException.notFound("批次 " + req.batchNo() + " "));
         Item item = lookup.item(b.getItemId());
         if (item.getItemType() != ItemType.FG) {
             throw new BizException("只有成品批次需要生成一物一码");

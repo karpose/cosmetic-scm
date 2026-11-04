@@ -15,6 +15,7 @@ import com.cosmetic.scm.complaint.ComplaintService;
 import com.cosmetic.scm.complaint.ComplaintService.ComplaintView;
 import com.cosmetic.scm.dealer.DealerService;
 import com.cosmetic.scm.domain.BatchStatus;
+import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.MoStatus;
 import com.cosmetic.scm.domain.OemReportStatus;
 import com.cosmetic.scm.domain.PartnerKind;
@@ -95,10 +96,7 @@ public class DashboardService {
     @Transactional(readOnly = true)
     public Summary summary() {
         LocalDate today = time.today();
-        List<BatchView> all = inventory.listBatches(null, null);
-        long availableMaterial = all.stream()
-                .filter(b -> !"FG".equals(b.itemType()) && b.status() == BatchStatus.RELEASED && b.onHand().signum() > 0)
-                .count();
+        long availableMaterial = batches.countMaterialInStock(BatchStatus.RELEASED, ItemType.FG);
         List<MfgOrder> wip = mfgOrders.findByStatusIn(List.of(MoStatus.PLANNED, MoStatus.ISSUED));
         List<RecallView> openRecalls = recalls.open();
         List<ComplaintView> openComplaints = complaints.open();
@@ -155,17 +153,13 @@ public class DashboardService {
             todos.add(new Todo("RETURN", "退货待处置", "warn", pendingReturns + " 行退货在隔离区", "—",
                     "由质量人员判定转可售或报废", "/returns"));
         }
-        for (BatchView b : all) {
-            if (b.status() == BatchStatus.QUARANTINE) {
-                todos.add(new Todo("QC", "物料待检", "warn", b.itemName(), b.batchNo(),
-                        plain(b.qtyIn()) + " " + b.unit() + " · " + nullToDash(b.partnerName()), "/quality"));
-            }
+        for (BatchView b : inventory.listBatches(List.of(BatchStatus.QUARANTINE), null)) {
+            todos.add(new Todo("QC", "物料待检", "warn", b.itemName(), b.batchNo(),
+                    plain(b.qtyIn()) + " " + b.unit() + " · " + nullToDash(b.partnerName()), "/quality"));
         }
-        for (BatchView b : all) {
-            if (b.status() == BatchStatus.PENDING_RELEASE) {
-                todos.add(new Todo("RELEASE", "待上市放行", "info", b.itemName(), b.batchNo(),
-                        plain(b.qtyIn()) + " · " + nullToDash(b.partnerName()), "/quality"));
-            }
+        for (BatchView b : inventory.listBatches(List.of(BatchStatus.PENDING_RELEASE), null)) {
+            todos.add(new Todo("RELEASE", "待上市放行", "info", b.itemName(), b.batchNo(),
+                    plain(b.qtyIn()) + " · " + nullToDash(b.partnerName()), "/quality"));
         }
         Map<Long, Item> im = lookup.itemMap();
         for (MfgOrder m : wip) {
@@ -186,9 +180,9 @@ public class DashboardService {
                         "有效期至 " + p.licenseExpiry(), "/master"));
             }
         }
-        for (BatchView b : all) {
-            if ("FG".equals(b.itemType()) && b.status() == BatchStatus.RELEASED && b.onHand().signum() > 0
-                    && b.shelfRatio() != null && b.shelfRatio() < NEAR_EXPIRY_RATIO) {
+        // 查全部在库的已放行成品，不是“最近 N 个批次”：最老的批次才最可能临期
+        for (BatchView b : inventory.toViews(batches.findInStockByStatusAndItemType(BatchStatus.RELEASED, ItemType.FG))) {
+            if (b.shelfRatio() != null && b.shelfRatio() < NEAR_EXPIRY_RATIO) {
                 todos.add(new Todo("NEAR_EXPIRY", "成品临期", "bad", b.itemName(), b.batchNo(),
                         "剩余 " + plain(b.onHand()) + " · 效期至 " + b.expDate(), "/stock"));
             }

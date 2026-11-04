@@ -203,7 +203,7 @@ public class ReturnService {
     /** 质量人员处置一行退货：转可售（移到自有仓）或报废（扣出隔离区）。 */
     @Transactional
     public ReturnView dispose(Long lineId, DisposeReq req, AppUser signer) {
-        SalesReturnLine line = lines.findById(lineId).orElseThrow(() -> BizException.notFound("退货明细"));
+        SalesReturnLine line = lines.lockById(lineId).orElseThrow(() -> BizException.notFound("退货明细"));
         if (line.getDisposition() != ReturnDisposition.PENDING) {
             throw new BizException("该行已处置为" + line.getDisposition().getLabel());
         }

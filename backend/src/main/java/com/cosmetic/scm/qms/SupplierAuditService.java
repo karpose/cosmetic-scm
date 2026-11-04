@@ -23,7 +23,6 @@ import com.cosmetic.scm.domain.AuditResult;
 import com.cosmetic.scm.domain.AuditType;
 import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.PartnerKind;
-import com.cosmetic.scm.inventory.Batch;
 import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.master.MasterLookup;
 import com.cosmetic.scm.master.Partner;
@@ -92,7 +91,10 @@ public class SupplierAuditService {
     public List<PartnerRow> partnerRows() {
         LocalDate today = time.today();
         LocalDate since = today.minusMonths(STATS_MONTHS);
-        List<Batch> all = batches.findAll();
+        Map<Long, Object[]> stats = new java.util.HashMap<>();
+        for (Object[] row : batches.statsByPartner(since, BatchStatus.REJECTED)) {
+            stats.put((Long) row[0], row);
+        }
         List<PartnerRow> out = new ArrayList<>();
         for (Partner p : partners.findAll()) {
             if (p.getKind() != PartnerKind.SUPPLIER && p.getKind() != PartnerKind.OEM) {
@@ -103,16 +105,9 @@ public class SupplierAuditService {
             LocalDate next = last == null ? null : last.getNextAuditDate();
             Long days = next == null ? null : ChronoUnit.DAYS.between(today, next);
             String state = last == null ? "NONE" : days == null ? "OK" : days < 0 ? "OVERDUE" : days <= DUE_WARN_DAYS ? "DUE" : "OK";
-            long received = 0;
-            long rejected = 0;
-            for (Batch b : all) {
-                if (p.getId().equals(b.getPartnerId()) && b.getMfgDate() != null && !b.getMfgDate().isBefore(since)) {
-                    received++;
-                    if (b.getStatus() == BatchStatus.REJECTED) {
-                        rejected++;
-                    }
-                }
-            }
+            Object[] st = stats.get(p.getId());
+            long received = st == null ? 0 : ((Number) st[1]).longValue();
+            long rejected = st == null ? 0 : ((Number) st[2]).longValue();
             out.add(new PartnerRow(p.getId(), p.getCode(), p.getName(), p.getKind().getLabel(), p.isQualified(), p.isCriticalSupplier(),
                     last == null ? null : last.getAuditDate(), last == null ? null : last.getResult().getLabel(), next, state, days, received, rejected));
         }

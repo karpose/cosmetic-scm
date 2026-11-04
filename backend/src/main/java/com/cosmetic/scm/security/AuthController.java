@@ -24,6 +24,7 @@ public class AuthController {
 
     private final LoginService loginService;
     private final CurrentUser currentUser;
+    private final JwtService jwtService;
     private final UserService userService;
 
     public record LoginReq(@NotBlank String username, @NotBlank String password) {
@@ -43,8 +44,10 @@ public class AuthController {
     }
 
     @PostMapping("/password")
-    public UserView changePassword(@Valid @RequestBody ChangePasswordReq req) {
-        return userService.changeOwnPassword(req);
+    public LoginService.LoginResp changePassword(@Valid @RequestBody ChangePasswordReq req) {
+        // 改密后旧令牌全部失效（包括其它设备上的），当前设备换发新令牌，不用重新登录
+        UserView view = userService.changeOwnPassword(req);
+        return new LoginService.LoginResp(jwtService.issue(currentUser.get()), view);
     }
 
     @GetMapping("/roles")

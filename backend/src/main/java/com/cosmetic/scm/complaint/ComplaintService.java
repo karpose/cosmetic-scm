@@ -197,7 +197,7 @@ public class ComplaintService {
     }
 
     private Complaint complaint(Long id) {
-        return complaints.findById(id).orElseThrow(() -> BizException.notFound("投诉"));
+        return complaints.lockById(id).orElseThrow(() -> BizException.notFound("投诉"));
     }
 
     private ComplaintView single(Complaint c) {

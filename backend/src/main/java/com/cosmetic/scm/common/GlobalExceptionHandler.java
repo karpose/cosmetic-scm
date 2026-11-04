@@ -7,7 +7,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
-import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -67,8 +66,9 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(new ApiError("你的角色没有执行此操作的权限"));
     }
 
-    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
-    public ResponseEntity<ApiError> conflict(ObjectOptimisticLockingFailureException e) {
+    /** 乐观锁冲突、数据库死锁、等锁超时都属于这一类：不是系统故障，重试即可。 */
+    @ExceptionHandler(org.springframework.dao.ConcurrencyFailureException.class)
+    public ResponseEntity<ApiError> conflict(org.springframework.dao.ConcurrencyFailureException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(new ApiError("数据刚被其他人修改，请刷新后重试"));
     }
 

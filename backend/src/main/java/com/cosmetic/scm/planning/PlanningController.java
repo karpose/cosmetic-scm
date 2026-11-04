@@ -26,14 +26,21 @@ import org.springframework.web.bind.annotation.RestController;
 public class PlanningController {
 
     private final PlanningService planning;
+    private final com.cosmetic.scm.common.ShortCache cache;
 
     @GetMapping("/finished-goods")
     public List<FgRow> finishedGoods(@RequestParam(defaultValue = "90") int windowDays,
                                      @RequestParam(defaultValue = "30") int leadDays,
                                      @RequestParam(defaultValue = "15") int safetyDays,
                                      @RequestParam(defaultValue = "60") int coverDays,
-                                     @RequestParam(defaultValue = "false") boolean useForecast) {
-        return planning.finishedGoods(validParams(windowDays, leadDays, safetyDays, coverDays, useForecast));
+                                     @RequestParam(defaultValue = "false") boolean useForecast,
+                                     @RequestParam(defaultValue = "false") boolean fresh) {
+        PlanParams params = validParams(windowDays, leadDays, safetyDays, coverDays, useForecast);
+        // 页面上点“重新计算”或刚生成单据时必须是最新结果，否则建议量没变，用户可能重复生成
+        if (fresh) {
+            cache.evict("planning:" + params);
+        }
+        return cache.get("planning:" + params, () -> planning.finishedGoods(params));
     }
 
     @PostMapping("/materials")
