@@ -541,6 +541,35 @@ test('设备校准：不合格自动停用并生成偏差，批记录不能选�
   await expect(page.locator('.el-table__row').filter({ hasText: 'EQ-SC-01' }).getByText('重大偏差')).toBeVisible()
 })
 
+test('上线准备：批量导入首版配方，上线检查列出还缺什么', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  // 示例数据开着：必须提示；新成品还没配方：列出来
+  await page.evaluate(async () => {
+    const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
+    await fetch('/api/items', { method: 'POST', headers: h, body: JSON.stringify({ code: 'FG-E2E-NEW', name: 'E2E 新成品', itemType: 'FG', unit: '瓶', banned: false, shelfMonths: 36, netG: 30, active: true }) })
+  })
+  await page.goto('/golive')
+  await expect(page.getByText('必须处理，系统还不能投入使用')).toBeVisible()
+  await expect(page.locator('.row').filter({ hasText: '示例数据' }).getByText('必须处理')).toBeVisible()
+  const formula = page.locator('.row').filter({ hasText: '成品配方' })
+  await expect(formula.getByText('FG-E2E-NEW')).toBeVisible()
+
+  await page.goto('/master')
+  await page.getByRole('tab', { name: 'BOM' }).click()
+  await page.getByRole('button', { name: '批量导入首版配方' }).click()
+  const d = dialog(page, '批量导入首版配方')
+  const csv = (rows) => ({ name: 'bom.csv', mimeType: 'text/csv', buffer: Buffer.from('\ufeff' + ['成品编码,物料编码,单耗,供料方式', ...rows].join('\r\n') + '\r\n') })
+  await d.locator('input[type=file]').setInputFiles(csv(['FG-E2E-NEW,NOPE,0.001,品牌供料']))
+  await expect(d.getByText('物料编码 NOPE 不存在')).toBeVisible()
+  await d.locator('input[type=file]').setInputFiles(csv(['FG-E2E-NEW,RM-GLY-002,0.001,品牌供料', 'FG-E2E-NEW,PK-BTL-001,1,品牌供料']))
+  await expect(d.getByText('预检通过：1 个成品的配方')).toBeVisible()
+  await d.getByRole('button', { name: /确认导入/ }).click()
+  await toast(page, '已导入 1 个成品的配方')
+
+  await page.goto('/golive')
+  await expect(page.locator('.row').filter({ hasText: '成品配方' }).getByText('都已录入')).toBeVisible()
+})
+
 test('门户账号进不了内部页面', async ({ page }) => {
   await login(page, 'dealer1')
   await expect(page).toHaveURL(/\/portal\/dealer/)

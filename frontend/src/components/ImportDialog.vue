@@ -23,7 +23,7 @@
       <div class="summary">
         <span>共 <b class="mono">{{ rows.length }}</b> 行</span>
         <template v-if="result">
-          <el-tag v-if="!issues.length" type="success" disable-transitions>预检通过：{{ spec.sign ? `${result.created} 个批次` : `新增 ${result.created}，修改 ${result.updated}` }}</el-tag>
+          <el-tag v-if="!issues.length" type="success" disable-transitions>预检通过：{{ spec.unit ? `${result.created} ${spec.unit}` : spec.sign ? `${result.created} 个批次` : `新增 ${result.created}，修改 ${result.updated}` }}</el-tag>
           <el-tag v-else type="danger" disable-transitions>{{ issues.length }} 处问题，修改文件后重新上传</el-tag>
         </template>
         <el-tag v-else-if="parseErrors.length" type="danger" disable-transitions>{{ parseErrors.length }} 处格式问题</el-tag>
@@ -132,6 +132,16 @@ const SPECS = {
       { header: '检验报告编号', key: 'reportNo', conv: text, example: 'COA-260901' },
       { header: '留样数量', key: 'retainQty', conv: int('留样数量'), example: '' },
       { header: '留样地点', key: 'retainLocation', conv: text, example: '' }
+    ]
+  },
+  boms: {
+    title: '首版配方', url: '/import/boms', file: '配方导入模板.csv', codeKey: 'fgCode', required: ['fgCode', 'itemCode', 'qtyPer', 'supplyMode'], unit: '个成品的配方',
+    hint: '一个成品写多行，一起作为它的首版配方，保存后立即生效。单耗按物料单位填（原料通常是 kg/件）。走和界面相同的合规校验；已有生效配方的成品要走配方变更，这里会拒绝。',
+    columns: [
+      { header: '成品编码', key: 'fgCode', conv: text, example: 'FG-001' },
+      { header: '物料编码', key: 'itemCode', conv: text, example: 'RM-GLY-010' },
+      { header: '单耗', key: 'qtyPer', conv: num('单耗'), example: '0.0015' },
+      { header: '供料方式', key: 'supplyMode', conv: enumOf('供料方式', { BRAND: '品牌供料', OEM: '工厂代采' }, true), show: (v) => ({ BRAND: '品牌供料', OEM: '工厂代采' }[v]), example: '品牌供料' }
     ]
   },
   partners: {
@@ -274,7 +284,7 @@ async function send(dryRun) {
     const res = await http.post(spec.value.url, { rows: rows.value, dryRun, ...(spec.value.sign ? { password: password.value } : {}) })
     result.value = res
     if (!dryRun && res.applied) {
-      ElMessage.success(spec.value.sign ? `已导入 ${res.created} 个批次` : `已导入：新增 ${res.created}，修改 ${res.updated}`)
+      ElMessage.success(spec.value.unit ? `已导入 ${res.created} ${spec.value.unit}` : spec.value.sign ? `已导入 ${res.created} 个批次` : `已导入：新增 ${res.created}，修改 ${res.updated}`)
       emit('done')
       visible.value = false
     }

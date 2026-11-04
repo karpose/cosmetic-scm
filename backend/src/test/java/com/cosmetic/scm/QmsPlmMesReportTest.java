@@ -43,7 +43,9 @@ import com.cosmetic.scm.domain.OemStage;
 import com.cosmetic.scm.domain.PoStatus;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.RetainStatus;
+import com.cosmetic.scm.domain.Role;
 import com.cosmetic.scm.domain.SourceType;
+import com.cosmetic.scm.domain.SupplyMode;
 import com.cosmetic.scm.domain.StepStatus;
 import com.cosmetic.scm.domain.rules.FormulaDiff;
 import com.cosmetic.scm.inventory.Batch;
@@ -54,6 +56,8 @@ import com.cosmetic.scm.master.ItemRepository;
 import com.cosmetic.scm.master.MasterDtos.BomLineReq;
 import com.cosmetic.scm.master.MasterDtos.BomReq;
 import com.cosmetic.scm.master.MasterDtos.ItemReq;
+import com.cosmetic.scm.golive.GoLiveService;
+import com.cosmetic.scm.master.MasterImportService;
 import com.cosmetic.scm.master.MasterService;
 import com.cosmetic.scm.master.Partner;
 import com.cosmetic.scm.master.PartnerRepository;
@@ -134,6 +138,8 @@ class QmsPlmMesReportTest {
     @Autowired NotifyService notify;
     @Autowired NotificationLogRepository notifyLogs;
     @Autowired TimeProvider time;
+    @Autowired MasterImportService imports;
+    @Autowired GoLiveService golive;
     @Autowired com.cosmetic.scm.dashboard.DashboardService dashboard;
     @Autowired OpeningStockService opening;
     @Autowired EquipmentService equipment;
@@ -899,6 +905,73 @@ class QmsPlmMesReportTest {
         off.get("k", calls::incrementAndGet);
         off.get("k", calls::incrementAndGet);
         assertThat(calls.get()).isEqualTo(3);
+    }
+
+    // ---------- 上线 ----------
+
+    private Item newFg(String code) {
+        return master.createItem(new ItemReq(code, "新品 " + code, ItemType.FG, "瓶", null, null, false, 36, null, new BigDecimal("30"), true, null, null));
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "admin", roles = "ADMIN")
+    void bomImportCreatesFirstVersionsAndReportsProblemsPerRow() {
+        Item a = newFg("FG-IMP-A");
+        Item b = newFg("FG-IMP-B");
+        var ok = List.of(
+                new MasterImportService.BomImportRow(a.getCode(), "RM-GLY-002", new BigDecimal("0.001"), SupplyMode.BRAND),
+                new MasterImportService.BomImportRow(a.getCode(), "PK-BTL-001", BigDecimal.ONE, SupplyMode.BRAND),
+                new MasterImportService.BomImportRow(b.getCode(), "RM-GLY-002", new BigDecimal("0.002"), SupplyMode.OEM));
+        var done = imports.importBoms(new MasterImportService.BomImportReq(ok, false));
+        assertThat(done.applied()).isTrue();
+        assertThat(master.bomLines(a.getId())).hasSize(2);
+        assertThat(versions.findFirstByFgItemIdAndStatus(a.getId(), FormulaStatus.EFFECTIVE)).isPresent();
+
+        // 全成或全不成：有一行错就都不写；已有配方的要走变更；超限浓度被拒
+        Item c = newFg("FG-IMP-C");
+        Item d = newFg("FG-IMP-D");
+        var bad = imports.importBoms(new MasterImportService.BomImportReq(List.of(
+                new MasterImportService.BomImportRow(c.getCode(), "RM-GLY-002", new BigDecimal("0.001"), SupplyMode.BRAND),
+                new MasterImportService.BomImportRow("NOPE", "RM-GLY-002", new BigDecimal("0.001"), SupplyMode.BRAND),
+                new MasterImportService.BomImportRow(c.getCode(), "NOPE", new BigDecimal("0.001"), SupplyMode.BRAND),
+                new MasterImportService.BomImportRow(a.getCode(), "RM-GLY-002", new BigDecimal("0.005"), SupplyMode.BRAND),
+                new MasterImportService.BomImportRow(d.getCode(), "RM-PHE-004", new BigDecimal("0.01"), SupplyMode.BRAND),
+                new MasterImportService.BomImportRow(c.getCode(), null, BigDecimal.ONE, SupplyMode.BRAND)), false));
+        assertThat(bad.applied()).isFalse();
+        assertThat(bad.errors()).extracting(MasterImportService.RowError::message).anyMatch(m -> m.contains("成品编码不存在"))
+                .anyMatch(m -> m.contains("物料编码 NOPE")).anyMatch(m -> m.contains("配方与备案")).anyMatch(m -> m.contains("合规校验"))
+                .anyMatch(m -> m.contains("请填写物料编码"));
+    }
+
+    @Test
+    @Transactional
+    @WithMockUser(username = "admin", roles = "ADMIN")
+    void goLiveChecklistFindsWhatBlocksTheMainLine() {
+        var checks = golive.checklist();
+        java.util.function.Function<String, GoLiveService.Check> find = t -> checks.checks().stream().filter(c -> c.title().equals(t)).findFirst().orElseThrow();
+        // 测试环境开着示例数据：必须提示
+        assertThat(find.apply("示例数据").state()).isEqualTo("BLOCK");
+        assertThat(find.apply("质量安全负责人账号").state()).isEqualTo("OK");
+        assertThat(find.apply("退货隔离区").state()).isEqualTo("OK");
+        assertThat(find.apply("成品配方").state()).isEqualTo("OK");
+
+        // 新成品没有配方、没有备案：主线走不通
+        newFg("FG-NO-BOM");
+        var after = golive.checklist();
+        var formula = after.checks().stream().filter(c -> c.title().equals("成品配方")).findFirst().orElseThrow();
+        assertThat(formula.state()).isEqualTo("BLOCK");
+        assertThat(formula.detail()).contains("FG-NO-BOM");
+        assertThat(after.checks().stream().filter(c -> c.title().equals("备案编号")).findFirst().orElseThrow().state()).isEqualTo("BLOCK");
+
+        // 质量安全负责人全部停用：系统没人能放行
+        for (AppUser u : users.findAll()) {
+            if (u.hasRole(Role.QSO)) {
+                u.setEnabled(false);
+                users.save(u);
+            }
+        }
+        assertThat(golive.checklist().checks().stream().filter(c -> c.title().equals("质量安全负责人账号")).findFirst().orElseThrow().state()).isEqualTo("BLOCK");
     }
 
     // ---------- 提醒 ----------

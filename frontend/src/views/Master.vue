@@ -6,7 +6,7 @@
         <p>物料编码、往来单位资质和 BOM 是整条主线的基础。资质过期的供应商或代工厂会被自动挡在下单之外；BOM 保存时校验禁用和限用原料。</p>
       </div>
       <div class="toolbar">
-        <el-button v-if="canEdit && (tab === 'items' || tab === 'partners')" @click="importOpen = true">批量导入</el-button>
+        <el-button v-if="canEdit && (tab === 'items' || tab === 'partners' || tab === 'boms')" @click="importOpen = true">{{ tab === 'boms' ? '批量导入首版配方' : '批量导入' }}</el-button>
         <el-button v-if="canEdit" type="primary" @click="onAdd">{{ addLabel }}</el-button>
       </div>
     </div>
@@ -123,7 +123,7 @@
       </el-tabs>
     </el-card>
 
-    <ImportDialog v-model="importOpen" :kind="tab === 'partners' ? 'partners' : 'items'" @done="load" />
+    <ImportDialog v-model="importOpen" :kind="tab === 'partners' ? 'partners' : tab === 'boms' ? 'boms' : 'items'" @done="load" />
 
     <!-- 物料 -->
     <el-dialog v-model="item.visible" :title="item.id ? '编辑物料' : '新增物料'" width="640px">

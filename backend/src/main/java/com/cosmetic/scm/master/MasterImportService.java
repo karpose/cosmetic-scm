@@ -1,5 +1,13 @@
 package com.cosmetic.scm.master;
 
+import com.cosmetic.scm.master.MasterDtos.BomReq;
+import com.cosmetic.scm.master.MasterDtos.BomLineReq;
+import com.cosmetic.scm.domain.SupplyMode;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotBlank;
+import java.util.HashMap;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -57,6 +65,16 @@ public class MasterImportService {
                                    boolean dryRun) {
     }
 
+    /** 配方的一行。同一个成品写多行，一起作为它的首版配方。 */
+    public record BomImportRow(@NotBlank(message = "请填写成品编码") String fgCode,
+                               @NotBlank(message = "请填写物料编码") String itemCode,
+                               @NotNull(message = "请填写单耗") @Positive(message = "单耗要大于 0") BigDecimal qtyPer,
+                               @NotNull(message = "请填写供料方式") SupplyMode supplyMode) {
+    }
+
+    public record BomImportReq(@NotEmpty(message = "没有可导入的行") @Size(max = 20000) List<BomImportRow> rows, boolean dryRun) {
+    }
+
     public record RowError(int line, String code, String message) {
     }
 
@@ -78,6 +96,55 @@ public class MasterImportService {
         return run("往来单位", req.rows(), req.dryRun(), PartnerReq::code, existing,
                 r -> master.createPartner(r),
                 r -> master.updatePartner(partners.findByCode(r.code().trim()).orElseThrow().getId(), r));
+    }
+
+    /**
+     * 批量录入首版配方：SKU 多的时候不可能在弹窗里一个个录。全成或全不成，
+     * 走和界面相同的校验（禁用、限用浓度、重复物料）；已有生效配方的成品要走配方变更，这里拒绝。
+     */
+    @Transactional
+    public ImportResult importBoms(BomImportReq req) {
+        Map<String, Item> byCode = items.findAll().stream().collect(Collectors.toMap(Item::getCode, Function.identity()));
+        List<RowError> errors = new ArrayList<>();
+        Map<String, List<BomLineReq>> byFg = new java.util.LinkedHashMap<>();
+        Map<String, Integer> firstLine = new HashMap<>();
+        for (int i = 0; i < req.rows().size(); i++) {
+            BomImportRow r = req.rows().get(i);
+            int line = i + FIRST_DATA_LINE;
+            String fg = r.fgCode() == null ? null : r.fgCode().trim();
+            Set<ConstraintViolation<BomImportRow>> violations = validator.validate(r);
+            if (!violations.isEmpty()) {
+                errors.add(new RowError(line, fg, violations.stream().map(ConstraintViolation::getMessage).sorted().collect(Collectors.joining("；"))));
+                continue;
+            }
+            Item fgItem = byCode.get(fg);
+            Item material = byCode.get(r.itemCode().trim());
+            if (fgItem == null) {
+                errors.add(new RowError(line, fg, "成品编码不存在，请先导入物料"));
+            } else if (material == null) {
+                errors.add(new RowError(line, fg, "物料编码 " + r.itemCode().trim() + " 不存在"));
+            } else {
+                firstLine.putIfAbsent(fg, line);
+                byFg.computeIfAbsent(fg, k -> new ArrayList<>()).add(new BomLineReq(material.getId(), r.qtyPer(), r.supplyMode()));
+            }
+        }
+        int created = 0;
+        for (Map.Entry<String, List<BomLineReq>> e : byFg.entrySet()) {
+            try {
+                master.saveBom(byCode.get(e.getKey()).getId(), new BomReq(e.getValue()));
+                created++;
+            } catch (BizException ex) {
+                errors.add(new RowError(firstLine.get(e.getKey()), e.getKey(), ex.getMessage()));
+            }
+        }
+        errors.sort(java.util.Comparator.comparingInt(RowError::line));
+        boolean apply = errors.isEmpty() && !req.dryRun();
+        if (apply) {
+            audit.log("批量导入配方", created + " 个成品", req.rows().size() + " 行");
+        } else {
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+        }
+        return new ImportResult(req.rows().size(), created, 0, apply, errors);
     }
 
     private <T> ImportResult run(String what, List<T> rows, boolean dryRun, Function<T, String> codeOf, Set<String> existing,

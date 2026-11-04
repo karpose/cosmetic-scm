@@ -48,6 +48,8 @@ public interface BatchRepository extends JpaRepository<Batch, Long> {
 
     long countByStatus(BatchStatus status);
 
+    long countBySourceType(com.cosmetic.scm.domain.SourceType sourceType);
+
     /** 状态流转前先锁行：并发时第二个请求排队，读到新状态后按业务规则拒绝。只在写事务里用。 */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from Batch x where x.id = :id")
