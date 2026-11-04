@@ -103,7 +103,8 @@
                   <span class="toolbar">
                     <span class="muted small">{{ b.netG ? `净含量 ${fmtQty(b.netG)} g` : '未填净含量，无法校验浓度' }}</span>
                     <span v-if="b.materialCost != null" class="small">物料成本 <b class="mono">{{ fmtMoney(b.materialCost) }}</b>/件<span v-if="!b.costComplete" class="muted">（有物料未填成本）</span></span>
-                    <el-button v-if="canEdit" size="small" @click="openBom(b)">编辑</el-button>
+                    <el-button v-if="canEdit && b.lines.length" size="small" @click="$router.push('/formulas')">发起配方变更</el-button>
+                    <el-button v-else-if="canEdit" size="small" type="primary" @click="openBom(b)">录入首版配方</el-button>
                   </span>
                 </div>
               </template>
@@ -146,7 +147,10 @@
           <el-form-item label=" "><el-checkbox id="it-banned" v-model="item.banned">禁用原料（不可采购、不可进入 BOM）</el-checkbox></el-form-item>
         </div>
         <div v-if="item.itemType === 'FG'" class="form-grid">
-          <el-form-item label="备案 / 注册编号"><el-input id="it-filing" v-model="item.filingNo" /></el-form-item>
+          <el-form-item label="备案 / 注册编号">
+            <el-input id="it-filing" v-model="item.filingNo" :disabled="item.filingLocked" />
+            <span v-if="item.filingLocked" class="muted small">要修改请到“配方与备案 → 备案登记”登记新的备案</span>
+          </el-form-item>
           <el-form-item label="净含量（g）"><el-input-number id="it-net" v-model="item.netG" :min="0" :precision="3" :controls="false" style="width:100%" /></el-form-item>
         </div>
         <el-checkbox id="it-active" v-model="item.active">启用</el-checkbox>
@@ -221,8 +225,8 @@
     </el-dialog>
 
     <!-- BOM -->
-    <el-dialog v-model="bom.visible" :title="`维护 BOM：${bom.fgName}`" width="760px">
-      <p class="muted small" style="margin-top:0">单耗按物料单位填写（原料通常为 kg/件）。保存前系统会校验禁用原料和限用原料的浓度上限。</p>
+    <el-dialog v-model="bom.visible" :title="`录入首版配方：${bom.fgName}`" width="760px">
+      <p class="muted small" style="margin-top:0">单耗按物料单位填写（原料通常为 kg/件）。保存前系统会校验禁用原料和限用原料的浓度上限。首版保存后立即生效；之后的修改要在“配方与备案”发起变更，经质量安全负责人签批。</p>
       <div v-for="(l, i) in bom.lines" :key="i" class="bom-row">
         <el-select :id="`bom-item-${i}`" v-model="l.itemId" placeholder="选择物料" filterable @change="checkBom">
           <el-option v-for="m in rd.materials.value" :key="m.id" :value="m.id" :label="`${m.code} ${m.name}${m.banned ? '（禁用）' : ''}`" />
@@ -239,7 +243,7 @@
       </div>
       <template #footer>
         <el-button @click="bom.visible = false">取消</el-button>
-        <el-button type="primary" :loading="bom.saving" :disabled="bom.checks.some((c) => c.checkLevel === 'BANNED' || c.checkLevel === 'OVER_LIMIT')" @click="saveBom">保存 BOM</el-button>
+        <el-button type="primary" :loading="bom.saving" :disabled="bom.checks.some((c) => c.checkLevel === 'BANNED' || c.checkLevel === 'OVER_LIMIT')" @click="saveBom">保存首版配方</el-button>
       </template>
     </el-dialog>
   </div>
@@ -317,11 +321,11 @@ function onAdd() {
 }
 
 function openItem(row) {
-  Object.assign(item, emptyItem(), row ? { ...row } : {}, { visible: true })
+  Object.assign(item, emptyItem(), row ? { ...row } : {}, { visible: true, filingLocked: !!row?.filingNo })
 }
 
 async function saveItem() {
-  const { visible, saving, id, ...body } = item
+  const { visible, saving, id, filingLocked, ...body } = item
   item.saving = true
   try {
     if (id) await http.put(`/items/${id}`, body)

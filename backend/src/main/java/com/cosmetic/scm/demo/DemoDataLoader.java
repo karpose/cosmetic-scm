@@ -12,7 +12,14 @@ import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.complaint.ComplaintService;
 import com.cosmetic.scm.complaint.ComplaintService.ComplaintReq;
 import com.cosmetic.scm.dealer.DealerService;
+import com.cosmetic.scm.domain.AuditResult;
+import com.cosmetic.scm.domain.AuditType;
+import com.cosmetic.scm.domain.CapaSource;
+import com.cosmetic.scm.domain.CapaType;
 import com.cosmetic.scm.domain.ComplaintCategory;
+import com.cosmetic.scm.domain.DeviationArea;
+import com.cosmetic.scm.domain.DeviationLevel;
+import com.cosmetic.scm.domain.FilingType;
 import com.cosmetic.scm.domain.OemStage;
 import com.cosmetic.scm.domain.Decision;
 import com.cosmetic.scm.domain.ItemType;
@@ -55,6 +62,11 @@ import com.cosmetic.scm.sales.SalesService.SoReq;
 import com.cosmetic.scm.salesreturn.ReturnService;
 import com.cosmetic.scm.salesreturn.ReturnService.ReturnLineReq;
 import com.cosmetic.scm.salesreturn.ReturnService.ReturnReq;
+import com.cosmetic.scm.mes.MesService;
+import com.cosmetic.scm.plm.FilingService;
+import com.cosmetic.scm.plm.FormulaService;
+import com.cosmetic.scm.qms.DeviationService;
+import com.cosmetic.scm.qms.SupplierAuditService;
 import com.cosmetic.scm.security.AppUser;
 import com.cosmetic.scm.serial.SerialService;
 import com.cosmetic.scm.security.UserRepository;
@@ -98,6 +110,11 @@ public class DemoDataLoader implements ApplicationRunner {
     private final DealerService dealers;
     private final IntegrationService integration;
     private final SerialService serials;
+    private final FormulaService formulas;
+    private final FilingService filings;
+    private final DeviationService deviations;
+    private final SupplierAuditService supplierAudits;
+    private final MesService mes;
     private final InventoryService inventory;
     private final TimeProvider time;
 
@@ -260,7 +277,37 @@ public class DemoDataLoader implements ApplicationRunner {
         // ---------- 第一批精华液生成 20 个一物一码，可在“一物一码”里导出、在扫码页查询 ----------
         as("qa1", () -> serials.generate(new SerialService.GenerateReq(done1.outBatchNo(), 20)));
 
-        // ---------- 自产面霜：已计划，待发料 ----------
+        // ---------- 配方与备案：精华液有一个提高透明质酸钠用量的变更，备案还在途，所以暂时不能签批生效 ----------
+        FormulaService.VersionView v2 = as("admin", () -> formulas.createDraft(serum.getId(), new FormulaService.DraftReq(
+                "透明质酸钠由 0.1% 提到 0.17%，改善肤感（示例）", List.of(
+                new BomLineReq(nia.getId(), new BigDecimal("0.0015"), SupplyMode.BRAND),
+                new BomLineReq(gly.getId(), new BigDecimal("0.0015"), SupplyMode.OEM),
+                new BomLineReq(ha.getId(), new BigDecimal("0.00005"), SupplyMode.BRAND),
+                new BomLineReq(phe.getId(), new BigDecimal("0.00024"), SupplyMode.OEM),
+                new BomLineReq(btl.getId(), BigDecimal.ONE, SupplyMode.BRAND),
+                new BomLineReq(box2.getId(), BigDecimal.ONE, SupplyMode.BRAND)))));
+        as("admin", () -> formulas.submit(v2.id()));
+        as("admin", () -> filings.create(new FilingService.FilingReq(serum.getId(), FilingType.GENERAL, v2.id(), t.minusDays(2), "配方变更备案（示例）")));
+
+        // ---------- 质量体系：供应商审核（明瓶快到期）、一条微小偏差和它的预防措施 ----------
+        as("qa1", () -> supplierAudits.create(new SupplierAuditService.AuditReq(hc.id(), t.minusDays(60), AuditType.ROUTINE, 92, AuditResult.PASS,
+                null, "质量部 张工（示例）", t.plusDays(305), DEMO_PASSWORD), qa));
+        as("qa1", () -> supplierAudits.create(new SupplierAuditService.AuditReq(mp.id(), t.minusDays(340), AuditType.ROUTINE, 78, AuditResult.CONDITIONAL,
+                "来料检验记录不完整，已要求整改（示例）", "质量部 张工（示例）", t.plusDays(25), DEMO_PASSWORD), qa));
+        as("qa1", () -> supplierAudits.create(new SupplierAuditService.AuditReq(a3.id(), t.minusDays(120), AuditType.ROUTINE, 88, AuditResult.PASS,
+                null, "质量安全负责人（示例）", t.plusDays(245), DEMO_PASSWORD), qa));
+        DeviationService.DeviationView dv = as("prod1", () -> deviations.create(new DeviationService.DeviationReq(t.minusDays(1), DeviationArea.WAREHOUSE, DeviationLevel.MINOR,
+                null, "华东主仓温湿度记录缺失一天（示例）", "记录仪电池耗尽，缺少一天的数据；前后两天均在规定范围内（示例）", "更换电池并补充人工记录（示例）", t.plusDays(14))));
+        as("qa1", () -> deviations.createCapa(new DeviationService.CapaReq(CapaSource.DEVIATION, null, dv.id(), CapaType.PREVENTIVE,
+                "把记录仪电量纳入每周点检（示例）", "仓库主管（示例）", t.plusDays(21))));
+
+        // ---------- 自产面霜：有工艺路线；已计划，待发料。发料后在生产单明细里填批生产记录 ----------
+        as("admin", () -> mes.saveRouting(cream.getId(), new MesService.RoutingReq(List.of(
+                new MesService.RoutingStepReq("称量投料", "按配方逐项称量，双人核对物料和批号", true, null, null, null, null),
+                new MesService.RoutingStepReq("乳化", "水相、油相分别升温后混合，均质 10 分钟", false, "乳化温度", new BigDecimal("70"), new BigDecimal("80"), "℃"),
+                new MesService.RoutingStepReq("冷却", "搅拌冷却后加入防腐体系", false, "料体 pH", new BigDecimal("5.0"), new BigDecimal("7.0"), null),
+                new MesService.RoutingStepReq("灌装", "首件确认后连续灌装，每 30 分钟抽检装量", true, "装量", new BigDecimal("49"), new BigDecimal("52"), "g"),
+                new MesService.RoutingStepReq("包装贴标", "核对批号和限用日期后贴标装盒", false, null, null, null, null)))));
         as("prod1", () -> production.create(new CreateMoReq(own.id(), cream.getId(), new BigDecimal("8000"), t.plusDays(7))));
     }
 

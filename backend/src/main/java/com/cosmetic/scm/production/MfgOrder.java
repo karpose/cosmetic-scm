@@ -57,4 +57,7 @@ public class MfgOrder {
     private LocalDateTime issuedAt;
 
     private LocalDateTime completedAt;
+
+    /** 这张单用的配方版本：未发料时跟随最新生效版本，发料后锁定。 */
+    private Long formulaVersionId;
 }

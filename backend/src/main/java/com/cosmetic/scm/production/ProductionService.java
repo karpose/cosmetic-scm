@@ -47,10 +47,14 @@ import com.cosmetic.scm.master.MasterService;
 import com.cosmetic.scm.master.Partner;
 import com.cosmetic.scm.master.Warehouse;
 import com.cosmetic.scm.master.WarehouseRepository;
+import com.cosmetic.scm.mes.MesService;
 import com.cosmetic.scm.oemportal.OemProgress;
 import com.cosmetic.scm.oemportal.OemProgressRepository;
 import com.cosmetic.scm.oemportal.OemReport;
 import com.cosmetic.scm.oemportal.OemReportRepository;
+import com.cosmetic.scm.plm.FormulaVersion;
+import com.cosmetic.scm.plm.FormulaVersionRepository;
+import com.cosmetic.scm.qms.DeviationRepository;
 import com.cosmetic.scm.security.CurrentUser;
 
 import org.springframework.stereotype.Service;
@@ -79,6 +83,9 @@ public class ProductionService {
     private final GenealogyRepository genealogy;
     private final OemProgressRepository oemProgress;
     private final OemReportRepository oemReports;
+    private final FormulaVersionRepository formulaVersions;
+    private final DeviationRepository deviations;
+    private final MesService mes;
     private final DocNoService docNo;
     private final AuditService audit;
     private final TimeProvider time;
@@ -118,7 +125,7 @@ public class ProductionService {
                          String oemStageLabel, OemReportStatus oemReportStatus, String oemReportStatusLabel) {
     }
 
-    public record MoDetail(MoView mo, List<RequirementView> requirements) {
+    public record MoDetail(MoView mo, List<RequirementView> requirements, Integer formulaVersionNo) {
     }
 
     private record Requirement(BomLine line, Item item, SupplyMode mode, BigDecimal qty) {
@@ -202,7 +209,9 @@ public class ProductionService {
         }
         Map<Long, String> outNos = mo.getOutBatchId() == null ? Map.of()
                 : Map.of(mo.getOutBatchId(), inventory.batch(mo.getOutBatchId()).getBatchNo());
-        return new MoDetail(toView(mo, im, pm, outNos), reqs);
+        Integer versionNo = mo.getFormulaVersionId() == null ? null
+                : formulaVersions.findById(mo.getFormulaVersionId()).map(FormulaVersion::getVersionNo).orElse(null);
+        return new MoDetail(toView(mo, im, pm, outNos), reqs, versionNo);
     }
 
     // ---------- 写操作 ----------
@@ -234,6 +243,7 @@ public class ProductionService {
         mo.setFgItemId(fg.getId());
         mo.setPlannedQty(req.plannedQty());
         mo.setPlannedDate(req.plannedDate() == null ? today : req.plannedDate());
+        mo.setFormulaVersionId(master.effectiveVersionId(fg.getId()));
         mo.setStatus(MoStatus.PLANNED);
         mo.setCreatedBy(currentUser.usernameOrSystem());
         mo.setCreatedAt(time.now());
@@ -283,6 +293,7 @@ public class ProductionService {
         mo.setStatus(MoStatus.ISSUED);
         mo.setIssuedAt(time.now());
         orders.save(mo);
+        mes.createRecord(mo);
         audit.log("生产发料", mo.getMoNo(), detail.isEmpty() ? "无品牌供料物料" : String.join("，", detail));
         return toView(mo, lookup.itemMap(), lookup.partnerMap(), Map.of());
     }
@@ -296,6 +307,10 @@ public class ProductionService {
         }
         LocalDate today = time.today();
         Partner factory = lookup.partner(mo.getFactoryId());
+        List<String> recordGaps = mes.missing(mo.getId());
+        if (!recordGaps.isEmpty()) {
+            throw new BizException("批生产记录未完成，不能入库：" + String.join("；", recordGaps));
+        }
         if (mo.getMoType() == MoType.OEM && !req.oemReleased()) {
             throw new BizException("委托生产须在受托厂完成出厂放行后才能入库");
         }
@@ -366,6 +381,11 @@ public class ProductionService {
         mo.setActualQty(req.actualQty());
         mo.setCompletedAt(time.now());
         orders.save(mo);
+        // 生产过程中的偏差此时才有批次可挂：重大偏差没关闭，这批不能上市放行
+        deviations.findByMoId(mo.getId()).forEach(d -> {
+            d.setBatchId(out.getId());
+            deviations.save(d);
+        });
         oemReports.findFirstByMoIdAndStatus(mo.getId(), OemReportStatus.SUBMITTED).ifPresent(r -> {
             r.setStatus(OemReportStatus.ACCEPTED);
             r.setReviewedBy(currentUser.usernameOrSystem());
@@ -382,7 +402,9 @@ public class ProductionService {
     private List<Requirement> requirements(MfgOrder mo) {
         Map<Long, Item> im = lookup.itemMap();
         List<Requirement> out = new ArrayList<>();
-        for (BomLine l : master.bomLines(mo.getFgItemId())) {
+        List<BomLine> lines = mo.getFormulaVersionId() == null ? master.bomLines(mo.getFgItemId())
+                : master.versionLines(mo.getFormulaVersionId());
+        for (BomLine l : lines) {
             SupplyMode mode = mo.getMoType() == MoType.OWN ? SupplyMode.BRAND : l.getSupplyMode();
             BigDecimal qty = l.getQtyPer().multiply(mo.getPlannedQty()).setScale(4, RoundingMode.UP);
             out.add(new Requirement(l, im.get(l.getItemId()), mode, qty));

@@ -14,6 +14,9 @@ import lombok.RequiredArgsConstructor;
 import com.cosmetic.scm.audit.AuditService;
 import com.cosmetic.scm.common.BizException;
 import com.cosmetic.scm.common.TimeProvider;
+import com.cosmetic.scm.domain.FilingStatus;
+import com.cosmetic.scm.domain.FilingType;
+import com.cosmetic.scm.domain.FormulaStatus;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.rules.FormulaCompliance;
@@ -26,6 +29,12 @@ import com.cosmetic.scm.master.MasterDtos.PartnerReq;
 import com.cosmetic.scm.master.MasterDtos.PartnerView;
 import com.cosmetic.scm.master.MasterDtos.WarehouseReq;
 import com.cosmetic.scm.master.MasterDtos.WarehouseView;
+import com.cosmetic.scm.plm.FormulaLine;
+import com.cosmetic.scm.plm.FormulaLineRepository;
+import com.cosmetic.scm.plm.FormulaVersion;
+import com.cosmetic.scm.plm.FormulaVersionRepository;
+import com.cosmetic.scm.plm.ProductFiling;
+import com.cosmetic.scm.plm.ProductFilingRepository;
 import com.cosmetic.scm.security.CurrentUser;
 
 import org.springframework.stereotype.Service;
@@ -43,6 +52,9 @@ public class MasterService {
     private final WarehouseRepository warehouses;
     private final BomRepository boms;
     private final BomLineRepository bomLines;
+    private final FormulaVersionRepository formulaVersions;
+    private final FormulaLineRepository formulaLines;
+    private final ProductFilingRepository filings;
     private final MasterLookup lookup;
     private final AuditService audit;
     private final TimeProvider time;
@@ -66,6 +78,7 @@ public class MasterService {
         item.setCode(req.code().trim());
         applyItem(item, req);
         items.save(item);
+        recordFilingFromMaster(item);
         audit.log("新增物料", item.getCode(), item.getName() + "（" + item.getItemType().getLabel() + "）");
         return item;
     }
@@ -79,9 +92,37 @@ public class MasterService {
         if (item.getItemType() != req.itemType()) {
             throw new BizException("物料类型创建后不能修改");
         }
+        String oldFiling = item.getFilingNo();
+        String newFiling = item.getItemType() == ItemType.FG ? blankToNull(req.filingNo()) : null;
+        boolean filingChanged = !java.util.Objects.equals(oldFiling, newFiling);
+        if (filingChanged && !filings.findByFgItemIdAndStatusOrderByIdDesc(id, FilingStatus.FILED).isEmpty()) {
+            throw new BizException(item.getName() + " 的备案编号由备案记录决定，修改请到“配方与备案 → 备案登记”登记新的备案");
+        }
         applyItem(item, req);
+        if (filingChanged) {
+            recordFilingFromMaster(item);
+        }
         audit.log("修改物料", item.getCode(), item.getName());
         return item;
+    }
+
+    /**
+     * 上线初始化时可以在主数据（或 CSV）里直接填已有的备案编号，这里同时补一条已完成的备案记录。
+     * 有了记录之后编号只能走备案登记改，上市放行看到的编号都能追溯到记录。
+     */
+    private void recordFilingFromMaster(Item item) {
+        if (item.getItemType() != ItemType.FG || item.getFilingNo() == null) {
+            return;
+        }
+        ProductFiling f = new ProductFiling();
+        f.setFgItemId(item.getId());
+        f.setFilingType(FilingType.GENERAL);
+        f.setFilingNo(item.getFilingNo());
+        f.setStatus(FilingStatus.FILED);
+        f.setNote("主数据录入的已有编号，请核对类型和日期");
+        f.setCreatedBy(currentUser.usernameOrSystem());
+        f.setCreatedAt(time.now());
+        filings.save(f);
     }
 
     private void applyItem(Item item, ItemReq req) {
@@ -235,12 +276,47 @@ public class MasterService {
         return req.lines().stream().map(l -> lineView(fg, requireMaterial(im, l.itemId()), l.qtyPer(), l.supplyMode())).toList();
     }
 
+    /**
+     * 录入成品的第一版配方，直接生效（上线初始化）。已有生效配方后不能在这里改，
+     * 要走“配方与备案”的变更流程，由质量安全负责人签批。
+     */
     @Transactional
     public BomView saveBom(Long fgItemId, BomReq req) {
         Item fg = requireFg(fgItemId);
+        if (formulaVersions.findFirstByFgItemIdAndStatus(fgItemId, FormulaStatus.EFFECTIVE).isPresent()) {
+            throw new BizException(fg.getName() + " 已有生效配方，修改请到“配方与备案”发起变更，经质量安全负责人签批后生效");
+        }
+        validateBomLines(fg, req.lines());
+        applyBom(fg, req.lines());
+        FormulaVersion v = new FormulaVersion();
+        v.setFgItemId(fgItemId);
+        v.setVersionNo(formulaVersions.findByFgItemIdOrderByVersionNoDesc(fgItemId).stream()
+                .mapToInt(FormulaVersion::getVersionNo).max().orElse(0) + 1);
+        v.setStatus(FormulaStatus.EFFECTIVE);
+        v.setChangeNote("首版配方录入");
+        v.setCreatedBy(currentUser.usernameOrSystem());
+        v.setCreatedAt(time.now());
+        v.setApprovedBy(currentUser.usernameOrSystem());
+        v.setApprovedAt(time.now());
+        formulaVersions.save(v);
+        int no = 1;
+        for (BomLineReq l : req.lines()) {
+            FormulaLine line = new FormulaLine();
+            line.setVersionId(v.getId());
+            line.setLineNo(no++);
+            line.setItemId(l.itemId());
+            line.setQtyPer(l.qtyPer());
+            line.setSupplyMode(l.supplyMode());
+            formulaLines.save(line);
+        }
+        return buildBomView(fg, lookup.itemMap());
+    }
+
+    /** 禁用、超限和重复物料的校验。配方变更的提交和生效都要过这一关。 */
+    public void validateBomLines(Item fg, List<BomLineReq> lines) {
         Map<Long, Item> im = lookup.itemMap();
         List<String> problems = new ArrayList<>();
-        for (BomLineReq l : req.lines()) {
+        for (BomLineReq l : lines) {
             Item m = requireMaterial(im, l.itemId());
             FormulaCompliance.Check c = check(fg, m, l.qtyPer());
             if (c.blocking()) {
@@ -250,10 +326,16 @@ public class MasterService {
         if (!problems.isEmpty()) {
             throw new BizException("配方合规校验未通过：" + String.join("；", problems));
         }
-        long distinct = req.lines().stream().map(BomLineReq::itemId).distinct().count();
-        if (distinct != req.lines().size()) {
+        long distinct = lines.stream().map(BomLineReq::itemId).distinct().count();
+        if (distinct != lines.size()) {
             throw new BizException("同一物料在 BOM 中只能出现一次");
         }
+    }
+
+    /** 把内容写入当前 BOM。调用方负责校验和版本记录。 */
+    public void applyBom(Item fg, List<BomLineReq> lines) {
+        Map<Long, Item> im = lookup.itemMap();
+        Long fgItemId = fg.getId();
         Bom bom = boms.findByFgItemId(fgItemId).orElseGet(() -> {
             Bom b = new Bom();
             b.setFgItemId(fgItemId);
@@ -264,7 +346,7 @@ public class MasterService {
         boms.save(bom);
         bomLines.deleteByBomId(bom.getId());
         int no = 1;
-        for (BomLineReq l : req.lines()) {
+        for (BomLineReq l : lines) {
             BomLine line = new BomLine();
             line.setBomId(bom.getId());
             line.setLineNo(no++);
@@ -273,10 +355,28 @@ public class MasterService {
             line.setSupplyMode(l.supplyMode());
             bomLines.save(line);
         }
-        audit.log("保存 BOM", fg.getCode(), req.lines().stream()
+        audit.log("保存 BOM", fg.getCode(), lines.stream()
                 .map(l -> im.get(l.itemId()).getCode() + "×" + l.qtyPer().stripTrailingZeros().toPlainString() + "(" + l.supplyMode().getLabel() + ")")
                 .collect(Collectors.joining("，")));
-        return buildBomView(fg, im);
+    }
+
+    /** 当前生效的配方版本号（ID）；还没录入配方时为空。 */
+    @Transactional(readOnly = true)
+    public Long effectiveVersionId(Long fgItemId) {
+        return formulaVersions.findFirstByFgItemIdAndStatus(fgItemId, FormulaStatus.EFFECTIVE).map(FormulaVersion::getId).orElse(null);
+    }
+
+    /** 生产单用：读某个配方版本的内容（不是当前 BOM），配方变更后已发料的单子仍按当时的用量。 */
+    @Transactional(readOnly = true)
+    public List<BomLine> versionLines(Long versionId) {
+        return formulaLines.findByVersionIdOrderByLineNo(versionId).stream().map(f -> {
+            BomLine l = new BomLine();
+            l.setLineNo(f.getLineNo());
+            l.setItemId(f.getItemId());
+            l.setQtyPer(f.getQtyPer());
+            l.setSupplyMode(f.getSupplyMode());
+            return l;
+        }).toList();
     }
 
     /** 供生产模块读取 BOM 行。 */
@@ -341,7 +441,7 @@ public class MasterService {
         return out;
     }
 
-    private BomLineView lineView(Item fg, Item m, BigDecimal qtyPer, com.cosmetic.scm.domain.SupplyMode mode) {
+    public BomLineView lineView(Item fg, Item m, BigDecimal qtyPer, com.cosmetic.scm.domain.SupplyMode mode) {
         FormulaCompliance.Check c = check(fg, m, qtyPer);
         return new BomLineView(m.getId(), m.getCode(), m.getName(), m.getItemType().name(), m.getUnit(), qtyPer, mode,
                 c.level().name(), c.concentrationPct(), c.message());

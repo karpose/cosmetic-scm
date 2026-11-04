@@ -5,7 +5,10 @@
         <h2>销售出库</h2>
         <p>出库时系统只分配已上市放行的批次，按“先到期先出”排序，并排除剩余效期达不到客户接收标准的批次。批号随出库单记录到客户，用于召回。</p>
       </div>
-      <el-button v-if="canCreate" type="primary" @click="openCreate">新建出库单</el-button>
+      <div class="toolbar">
+        <ExportButton report="shipments" />
+        <el-button v-if="canCreate" type="primary" @click="openCreate">新建出库单</el-button>
+      </div>
     </div>
 
     <el-card shadow="never" body-style="padding:0 0 8px">
@@ -87,6 +90,7 @@
 </template>
 
 <script setup>
+import ExportButton from '../components/ExportButton.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import http from '../api'

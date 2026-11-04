@@ -230,6 +230,202 @@ test('附件：上传、下载、拦截假文件，只读账号不能上传', as
   await expect(page.getByRole('button', { name: '上传附件' })).toHaveCount(0)
 })
 
+test('配方变更：备案没完成不能生效，完成后质量安全负责人签批', async ({ page }) => {
+  await login(page, 'qso1')
+  await page.goto('/formulas')
+  await expect(page.getByText('透明质酸钠').first()).toBeVisible()
+  await expect(page.getByText('需要先完成这个版本的备案')).toBeVisible()
+  const signDialog = dialog(page, '签批生效')
+  const approve = async () => {
+    await page.getByRole('button', { name: '签批生效' }).first().click()
+    await signDialog.locator('#sg-pwd').fill(DEMO)
+    await signDialog.getByRole('button', { name: '签批生效' }).click()
+  }
+  await approve()
+  await toast(page, '请先在“备案登记”完成')
+  await signDialog.getByRole('button', { name: '取消' }).click()
+
+  await page.getByRole('tab', { name: '备案登记' }).click()
+  await page.locator('.el-table__row').filter({ hasText: '已提交' }).first().getByRole('button', { name: '登记完成' }).click()
+  await page.locator('#fc-no').fill('E2E-备案-002')
+  await dialog(page, '备案完成').getByRole('button', { name: '登记完成' }).click()
+  await toast(page, '备案已完成')
+
+  await page.getByRole('tab', { name: /配方版本/ }).click()
+  await expect(page.getByText('备案已完成：')).toBeVisible()
+  await approve()
+  await toast(page, 'V2 已生效')
+  await expect(page.getByText('生效中').first()).toBeVisible()
+})
+
+test('偏差：CAPA 验证有效后才能关闭，完成人不能验证自己的', async ({ page }) => {
+  await login(page, 'prod1')
+  const batch = (await api(page, '/stock')).find((s) => s.itemType === 'FG').batchNo
+  await page.goto('/qms')
+  await page.getByRole('button', { name: '登记偏差' }).click()
+  const d = dialog(page, '登记偏差')
+  await d.locator('.el-form-item').filter({ hasText: '等级' }).locator('.el-select').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: '重大偏差' }).click()
+  await page.locator('#dv-batch').fill(batch)
+  await page.locator('#dv-title').fill('E2E 灌装量偏低')
+  await page.locator('#dv-desc').fill('抽检发现装量偏低')
+  await d.getByRole('button', { name: '登记偏差' }).click()
+  await toast(page, '偏差已登记')
+  // 生产岗位不能调查和关闭
+  const row = page.locator('.el-table__row').filter({ hasText: 'E2E 灌装量偏低' })
+  await expect(row.getByRole('button', { name: '关闭' })).toHaveCount(0)
+
+  await login(page, 'qa1')
+  await page.goto('/qms')
+  await row.getByRole('button', { name: '调查' }).click()
+  await page.locator('.el-message-box textarea').fill('灌装头磨损')
+  await page.getByRole('button', { name: '保存调查结果' }).click()
+  await toast(page, '调查结果已保存')
+  await row.getByRole('button', { name: '加 CAPA' }).click()
+  await page.locator('#cp-owner').fill('设备主管')
+  await page.locator('#cp-desc').fill('E2E 更换灌装头')
+  await dialog(page, '添加 CAPA').getByRole('button', { name: '添加 CAPA' }).click()
+  await toast(page, 'CAPA 已添加')
+
+  const close = async () => {
+    await row.getByRole('button', { name: '关闭' }).click()
+    await page.locator('#cd-conclusion').fill('复检合格')
+    await page.locator('#cd-pwd').fill(DEMO)
+    await dialog(page, '关闭偏差').getByRole('button', { name: '签批关闭' }).click()
+  }
+  await close()
+  await toast(page, '还有 CAPA 没有验证完成')
+  await dialog(page, '关闭偏差').getByRole('button', { name: '取消' }).click()
+
+  await login(page, 'prod1')
+  await page.goto('/qms?tab=capas')
+  const capa = page.locator('.el-table__row').filter({ hasText: 'E2E 更换灌装头' })
+  await capa.getByRole('button', { name: '登记完成' }).click()
+  await page.locator('.el-message-box input').fill('已更换')
+  await page.locator('.el-message-box').getByRole('button', { name: '登记完成' }).click()
+  await toast(page, '等待质量人员验证')
+
+  await login(page, 'qa1')
+  await page.goto('/qms?tab=capas')
+  await capa.getByRole('button', { name: '验证' }).click()
+  await page.locator('#vf-note').fill('连续三批合格')
+  await page.locator('#vf-pwd').fill(DEMO)
+  await dialog(page, '验证').getByRole('button', { name: '签批验证结论' }).click()
+  await toast(page, '已验证有效')
+
+  await page.goto('/qms')
+  await close()
+  await toast(page, '偏差已关闭')
+})
+
+test('自产批生产记录：清场、复核、过程检验超限生成偏差，做完才能入库', async ({ page }) => {
+  test.setTimeout(90_000)
+  const openDetail = async () => {
+    await page.goto('/production')
+    await page.locator('.el-table__row').filter({ hasText: '角鲨烷修护面霜' }).filter({ hasText: '已发料' }).getByRole('button', { name: '明细' }).click()
+    await expect(page.locator('.el-drawer').getByText('批生产记录').first()).toBeVisible()
+  }
+  const drawer = page.locator('.el-drawer')
+  const step = (name) => drawer.locator('.stp').filter({ hasText: name })
+  const clearance = async (name) => {
+    await drawer.locator('.clr').filter({ hasText: name }).getByRole('button', { name: '确认清场' }).click()
+    const d = dialog(page, name + '确认')
+    await page.locator('#cl-area').fill('2 号车间')
+    for (const box of await d.locator('.el-checkbox').all()) await box.click()
+    await page.locator('#cl-pwd').fill(DEMO)
+    await d.getByRole('button', { name: '签批确认清场' }).click()
+    await toast(page, '清场已确认')
+    await expect(drawer.locator('.clr.done').filter({ hasText: name })).toBeVisible()
+  }
+  const run = async (name, value, note) => {
+    await step(name).getByRole('button', { name: '执行' }).click()
+    if (value != null) await page.locator('#st-value').fill(String(value))
+    if (note) await page.locator('#st-note').fill(note)
+    await page.locator('.el-dialog').filter({ hasText: name }).getByRole('button', { name: '提交工序记录' }).click()
+  }
+  const review = async (name) => {
+    await step(name).getByRole('button', { name: '复核' }).click()
+    await page.locator('#rv-pwd').fill(DEMO)
+    await page.locator('.el-dialog').filter({ hasText: name }).getByRole('button', { name: '签批复核' }).click()
+    await toast(page, '已复核')
+  }
+
+  await login(page, 'prod1')
+  await page.goto('/production')
+  await page.locator('.el-table__row').filter({ hasText: '角鲨烷修护面霜' }).getByRole('button', { name: '发料' }).click()
+  await page.getByRole('button', { name: '确认发料' }).click()
+  await toast(page, '已按先到期先出发料')
+
+  await openDetail()
+  await expect(step('称量投料').getByRole('button', { name: '执行' })).toBeDisabled()
+  await clearance('开工前清场')
+  await run('称量投料')
+  await toast(page, '工序已记录')
+
+  await login(page, 'qa1')
+  await openDetail()
+  await review('称量投料')
+
+  await login(page, 'prod1')
+  await openDetail()
+  await run('乳化', 85, '温控失灵，已停机调整')
+  await toast(page, '已记录并生成偏差')
+  await expect(step('乳化').getByText('超限')).toBeVisible()
+  await expect(step('乳化').getByText('关闭前这批不能上市放行')).toBeVisible()
+  await run('冷却', 6.2)
+  await run('灌装', 50.5)
+  await expect(step('灌装').getByText('已执行')).toBeVisible()
+
+  // 记录没做完不能入库：页面列出缺什么
+  await expect(drawer.getByText('关键工序“灌装”未复核')).toBeVisible()
+
+  await login(page, 'qa1')
+  await openDetail()
+  await review('灌装')
+
+  await login(page, 'prod1')
+  await openDetail()
+  await run('包装贴标')
+  await expect(step('包装贴标').getByText('已执行')).toBeVisible()
+  await clearance('完工后清场')
+  await expect(drawer.getByText('完工入库前还需要完成')).toHaveCount(0)
+
+  await page.goto('/production')
+  await page.locator('.el-table__row').filter({ hasText: '角鲨烷修护面霜' }).filter({ hasText: '已发料' }).getByRole('button', { name: '完工入库' }).click()
+  const done = dialog(page, '完工入库')
+  await done.locator('.el-form-item').filter({ hasText: '实际产量' }).locator('input').fill('8000')
+  await done.getByRole('button', { name: '确认入库' }).click()
+  await toast(page, '已入库')
+
+  // 偏差已挂到成品批次
+  await page.goto('/qms')
+  await expect(page.locator('.el-table__row').filter({ hasText: '乳化温度 超限' }).locator('.mono').first()).toBeVisible()
+})
+
+test('报表导出 Excel 并写审计，消息提醒页只显示渠道状态', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  await page.goto('/stock')
+  const [xlsx] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: '导出 Excel' }).click()])
+  expect(xlsx.suggestedFilename()).toMatch(/^库存明细-.*\.xlsx$/)
+  await page.goto('/audit')
+  await expect(page.getByText('导出报表').first()).toBeVisible()
+
+  // 已有备案记录的成品，主数据里不能直接改编号
+  await page.goto('/master')
+  await page.locator('.el-table__row').filter({ hasText: 'FG-SER-001' }).getByRole('button', { name: '编辑' }).click()
+  await expect(page.locator('#it-filing')).toBeDisabled()
+  await expect(page.getByText('登记新的备案')).toBeVisible()
+
+  await page.goto('/notifications')
+  await expect(page.getByText('未配置').first()).toBeVisible()
+  await expect(page.getByRole('button', { name: '立即发送一次' })).toBeDisabled()
+  await expect(page.locator('.el-table__row').first()).toBeVisible()
+
+  await login(page, 'prod1')
+  await page.goto('/notifications')
+  await expect(page).not.toHaveURL(/notifications/)
+})
+
 test('门户账号进不了内部页面', async ({ page }) => {
   await login(page, 'dealer1')
   await expect(page).toHaveURL(/\/portal\/dealer/)

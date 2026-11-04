@@ -70,7 +70,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  ArrowDown, Box, Coin, Connection, DataAnalysis, DataBoard, Document, Expand, Fold, Goods, Guide, Iphone, OfficeBuilding,
+  ArrowDown, Bell, Box, Coin, Connection, DataAnalysis, DataBoard, Document, Expand, Fold, Goods, Guide, Iphone, Memo, Notebook, OfficeBuilding,
   Operation, Postcard, RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, TrendCharts, User, Van, WarningFilled
 } from '@element-plus/icons-vue'
 import { useAuth, PASSWORD_RULE, ROLE_LABELS } from '../stores/auth'
@@ -112,13 +112,17 @@ const groups = computed(() => {
       items: [
         { path: '/trace', title: '批次追溯', icon: Guide },
         { path: '/quality-events', title: '投诉与召回', icon: WarningFilled },
+        { path: '/qms', title: '质量体系', icon: Memo },
         { path: '/serials', title: '一物一码', icon: Postcard },
         { path: '/audit', title: '审计日志', icon: Document }
       ]
     },
-    { title: '基础', items: [{ path: '/master', title: '主数据', icon: Coin }] }
+    { title: '基础', items: [{ path: '/master', title: '主数据', icon: Coin }, { path: '/formulas', title: '配方与备案', icon: Notebook }] }
   ]
-  if (auth.hasAny('ADMIN')) list[3].items.push({ path: '/users', title: '账号与权限', icon: User })
+  if (auth.hasAny('ADMIN')) {
+    list[3].items.push({ path: '/users', title: '账号与权限', icon: User })
+    list[3].items.push({ path: '/notifications', title: '消息提醒', icon: Bell })
+  }
   return list
 })
 
