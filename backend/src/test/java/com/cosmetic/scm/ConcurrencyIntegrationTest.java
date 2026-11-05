@@ -493,6 +493,25 @@ class ConcurrencyIntegrationTest {
                 .filter(x -> x.getStatus() == com.cosmetic.scm.domain.FormulaStatus.EFFECTIVE)).hasSize(1);
     }
 
+    /** 这个竞态窗口很小，单跑一轮几乎测不出来（CI 上才偶发），所以连续多轮。 */
+    @Test
+    void formulaDraftRaceRepeatedOnFreshProducts() throws Exception {
+        Long rm = item("RM-GLY-002").getId();
+        for (int round = 0; round < 40; round++) {
+            String code = "FG-FRC-" + System.nanoTime() % 1000000 + "-" + round;
+            var fgId = new Long[1];
+            as("admin", () -> {
+                fgId[0] = master.createItem(new com.cosmetic.scm.master.MasterDtos.ItemReq(code, "竞态配方", com.cosmetic.scm.domain.ItemType.FG, "瓶", null, null,
+                        false, 36, null, new BigDecimal("30"), true, null, null)).getId();
+                imports.importBoms(new com.cosmetic.scm.master.MasterImportService.BomImportReq(List.of(
+                        new com.cosmetic.scm.master.MasterImportService.BomImportRow(code, "RM-GLY-002", new BigDecimal("0.001"), SupplyMode.BRAND)), false));
+            });
+            var req = new com.cosmetic.scm.plm.FormulaService.DraftReq("调整用量", List.of(
+                    new com.cosmetic.scm.master.MasterDtos.BomLineReq(rm, new BigDecimal("0.002"), SupplyMode.BRAND)));
+            assertThat(race("prod1", i -> formulas.createDraft(fgId[0], req))).as("第 %d 轮", round).isEqualTo(1);
+        }
+    }
+
     @Test
     void capaAndDeviationStepsTakeEffectOnce() throws Exception {
         var dev = new com.cosmetic.scm.qms.DeviationService.DeviationView[1];
