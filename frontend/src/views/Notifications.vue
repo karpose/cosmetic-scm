@@ -29,7 +29,7 @@
 
       <el-card shadow="never" body-style="padding:0 0 8px">
         <template #header><b>今天的内容</b> <span class="muted small">{{ s.preview.subject }}</span></template>
-        <el-table :data="s.preview.items" empty-text="今天没有需要提醒的事项，定时任务不会发送">
+        <el-table scrollbar-tabindex="0" :data="s.preview.items" empty-text="今天没有需要提醒的事项，定时任务不会发送">
           <el-table-column label="事项" width="190"><template #default="{ row }"><el-tag :type="row.level === 'bad' ? 'danger' : 'warning'" size="small" disable-transitions>{{ row.label }}</el-tag></template></el-table-column>
           <el-table-column prop="title" label="对象" min-width="200" />
           <el-table-column label="编号" width="170"><template #default="{ row }"><span class="mono small">{{ row.ref }}</span></template></el-table-column>
@@ -39,7 +39,7 @@
 
       <el-card shadow="never" body-style="padding:0 0 8px">
         <template #header><b>今天会收到个人邮件的人</b> <span class="muted small">在“账号与权限”里给账号填邮箱</span></template>
-        <el-table :data="s.people" empty-text="没有。账号没填邮箱、没有相关事项，或邮件服务未配置">
+        <el-table scrollbar-tabindex="0" :data="s.people" empty-text="没有。账号没填邮箱、没有相关事项，或邮件服务未配置">
           <el-table-column prop="displayName" label="姓名" min-width="160" />
           <el-table-column prop="email" label="邮箱" min-width="200" />
           <el-table-column label="岗位" min-width="180"><template #default="{ row }">{{ row.roles.join('、') }}</template></el-table-column>
@@ -49,7 +49,7 @@
 
       <el-card shadow="never" body-style="padding:0 0 8px">
         <template #header><b>发送记录</b> <span class="muted small">最近 50 次</span></template>
-        <el-table :data="s.logs" empty-text="还没有发送过">
+        <el-table scrollbar-tabindex="0" :data="s.logs" empty-text="还没有发送过">
           <el-table-column label="时间" width="170"><template #default="{ row }"><span class="mono small">{{ fmtTime(row.sentAt) }}</span></template></el-table-column>
           <el-table-column label="渠道" width="110"><template #default="{ row }">{{ row.channel === 'MAIL' ? '邮件' : '企业微信' }}</template></el-table-column>
           <el-table-column label="收件人" min-width="170"><template #default="{ row }">{{ row.recipient || '—' }}</template></el-table-column>

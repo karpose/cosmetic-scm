@@ -15,7 +15,7 @@
       <template #header>
         <div class="filters">
           <el-input v-model="t.keyword.value" placeholder="搜索单号、供应商、物料" clearable />
-          <el-select v-model="filterBy" placeholder="全部状态" clearable filterable>
+          <el-select aria-label="按状态筛选" v-model="filterBy" placeholder="全部状态" clearable filterable>
             <el-option v-for="o in filterOptions" :key="o.value" :value="o.value" :label="o.label" />
           </el-select>
         </div>

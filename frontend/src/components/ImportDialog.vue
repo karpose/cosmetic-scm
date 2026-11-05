@@ -15,13 +15,14 @@
       <div class="toolbar">
         <el-button @click="downloadTemplate">下载模板</el-button>
         <el-button type="primary" plain @click="fileInput.click()">选择 CSV 文件</el-button>
-        <input ref="fileInput" type="file" accept=".csv,text/csv" hidden @change="onFile" />
+        <input ref="fileInput" type="file" accept=".csv,.txt,text/csv" hidden @change="onFile" />
       </div>
     </div>
 
-    <template v-if="rows.length">
+    <!-- 文件本身有问题时没有数据行，也要把原因显示出来 -->
+    <template v-if="rows.length || parseErrors.length">
       <div class="summary">
-        <span>共 <b class="mono">{{ rows.length }}</b> 行</span>
+        <span v-if="rows.length">共 <b class="mono">{{ rows.length }}</b> 行</span>
         <template v-if="result">
           <el-tag v-if="!issues.length" type="success" disable-transitions>预检通过：{{ spec.unit ? `${result.created} ${spec.unit}` : spec.sign ? `${result.created} 个批次` : `新增 ${result.created}，修改 ${result.updated}` }}</el-tag>
           <el-tag v-else type="danger" disable-transitions>{{ issues.length }} 处问题，修改文件后重新上传</el-tag>
@@ -201,7 +202,16 @@ function downloadTemplate() {
   URL.revokeObjectURL(a.href)
 }
 
+// 第一行只有制表符或分号时按它分列：Excel 的“Unicode 文本”是制表符，部分地区设置的 CSV 是分号
+function delimiterOf(textIn) {
+  const first = textIn.replace(/^\ufeff/, '').split(/\r?\n/, 1)[0]
+  if (first.includes(',')) return ','
+  if (first.includes('\t')) return '\t'
+  return first.includes(';') ? ';' : ','
+}
+
 function parseCsv(textIn) {
+  const delimiter = delimiterOf(textIn)
   const out = []
   let row = []
   let cell = ''
@@ -213,7 +223,7 @@ function parseCsv(textIn) {
       if (ch === '"' && s[i + 1] === '"') { cell += '"'; i++ } else if (ch === '"') quoted = false
       else cell += ch
     } else if (ch === '"') quoted = true
-    else if (ch === ',') { row.push(cell); cell = '' } else if (ch === '\n' || ch === '\r') {
+    else if (ch === delimiter) { row.push(cell); cell = '' } else if (ch === '\n' || ch === '\r') {
       if (ch === '\r' && s[i + 1] === '\n') i++
       row.push(cell); out.push(row); row = []; cell = ''
     } else cell += ch
@@ -224,6 +234,12 @@ function parseCsv(textIn) {
 
 async function decode(file) {
   const buf = await file.arrayBuffer()
+  const head = new Uint8Array(buf.slice(0, 4))
+  // xlsx 是 zip 包（PK 开头），当文本解析只会得到乱码
+  if (head[0] === 0x50 && head[1] === 0x4b) throw new Error('这是 Excel 工作簿（.xlsx），请在 Excel 里“另存为”CSV 后再上传')
+  // Excel 的“Unicode 文本”
+  if (head[0] === 0xff && head[1] === 0xfe) return new TextDecoder('utf-16le').decode(buf)
+  if (head[0] === 0xfe && head[1] === 0xff) return new TextDecoder('utf-16be').decode(buf)
   const utf8 = new TextDecoder('utf-8').decode(buf)
   // 出现替换字符说明不是 UTF-8，按 Excel 中文版默认的 GBK 再解一次
   return utf8.includes('�') ? new TextDecoder('gbk').decode(buf) : utf8
@@ -234,7 +250,13 @@ async function onFile(e) {
   if (!file) return
   reset()
   fileName.value = file.name
-  const table = parseCsv(await decode(file))
+  let table
+  try {
+    table = parseCsv(await decode(file))
+  } catch (err) {
+    parseErrors.value = [{ line: 1, code: '', message: err.message }]
+    return
+  }
   if (table.length < 2) {
     parseErrors.value = [{ line: 1, code: '', message: '文件里没有数据行（第 1 行应为表头）' }]
     return

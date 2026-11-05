@@ -23,7 +23,7 @@
                 <el-radio-button value="CLOSED">已关闭</el-radio-button>
                 <el-radio-button value="">全部</el-radio-button>
               </el-radio-group>
-              <el-select v-model="cf.category" placeholder="全部类别" clearable size="default">
+              <el-select aria-label="按类别筛选" v-model="cf.category" placeholder="全部类别" clearable size="default">
                 <el-option v-for="(v, k) in COMPLAINT_CATEGORY" :key="k" :value="k" :label="v" />
               </el-select>
               <el-input v-model="ct.keyword.value" placeholder="搜索编号、产品、批号、内容" clearable />
@@ -117,8 +117,8 @@
             <el-table-column prop="reason" label="原因" min-width="180" show-overflow-tooltip />
             <el-table-column label="进度" min-width="220">
               <template #default="{ row }">
-                <div class="prog"><span class="muted small">通知</span><el-progress :percentage="pctOf(row.notifiedCount, row.notices.length)" :stroke-width="8" :show-text="false" /><span class="mono small">{{ row.notifiedCount }}/{{ row.notices.length }}</span></div>
-                <div class="prog"><span class="muted small">回收</span><el-progress :percentage="pctOf(row.recoveredQty, row.shippedQty)" :stroke-width="8" :show-text="false" status="success" /><span class="mono small">{{ fmtQty(row.recoveredQty) }}/{{ fmtQty(row.shippedQty) }}</span></div>
+                <div class="prog"><span class="muted small">通知</span><el-progress aria-label="已通知客户比例" :percentage="pctOf(row.notifiedCount, row.notices.length)" :stroke-width="8" :show-text="false" /><span class="mono small">{{ row.notifiedCount }}/{{ row.notices.length }}</span></div>
+                <div class="prog"><span class="muted small">回收</span><el-progress aria-label="已回收数量比例" :percentage="pctOf(row.recoveredQty, row.shippedQty)" :stroke-width="8" :show-text="false" status="success" /><span class="mono small">{{ fmtQty(row.recoveredQty) }}/{{ fmtQty(row.shippedQty) }}</span></div>
               </template>
             </el-table-column>
             <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'OPEN' ? 'danger' : 'info'" size="small" disable-transitions>{{ row.statusLabel }}</el-tag></template></el-table-column>

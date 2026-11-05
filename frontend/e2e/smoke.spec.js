@@ -570,6 +570,60 @@ test('上线准备：批量导入首版配方，上线检查列出还缺什么',
   await expect(page.locator('.row').filter({ hasText: '成品配方' }).getByText('都已录入')).toBeVisible()
 })
 
+test('导入选错文件时说清楚：错表头、Excel 工作簿；分号分隔和 UTF-16 能读', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  await page.goto('/master')
+  await page.getByRole('tab', { name: 'BOM' }).click()
+  await page.getByRole('button', { name: '批量导入首版配方' }).click()
+  const d = dialog(page, '批量导入首版配方')
+  const input = d.locator('input[type=file]')
+  await input.setInputFiles({ name: 'wrong.csv', mimeType: 'text/csv', buffer: Buffer.from('甲,乙\r\n1,2\r\n') })
+  await expect(d.getByText(/表头缺少/)).toBeVisible()
+  await input.setInputFiles({ name: 'book.xlsx', mimeType: 'application/octet-stream', buffer: Buffer.from('PK\x03\x04这是工作簿') })
+  await expect(d.getByText(/Excel 工作簿/)).toBeVisible()
+  const row = 'FG-SER-001;RM-GLY-002;0.001;品牌供料'
+  await input.setInputFiles({ name: 'semi.csv', mimeType: 'text/csv', buffer: Buffer.from(`成品编码;物料编码;单耗;供料方式\r\n${row}\r\n`) })
+  await expect(d.getByText(/共 1 行/)).toBeVisible()
+  const u16 = Buffer.from(`\uFEFF成品编码\t物料编码\t单耗\t供料方式\r\n${row.replaceAll(';', '\t')}\r\n`, 'utf16le')
+  await input.setInputFiles({ name: 'unicode.txt', mimeType: 'text/plain', buffer: u16 })
+  await expect(d.getByText(/共 1 行/)).toBeVisible()
+})
+
+test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async ({ page }) => {
+  test.setTimeout(240000)
+  const audit = async (path) => {
+    await page.goto(path)
+    await page.waitForLoadState('networkidle').catch(() => {})
+    await page.waitForTimeout(150)
+    await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+    const bad = await page.evaluate(async () => {
+      const r = await window.axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+      return r.violations.map((v) => `${v.id} ×${v.nodes.length}：${v.nodes[0].target[0]}`)
+    })
+    expect(bad, path).toEqual([])
+  }
+  await page.goto('/login')
+  await page.evaluate(() => localStorage.clear())
+  await audit('/login')
+  await login(page, 'admin', 'Admin@123456')
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
+    '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
+  for (const p of pages) await audit(p)
+  // 深色单独算一遍对比度，抽业务最常用的几页
+  await page.emulateMedia({ colorScheme: 'dark' })
+  for (const p of ['/', '/purchase', '/stock', '/quality-events', '/qms']) await audit(p)
+  await page.emulateMedia({ colorScheme: 'light' })
+
+  await page.goto('/')
+  await page.waitForLoadState('networkidle').catch(() => {})
+  await page.keyboard.press('Tab')
+  await expect(page.locator(':focus')).toHaveText('总览')
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(/\/analytics/)
+  await expect(page.locator('nav [aria-current=page]')).toHaveText('经营看板')
+})
+
 test('门户账号进不了内部页面', async ({ page }) => {
   await login(page, 'dealer1')
   await expect(page).toHaveURL(/\/portal\/dealer/)

@@ -58,6 +58,15 @@
   --el-border-radius-base: 10px;
   --el-border-radius-small: 8px;
   --el-border-radius-round: 999px;
+  /* Element 默认的 #909399 / #a8abb2 在这个背景上对比度不到 3:1，说明文字和占位符看不清；按 WCAG AA（4.5:1）取值，算上渐变最深处 */
+  --el-text-color-secondary: #5f5a63;
+  --el-text-color-placeholder: #76707a;
+  /* 同理，默认的绿、橙、红做文字（状态标签、提示、表格里的差异）只有 2:1 左右。深色模式由 Element 的 html.dark 覆盖，不受影响 */
+  --el-color-success: #2b7017;
+  --el-color-warning: #8f5f00;
+  --el-color-danger: #c0272d;
+  --el-color-error: #c0272d;
+  --el-color-info: #5f5a63;
   --el-mask-color: rgba(255, 255, 255, 0.6);
   --el-overlay-color-lighter: rgba(40, 14, 28, 0.22);
 }
@@ -167,6 +176,7 @@ html.dark .el-dialog::after {
 .line-row { display: grid; grid-template-columns: 2fr 1fr auto; gap: 8px; align-items: center; margin-bottom: 8px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 16px; }
 .pager { display: flex; justify-content: flex-end; padding: 12px 4px 2px; }
+.pager .pager-size { width: 110px; margin: 0 12px; }
 .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .filters .el-input { width: 220px; }
 .filters .el-select { width: 150px; }
@@ -295,6 +305,17 @@ html.dark .el-dialog::after {
 .el-pagination.is-background .btn-next, .el-pagination.is-background .btn-prev, .el-pagination.is-background .el-pager li { border-radius: 10px; }
 .el-empty { --el-empty-padding: 28px 0; }
 .el-radio-button__inner { background: var(--lg-fill); }
+/* 深色主题的主色偏亮，选中项上的白字只有 2.95:1，换成深色字 */
+html.dark .el-radio-button { --el-radio-button-checked-text-color: #2a1018; }
+html.dark .el-pagination.is-background .el-pager li.is-active { color: #2a1018; }
+html.dark .el-tag--dark { --el-tag-text-color: #2a1018; }
+html.dark .el-button--primary:not(.is-plain):not(.is-text):not(.is-link),
+html.dark .el-button--danger:not(.is-plain):not(.is-text):not(.is-link),
+html.dark .el-button--success:not(.is-plain):not(.is-text):not(.is-link),
+html.dark .el-button--warning:not(.is-plain):not(.is-text):not(.is-link) {
+  --el-button-text-color: #2a1018; --el-button-hover-text-color: #2a1018; --el-button-active-text-color: #2a1018;
+  --el-button-disabled-text-color: #2a1018;
+}
 .el-alert { border-radius: 14px; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
 
 /* ---------- 退化：不支持模糊或用户要求降低透明度 ---------- */

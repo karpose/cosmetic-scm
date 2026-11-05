@@ -99,7 +99,7 @@
         <el-card shadow="never">
           <template #header>
             <div class="ph">
-              <el-select id="rt-fg" v-model="rt.fgItemId" placeholder="选择成品" filterable style="width:min(320px, 100%)" @change="loadRouting">
+              <el-select aria-label="选择成品" id="rt-fg" v-model="rt.fgItemId" placeholder="选择成品" filterable style="width:min(320px, 100%)" @change="loadRouting">
                 <el-option v-for="f in rd.finished.value" :key="f.id" :value="f.id" :label="`${f.code} ${f.name}`" />
               </el-select>
               <span class="muted small">自产工单发料时按这里生成批生产记录；之后修改不影响已发料的单子。委托生产不用这张表。</span>
@@ -118,8 +118,8 @@
                 <el-input v-model="s.instruction" :disabled="!canRoute" placeholder="操作要求（选填）" maxlength="500" />
                 <div class="srow">
                   <el-input v-model="s.ipcName" :disabled="!canRoute" placeholder="过程检验项目（选填）" style="flex:1 1 160px" maxlength="60" />
-                  <el-input-number v-model="s.ipcMin" :disabled="!canRoute" :controls="false" placeholder="下限" style="width:90px" />
-                  <el-input-number v-model="s.ipcMax" :disabled="!canRoute" :controls="false" placeholder="上限" style="width:90px" />
+                  <el-input-number aria-label="过程检验下限" v-model="s.ipcMin" :disabled="!canRoute" :controls="false" placeholder="下限" style="width:90px" />
+                  <el-input-number aria-label="过程检验上限" v-model="s.ipcMax" :disabled="!canRoute" :controls="false" placeholder="上限" style="width:90px" />
                   <el-input v-model="s.ipcUnit" :disabled="!canRoute" placeholder="单位" style="width:70px" maxlength="20" />
                 </div>
               </div>
@@ -144,11 +144,11 @@
       <el-form label-position="top" @submit.prevent>
         <el-form-item label="变更内容和原因"><el-input id="dr-note" v-model="dr.changeNote" type="textarea" :rows="2" maxlength="500" show-word-limit /></el-form-item>
         <div v-for="(l, i) in dr.lines" :key="i" class="bom-row">
-          <el-select v-model="l.itemId" placeholder="选择物料" filterable @change="check">
+          <el-select aria-label="物料" v-model="l.itemId" placeholder="选择物料" filterable @change="check">
             <el-option v-for="m in rd.materials.value" :key="m.id" :value="m.id" :label="`${m.code} ${m.name}${m.banned ? '（禁用）' : ''}`" />
           </el-select>
-          <el-input-number v-model="l.qtyPer" :min="0" :precision="6" :controls="false" placeholder="每件单耗" @change="check" />
-          <el-select v-model="l.supplyMode"><el-option value="BRAND" label="品牌供料" /><el-option value="OEM" label="工厂代采" /></el-select>
+          <el-input-number aria-label="每件单耗" v-model="l.qtyPer" :min="0" :precision="6" :controls="false" placeholder="每件单耗" @change="check" />
+          <el-select aria-label="供料方式" v-model="l.supplyMode"><el-option value="BRAND" label="品牌供料" /><el-option value="OEM" label="工厂代采" /></el-select>
           <el-button text :disabled="dr.lines.length === 1" @click="dr.lines.splice(i, 1); check()">删除</el-button>
         </div>
         <el-button size="small" @click="dr.lines.push({ itemId: null, qtyPer: null, supplyMode: 'BRAND' })">添加一行</el-button>

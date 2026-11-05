@@ -11,7 +11,7 @@
       <template #header>
         <div class="filters">
           <el-input v-model="t.keyword.value" placeholder="搜索账号、姓名或所属单位" clearable />
-          <el-select v-model="role" placeholder="全部角色" clearable>
+          <el-select aria-label="按角色筛选" v-model="role" placeholder="全部角色" clearable>
             <el-option v-for="(v, k) in ROLE_LABELS" :key="k" :value="k" :label="v" />
           </el-select>
         </div>

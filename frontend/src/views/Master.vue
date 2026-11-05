@@ -16,7 +16,7 @@
         <el-tab-pane label="物料" name="items">
           <div class="filters pad">
             <el-input v-model="it.keyword.value" placeholder="搜索编码、名称、INCI、备案编号" clearable />
-            <el-select v-model="itemType" placeholder="全部类型" clearable>
+            <el-select aria-label="按类型筛选" v-model="itemType" placeholder="全部类型" clearable>
               <el-option v-for="(v, k) in ITEM_TYPE" :key="k" :value="k" :label="v" />
             </el-select>
           </div>
@@ -50,7 +50,7 @@
         <el-tab-pane label="往来单位" name="partners">
           <div class="filters pad">
             <el-input v-model="pt.keyword.value" placeholder="搜索编码、名称、资质编号" clearable />
-            <el-select v-model="partnerKind" placeholder="全部类别" clearable>
+            <el-select aria-label="按类别筛选" v-model="partnerKind" placeholder="全部类别" clearable>
               <el-option v-for="(v, k) in PARTNER_KIND" :key="k" :value="k" :label="v" />
             </el-select>
           </div>
@@ -228,11 +228,11 @@
     <el-dialog v-model="bom.visible" :title="`录入首版配方：${bom.fgName}`" width="760px">
       <p class="muted small" style="margin-top:0">单耗按物料单位填写（原料通常为 kg/件）。保存前系统会校验禁用原料和限用原料的浓度上限。首版保存后立即生效；之后的修改要在“配方与备案”发起变更，经质量安全负责人签批。</p>
       <div v-for="(l, i) in bom.lines" :key="i" class="bom-row">
-        <el-select :id="`bom-item-${i}`" v-model="l.itemId" placeholder="选择物料" filterable @change="checkBom">
+        <el-select aria-label="物料" :id="`bom-item-${i}`" v-model="l.itemId" placeholder="选择物料" filterable @change="checkBom">
           <el-option v-for="m in rd.materials.value" :key="m.id" :value="m.id" :label="`${m.code} ${m.name}${m.banned ? '（禁用）' : ''}`" />
         </el-select>
-        <el-input-number :id="`bom-qty-${i}`" v-model="l.qtyPer" :min="0" :precision="6" :controls="false" placeholder="每件单耗" @change="checkBom" />
-        <el-select :id="`bom-sup-${i}`" v-model="l.supplyMode">
+        <el-input-number aria-label="每件单耗" :id="`bom-qty-${i}`" v-model="l.qtyPer" :min="0" :precision="6" :controls="false" placeholder="每件单耗" @change="checkBom" />
+        <el-select aria-label="供料方式" :id="`bom-sup-${i}`" v-model="l.supplyMode">
           <el-option value="BRAND" label="品牌供料" /><el-option value="OEM" label="工厂代采" />
         </el-select>
         <el-button text :disabled="bom.lines.length === 1" @click="bom.lines.splice(i, 1); checkBom()">删除</el-button>

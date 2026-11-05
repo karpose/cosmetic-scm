@@ -37,6 +37,7 @@ import com.cosmetic.scm.inventory.InventoryService;
 import com.cosmetic.scm.master.Item;
 import com.cosmetic.scm.master.MasterLookup;
 import com.cosmetic.scm.master.Partner;
+import com.cosmetic.scm.master.PartnerRepository;
 import com.cosmetic.scm.master.Warehouse;
 import com.cosmetic.scm.recall.Recall;
 import com.cosmetic.scm.recall.RecallRepository;
@@ -64,6 +65,7 @@ public class ReturnService {
     private final SalesOrderRepository salesOrders;
     private final SoAllocationRepository allocations;
     private final RecallRepository recalls;
+    private final PartnerRepository partners;
     private final BatchRepository batches;
     private final InventoryService inventory;
     private final MasterLookup lookup;
@@ -138,7 +140,9 @@ public class ReturnService {
 
     @Transactional
     public ReturnView create(ReturnReq req) {
-        Partner customer = lookup.partner(req.customerId());
+        // 同一客户的退货逐张办理：可退量是“已发 - 已退”算出来的，不锁的话同时退会各退一遍，凭空多出库存。
+        // 必须是事务里第一句：MySQL 可重复读下，锁之前有过普通查询的话，后面读不到别人刚提交的退货
+        Partner customer = partners.lockById(req.customerId()).orElseThrow(() -> BizException.notFound("往来单位"));
         if (customer.getKind() != PartnerKind.CUSTOMER) {
             throw new BizException(customer.getName() + " 不是客户");
         }
@@ -148,7 +152,8 @@ public class ReturnService {
         }
         Recall recall = null;
         if (req.recallId() != null) {
-            recall = recalls.findById(req.recallId()).orElseThrow(() -> BizException.notFound("召回"));
+            // 锁住召回：不能在关闭的同时再入库回收，否则关闭时写的回收数量就不对了
+            recall = recalls.lockById(req.recallId()).orElseThrow(() -> BizException.notFound("召回"));
             if (recall.getStatus() != CaseStatus.OPEN) {
                 throw new BizException("召回 " + recall.getRecallNo() + " 已关闭");
             }

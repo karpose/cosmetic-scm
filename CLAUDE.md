@@ -37,6 +37,7 @@ cp .env.example .env && docker compose up -d --build
 - 表结构只由 Flyway 管理（`ddl-auto: none`）。改表新增 `V{n}__xxx.sql`，**绝不修改已有迁移脚本**。SQL 需同时兼容 MySQL 8 和 H2 MySQL 模式。
 - 前端 `frontend/src/`：Vue 3 `<script setup>` + Element Plus，JavaScript（非 TS）。接口统一走 `src/api.js`（自动带 JWT，错误统一 `ElMessage` 提示，`{ silent: true }` 可静默）。主数据下拉用 `utils/refdata.js` 的 `useRefData()`。列表筛选 + 分页统一用 `utils/table.js` 的 `usePaged()` 和 `components/ListPager.vue`，加载失败用 `LoadError.vue`。
 - 样式是 Liquid Glass：设计变量和 Element Plus 换皮都在 `src/styles.css`（`--lg-*` 变量、`.glass` 原语）。新页面直接用 `el-card` / `.glass`，不要写死背景色；颜色用变量，深浅色都要能看。
+- 无障碍：冒烟测试用 axe 查 WCAG A/AA，新页面要能过。不在带 label 的 `el-form-item` 里的 `el-select`、`el-input-number`、`el-progress` 要写 `aria-label`（占位文字不算名称）；表格可能滚动又没有可聚焦内容时加 `scrollbar-tabindex="0"`。文字色用 `--el-text-color-*` 和 `--el-color-*`（浅色已调到 4.5:1），不要写死 Element 默认色。axe 判断不了半透明和渐变背景，改颜色时要另外算。侧栏是 `<nav>` + 真实链接，不是 `el-menu`。
 
 ## 必须保持的规则
 
@@ -47,6 +48,7 @@ cp .env.example .env && docker compose up -d --build
 - 成品上市放行接口只授予 `QSO` 角色（管理员也不行）；放行、拒收、冻结、解冻都通过 `SignatureService.verify` 要求再次输入密码。
 - 召回发起 / 关闭只授予 `QSO`；发起时冻结批次并按出库记录逐客户生成通知，所有客户通知后才能关闭。不良反应投诉未登记上报不能关闭。报废、退货处置须 QA / QSO 签批。
 - 单据状态流转必须先锁行再判断状态（各 Repository 的 `lockById`，只在写事务里用，读事务里 FOR UPDATE 在 MySQL 上会报错）。检查和修改之间不加锁，连点按钮就会重复入库，实测过。出库和发料用 `InventoryService.allocateForUpdate`，预览用 `allocate`。库存行加锁走 `lockStock`：实体已载入时直接用锁查询，Hibernate 会因版本不同报冲突。
+- “算出来才知道能不能做”的操作（退货可退量 = 已发 - 已退、同批次只能有一个进行中的召回）没有单据可锁，要锁它们依赖的行（客户、批次），而且必须是事务里第一条语句：MySQL 可重复读下，锁之前有过普通查询，之后读不到别人刚提交的数据。出库失败回滚后另开事务写“失败”时也要重新锁并判断状态，不能盖掉同时发生的取消。
 - MySQL 的 `DATETIME` 会把小数秒四舍五入（H2 不同）。要和令牌 iat 比较的时间（`passwordChangedAt`）必须先截断到整秒，曾因此让一半用户改密后被踢出。
 - 令牌只证明身份，角色每次从数据库读（`DbJwtAuthenticationConverter`），不要往令牌里加权限判断。改密后旧令牌失效，改密接口返回新令牌。
 - 列表和统计不能靠“最近 N 条”做判断（曾因此漏掉最老的临期批次）。不要 `findAll` 全表：用分组或专门的查询。看板、补货建议的短时缓存在 Controller 层（`ShortCache`），测试和开发环境 ttl 为 0。
@@ -80,7 +82,7 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-04）
 
-- 后端 `mvn clean test` 96 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 22 项全部通过；GitHub Actions 在 PR 上跑这三项。
+- 后端 `mvn clean test` 110 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 24 项全部通过（含 axe 无障碍检查）；GitHub Actions 在 PR 上跑这三项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
 - 已完成：一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。

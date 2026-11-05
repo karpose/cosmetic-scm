@@ -291,6 +291,8 @@ mvn test
 
 ### 冒烟测试（Playwright）
 
+其中一项用 axe 查全部页面的 WCAG A/AA（深色抽查常用页面）。axe 判断不了半透明和渐变背景上的对比度，改颜色时要另外算。
+
 ```bash
 cd frontend
 npx playwright install chromium   # 首次运行前装浏览器

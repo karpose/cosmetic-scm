@@ -26,7 +26,7 @@
         </div>
       </template>
       <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
-      <el-table v-else :data="t.paged.value" v-loading="loader.loading.value" empty-text="还没有库存作业单">
+      <el-table scrollbar-tabindex="0" v-else :data="t.paged.value" v-loading="loader.loading.value" empty-text="还没有库存作业单">
         <el-table-column label="单号" width="150"><template #default="{ row }"><span class="mono">{{ row.docNo }}</span></template></el-table-column>
         <el-table-column label="类型" width="100"><template #default="{ row }"><StatusTag :status="row.docType" :label="row.docTypeLabel" /></template></el-table-column>
         <el-table-column label="仓库" min-width="160">
@@ -80,7 +80,7 @@
             <el-table-column label="账面" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span></template></el-table-column>
             <el-table-column label="实盘" width="150">
               <template #default="{ row }">
-                <el-input-number v-model="counted[row.batchId]" :min="0" :controls="false" size="small" style="width:100%" />
+                <el-input-number aria-label="实盘数量" v-model="counted[row.batchId]" :min="0" :controls="false" size="small" style="width:100%" />
               </template>
             </el-table-column>
             <el-table-column label="差异" width="100" align="right">

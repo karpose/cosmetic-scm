@@ -11,7 +11,7 @@
       <template #header>
         <div class="filters">
           <el-input id="au-q" v-model="q" placeholder="按批号、单号、操作或账号搜索（回车查询）" clearable style="width:300px" @change="load" />
-          <el-select v-model="action" placeholder="全部操作" clearable filterable>
+          <el-select aria-label="按操作筛选" v-model="action" placeholder="全部操作" clearable filterable>
             <el-option v-for="a in actions" :key="a" :value="a" :label="a" />
           </el-select>
           <el-date-picker v-model="dates" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" style="width:260px;flex:none" @change="load" />

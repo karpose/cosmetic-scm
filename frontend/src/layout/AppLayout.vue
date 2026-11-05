@@ -6,22 +6,28 @@
         <span v-if="!collapsed" class="name">批次主线系统</span>
       </div>
       <el-scrollbar class="nav-scroll">
-        <el-menu :default-active="activePath" router :collapse="collapsed" class="menu">
-          <template v-for="g in groups" :key="g.title">
-            <el-menu-item-group :title="collapsed ? '' : g.title">
-              <el-menu-item v-for="m in g.items" :key="m.path" :index="m.path">
-                <el-icon><component :is="m.icon" /></el-icon>
-                <template #title>{{ m.title }}</template>
-              </el-menu-item>
-            </el-menu-item-group>
-          </template>
-        </el-menu>
+        <!-- 侧栏是页面导航，用真实链接：能用 Tab 走、能在新标签页打开，读屏也能念出当前页 -->
+        <nav class="menu" aria-label="主导航">
+          <section v-for="g in groups" :key="g.title" class="menu-group">
+            <h2 v-if="!collapsed" class="menu-title">{{ g.title }}</h2>
+            <ul>
+              <li v-for="m in g.items" :key="m.path">
+                <el-tooltip :content="m.title" placement="right" :disabled="!collapsed" :show-after="150">
+                  <router-link :to="m.path" class="menu-link" :class="{ active: activePath === m.path }" :aria-label="collapsed ? m.title : undefined">
+                    <el-icon :size="18" aria-hidden="true"><component :is="m.icon" /></el-icon>
+                    <span v-if="!collapsed" class="menu-text">{{ m.title }}</span>
+                  </router-link>
+                </el-tooltip>
+              </li>
+            </ul>
+          </section>
+        </nav>
       </el-scrollbar>
     </aside>
 
     <div class="body">
       <header class="header glass">
-        <el-button text :icon="collapsed ? Expand : Fold" @click="collapsed = !collapsed" aria-label="折叠菜单" />
+        <el-button text :icon="collapsed ? Expand : Fold" @click="collapsed = !collapsed" :aria-label="collapsed ? '展开菜单' : '折叠菜单'" :aria-expanded="!collapsed" />
         <span class="title">{{ $route.meta.title }}</span>
         <span class="spacer" />
         <el-dropdown v-if="auth.user" trigger="click" @command="onCommand">
@@ -177,22 +183,24 @@ async function changePassword() {
 .name { font-weight: 700; white-space: nowrap; letter-spacing: -0.01em; }
 .nav-scroll { flex: 1; min-height: 0; }
 
-.menu {
-  --el-menu-bg-color: transparent;
-  --el-menu-hover-bg-color: var(--lg-fill-hover);
-  --el-menu-item-height: 42px;
-  --el-menu-base-level-padding: 14px;
-  border-right: 0; padding: 0 10px 12px;
+.menu { padding: 0 10px 12px; }
+.collapsed .menu { padding: 0 8px 12px; }
+.collapsed .menu-group + .menu-group { margin-top: 10px; }
+.menu ul { list-style: none; margin: 0; padding: 0; }
+.menu-title { margin: 0; padding: 14px 0 6px 14px; font-size: 11.5px; font-weight: 500; line-height: 20px; letter-spacing: .04em; color: var(--el-text-color-secondary); }
+.menu-link {
+  display: flex; align-items: center; gap: 10px; height: 42px; margin: 2px 0; padding: 0 14px; box-sizing: border-box;
+  border-radius: 12px; font-size: 14px; white-space: nowrap; text-decoration: none; color: var(--el-text-color-primary);
+  transition: background .2s ease, color .2s ease;
 }
-.menu.el-menu--collapse { width: 100%; padding: 0 8px 12px; }
-.menu :deep(.el-menu-item-group__title) { padding: 14px 0 6px 14px !important; font-size: 11.5px; letter-spacing: .04em; color: var(--el-text-color-secondary); }
-.menu :deep(.el-menu-item) { border-radius: 12px; margin: 2px 0; transition: background .2s ease, color .2s ease; }
-.menu :deep(.el-menu-item.is-active) {
+.menu-link:hover { background: var(--lg-fill-hover); }
+.menu-link:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: -2px; }
+.menu-link.active {
   color: var(--el-color-primary); font-weight: 600;
   background: var(--lg-surface-pop);
   box-shadow: var(--lg-highlight), 0 4px 12px -6px rgba(88, 28, 58, .25);
 }
-.menu.el-menu--collapse :deep(.el-menu-item) { justify-content: center; padding: 0 !important; }
+.collapsed .menu-link { justify-content: center; padding: 0; }
 
 .body { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: var(--gap); }
 .header { display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 12px 0 8px; flex: none; border-radius: 18px; background: var(--lg-surface-raised); }
