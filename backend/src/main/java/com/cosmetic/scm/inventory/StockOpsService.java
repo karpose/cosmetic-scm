@@ -1,5 +1,6 @@
 package com.cosmetic.scm.inventory;
 
+import com.cosmetic.scm.common.Qty;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -54,10 +55,10 @@ public class StockOpsService {
     private final TimeProvider time;
     private final CurrentUser currentUser;
 
-    public record QtyLineReq(@NotNull Long batchId, @NotNull @Positive BigDecimal qty) {
+    public record QtyLineReq(@NotNull Long batchId, @NotNull @Positive @Qty BigDecimal qty) {
     }
 
-    public record CountLineReq(@NotNull Long batchId, @NotNull @PositiveOrZero BigDecimal countedQty) {
+    public record CountLineReq(@NotNull Long batchId, @NotNull @PositiveOrZero @Qty BigDecimal countedQty) {
     }
 
     public record TransferReq(@NotNull Long fromWarehouseId, @NotNull Long toWarehouseId,

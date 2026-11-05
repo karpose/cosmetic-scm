@@ -1,5 +1,6 @@
 package com.cosmetic.scm.oemportal;
 
+import com.cosmetic.scm.common.Qty;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
@@ -59,10 +60,10 @@ public class OemPortalService {
 
     public record MaterialReq(@NotNull Long itemId,
                               @NotBlank(message = "请填写代采原料批号") @Size(max = 60) String extBatchNo,
-                              @NotNull @Positive BigDecimal qty) {
+                              @NotNull @Positive @Qty BigDecimal qty) {
     }
 
-    public record ReportReq(@NotNull @Positive BigDecimal actualQty,
+    public record ReportReq(@NotNull @Positive @Qty BigDecimal actualQty,
                             @NotNull(message = "请选择生产日期") LocalDate mfgDate,
                             @NotBlank(message = "请填写受托厂成品批号") @Size(max = 60) String extBatchNo,
                             @NotBlank(message = "请填写出厂检验报告编号") @Size(max = 60) String releaseReportNo,

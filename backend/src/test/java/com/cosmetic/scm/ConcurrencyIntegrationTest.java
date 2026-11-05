@@ -248,6 +248,22 @@ class ConcurrencyIntegrationTest {
         assertThat(after).isEqualByComparingTo(available.subtract(each.multiply(BigDecimal.valueOf(THREADS))));
     }
 
+    @Autowired com.cosmetic.scm.inventory.StockTxnRepository txns;
+
+    /** 每个用例之后都对账：任何一个批次、仓库的库存余额都必须等于流水合计。第一个用例之后同时覆盖示例数据的所有流程。 */
+    @org.junit.jupiter.api.AfterEach
+    void stockAlwaysEqualsItsLedger() {
+        java.util.Map<String, BigDecimal> ledger = new java.util.HashMap<>();
+        txns.findAll().forEach(t -> ledger.merge(t.getBatchId() + "/" + t.getWarehouseId(), t.getQtyDelta(), BigDecimal::add));
+        stocks.findAll().forEach(s -> {
+            BigDecimal posted = ledger.remove(s.getBatchId() + "/" + s.getWarehouseId());
+            assertThat(posted == null ? BigDecimal.ZERO : posted).as("批次 %d 仓库 %d 的流水合计", s.getBatchId(), s.getWarehouseId())
+                    .isEqualByComparingTo(s.getQty());
+        });
+        // 有流水却没有库存行：合计必须是 0
+        ledger.forEach((k, v) -> assertThat(v).as("没有库存行的 %s", k).isEqualByComparingTo(BigDecimal.ZERO));
+    }
+
     // ---------- 下面的用例各用一个新建的成品，互相不影响 ----------
 
     private final java.util.concurrent.atomic.AtomicInteger seq = new java.util.concurrent.atomic.AtomicInteger();

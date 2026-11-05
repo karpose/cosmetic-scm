@@ -1,5 +1,6 @@
 package com.cosmetic.scm.mes;
 
+import com.cosmetic.scm.common.Qty;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -62,8 +63,8 @@ public class MesService {
                                  @Size(max = 500) String instruction,
                                  boolean critical,
                                  @Size(max = 60) String ipcName,
-                                 BigDecimal ipcMin,
-                                 BigDecimal ipcMax,
+                                 @Qty BigDecimal ipcMin,
+                                 @Qty BigDecimal ipcMax,
                                  @Size(max = 20) String ipcUnit,
                                  boolean requiresEquipment) {
 
@@ -89,7 +90,7 @@ public class MesService {
                                @NotBlank(message = "请输入签批密码") String password) {
     }
 
-    public record StepReq(BigDecimal ipcValue, @Size(max = 500) String note, Long equipmentId) {
+    public record StepReq(@Qty BigDecimal ipcValue, @Size(max = 500) String note, Long equipmentId) {
 
         public StepReq(BigDecimal ipcValue, String note) {
             this(ipcValue, note, null);

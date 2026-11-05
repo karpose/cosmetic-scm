@@ -2,6 +2,10 @@ server:
   port: 8080
 
 spring:
+  web:
+    # 校验提示固定用中文，不随浏览器语言变化
+    locale: zh_CN
+    locale-resolver: fixed
   application:
     name: cosmetic-scm
   profiles:

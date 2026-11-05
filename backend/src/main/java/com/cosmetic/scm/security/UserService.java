@@ -172,13 +172,25 @@ public class UserService {
             }
         }
         Long partnerId = checkRoles(req.roles(), req.partnerId());
+        Map<String, Object> before = userFields(u);
         u.setDisplayName(req.displayName());
         u.setEmail(req.email() == null || req.email().isBlank() ? null : req.email().trim());
         u.setEnabled(req.enabled());
         u.setRoles(EnumSet.copyOf(req.roles()));
         u.setPartnerId(partnerId);
-        audit.log("修改账号", u.getUsername(), "启用=" + req.enabled() + "，角色 " + u.getRoles() + describePartner(partnerId));
+        String changes = com.cosmetic.scm.common.FieldDiff.of(before, userFields(u));
+        audit.log("修改账号", u.getUsername(), changes.isEmpty() ? "内容没有变化" : changes);
         return view(u);
+    }
+
+    private Map<String, Object> userFields(AppUser u) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("姓名", u.getDisplayName());
+        m.put("邮箱", u.getEmail());
+        m.put("启用", u.isEnabled());
+        m.put("角色", u.getRoles().stream().map(Role::getLabel).sorted().collect(Collectors.joining("、")));
+        m.put("所属单位", u.getPartnerId() == null ? null : partners.findById(u.getPartnerId()).map(Partner::getName).orElse("?"));
+        return m;
     }
 
     @Transactional

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import http, { TOKEN_KEY } from '../api'
+import { session } from '../utils/session'
 
 export const ROLE_LABELS = {
   ADMIN: '系统管理员',
@@ -40,9 +41,11 @@ export const useAuth = defineStore('auth', {
       this.token = resp.token
       this.user = resp.user
       localStorage.setItem(TOKEN_KEY, resp.token)
+      session.active = true
     },
     async fetchMe() {
       this.user = await http.get('/auth/me', { silent: true })
+      session.active = true
     },
     async changePassword(oldPassword, newPassword) {
       // 改密后旧令牌失效，换用接口返回的新令牌
@@ -55,6 +58,8 @@ export const useAuth = defineStore('auth', {
       this.token = null
       this.user = null
       localStorage.removeItem(TOKEN_KEY)
+      session.active = false
+      session.expired = false
     }
   }
 })

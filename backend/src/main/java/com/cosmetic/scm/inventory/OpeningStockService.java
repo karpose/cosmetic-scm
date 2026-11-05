@@ -1,5 +1,6 @@
 package com.cosmetic.scm.inventory;
 
+import com.cosmetic.scm.common.Qty;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -84,7 +85,7 @@ public class OpeningStockService {
                              @NotNull(message = "请填写生产日期") LocalDate mfgDate,
                              LocalDate expDate,
                              @NotBlank(message = "请填写仓库编码") @Size(max = 40) String warehouseCode,
-                             @NotNull(message = "请填写数量") @Positive(message = "数量要大于 0") BigDecimal qty,
+                             @NotNull(message = "请填写数量") @Positive(message = "数量要大于 0") @Qty BigDecimal qty,
                              @NotNull(message = "请填写状态") BatchStatus status,
                              @Size(max = 40) String partnerCode,
                              @Size(max = 60) String reportNo,

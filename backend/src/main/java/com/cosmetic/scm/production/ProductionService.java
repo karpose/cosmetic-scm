@@ -1,5 +1,6 @@
 package com.cosmetic.scm.production;
 
+import com.cosmetic.scm.common.Qty;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
@@ -92,15 +93,15 @@ public class ProductionService {
     private final CurrentUser currentUser;
 
     public record CreateMoReq(@NotNull Long factoryId, @NotNull Long fgItemId,
-                              @NotNull @Positive BigDecimal plannedQty, LocalDate plannedDate) {
+                              @NotNull @Positive @Qty BigDecimal plannedQty, LocalDate plannedDate) {
     }
 
     public record ExtMaterialReq(@NotNull Long itemId,
                                  @NotBlank(message = "请填写受托厂原料批号") @Size(max = 60) String extBatchNo,
-                                 @NotNull @Positive BigDecimal qty) {
+                                 @NotNull @Positive @Qty BigDecimal qty) {
     }
 
-    public record CompleteReq(@NotNull @Positive BigDecimal actualQty,
+    public record CompleteReq(@NotNull @Positive @Qty BigDecimal actualQty,
                               LocalDate mfgDate,
                               @Size(max = 60) String extBatchNo,
                               @NotNull Long warehouseId,
