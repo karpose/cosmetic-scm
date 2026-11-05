@@ -1,5 +1,6 @@
 package com.cosmetic.scm.salesreturn;
 
+import com.cosmetic.scm.common.Qty;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -74,7 +75,7 @@ public class ReturnService {
     private final TimeProvider time;
     private final CurrentUser currentUser;
 
-    public record ReturnLineReq(@NotNull Long batchId, @NotNull @Positive BigDecimal qty) {
+    public record ReturnLineReq(@NotNull Long batchId, @NotNull @Positive @Qty BigDecimal qty) {
     }
 
     public record ReturnReq(@NotNull(message = "请选择客户") Long customerId,

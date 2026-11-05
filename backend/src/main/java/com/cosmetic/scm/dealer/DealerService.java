@@ -1,5 +1,6 @@
 package com.cosmetic.scm.dealer;
 
+import com.cosmetic.scm.common.Qty;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -83,7 +84,7 @@ public class DealerService {
     private final TimeProvider time;
     private final CurrentUser currentUser;
 
-    public record LineReq(@NotNull Long itemId, @NotNull @Positive BigDecimal qty) {
+    public record LineReq(@NotNull Long itemId, @NotNull @Positive @Qty BigDecimal qty) {
     }
 
     public record OrderReq(LocalDate requestedDate, @Size(max = 300) String note,

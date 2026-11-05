@@ -1,5 +1,6 @@
 package com.cosmetic.scm.sales;
 
+import com.cosmetic.scm.common.Qty;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -57,7 +58,7 @@ public class SalesService {
     private final TimeProvider time;
     private final CurrentUser currentUser;
 
-    public record SoLineReq(@NotNull Long itemId, @NotNull @Positive BigDecimal qty) {
+    public record SoLineReq(@NotNull Long itemId, @NotNull @Positive @Qty BigDecimal qty) {
     }
 
     public record SoReq(@NotNull Long customerId, @NotNull Long warehouseId,

@@ -43,7 +43,7 @@ cp .env.example .env && docker compose up -d --build
 ## 必须保持的规则
 
 - 库存只能通过 `InventoryService.change/consume` 修改：行锁 + 不允许负数 + 每次写 `stock_txn` 流水。
-- 所有业务写操作在一个 `@Transactional` 方法里完成，并在同一事务里调用 `AuditService.log`。审计日志只增不改，不提供修改 / 删除接口。
+- 所有业务写操作在一个 `@Transactional` 方法里完成，并在同一事务里调用 `AuditService.log`。审计日志只增不改，不提供修改 / 删除接口。修改主数据和账号要记录修改前后的值（`common/FieldDiff`），只记“修改了物料”事后查不出改了什么。新字段记得加进 `itemFields` / `partnerFields` / `userFields`。
 - 单号、批号由 `DocNoService.next(prefix, date)` 生成（必须在事务内）。
 - FEFO 分配只取 `RELEASED` 批次；出库时再次确认批次状态（防止分配后被冻结）。退货隔离区（`WarehouseKind.RETURN`）的库存永远不参与分配，只能走退货处置。
 - 成品上市放行接口只授予 `QSO` 角色（管理员也不行）；放行、拒收、冻结、解冻都通过 `SignatureService.verify` 要求再次输入密码。
@@ -68,7 +68,7 @@ cp .env.example .env && docker compose up -d --build
 - 现有库存只能走期初导入（`OpeningStockService`，来源 `SourceType.OPEN`，流水 `OPENING`），不要造采购单或生产单。已放行的批次写放行记录，成品写留样，所以只给 QSO 并要签批。行上不加 `@Valid`，缺字段要按 Excel 行号报。
 - 工序勾了“须记录设备”时，`MesService.recordStep` 用 `EquipmentService.unusableReason` 校验；校准不合格的处理在 `EquipmentService.calibrate`，设备停用并生成偏差。
 - 导出（`ReportService`）必须用 `listAll` 类查询，不能用页面的 Top300 查询；超过 `MAX_ROWS` 报错，不截断。页面列表到上限时用 `ListCapHint` 提示。
-- 登录失败计数要落库，`LoginService.login` 对 BizException 不回滚；密码规则统一走 `PasswordPolicy`。
+- 登录失败计数要落库，`LoginService.login` 对 BizException 不回滚；密码规则统一走 `PasswordPolicy`。 登录成功、失败和锁定都写审计，这时还没有登录身份，用 `AuditService.logAs`。
 - 委托生产完工前必须确认受托厂已出厂放行；实际产量超出计划 95%–102% 必须填物料平衡说明；上市放行必须登记留样，保存期 = 有效期 + 6 个月。
 - 供应商 / 受托厂不在合格名录或资质过期，不能下单；禁用原料不能采购、不能进 BOM；限用原料按净含量校验浓度上限。
 - 示例数据只通过业务服务写入（`DemoDataLoader`），日期相对“今天”生成，名称带“（示例）”。
@@ -76,6 +76,9 @@ cp .env.example .env && docker compose up -d --build
 ## 代码约定
 
 - 面向用户的错误用 `BizException`，消息写中文、说清怎么改；不要把异常堆栈返回前端。
+- 录入的数量加 `@Qty`（DECIMAL(18,4)，超出小数位数据库会悄悄四舍五入，0.00001 会存成 0），其它小数用 `@Digits` 对齐列定义。`@Size` 不能超过实际写入的列宽，一个字段写进多张表时按最短的算（备案编号曾因此报错）。校验默认提示靠 `GlobalExceptionHandler.FIELD_LABELS` 翻译字段名，新字段要加；注解写了中文 message 的直接显示。
+- 前端日期用 `utils/format.js` 的 `today()`、`daysFromToday()`，不要用 `toISOString`：它按 UTC 算，北京时间早上 8 点前会少一天。
+- 令牌失效时前端不跳转登录页，由 `ReloginDialog` 就地要求输入密码（默认 12 小时过期，跳走会丢掉正在填的表单）。登录请求不能带令牌，失效令牌会让登录直接 401。
 - DTO 用 Java record，放在对应 Service 或 `XxxDtos` 里；请求参数用 jakarta validation 注解。
 - 金额 / 数量一律 `BigDecimal`，比较用 `compareTo`；数据库数量列 DECIMAL(18,4)，计算需求量时 `setScale(4, RoundingMode.UP)`。
 - 时间取 `TimeProvider.today()/now()`（Asia/Shanghai），不要直接 `LocalDate.now()`。
@@ -83,7 +86,7 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-05）
 
-- 后端 `mvn clean test` 111 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 26 项全部通过（含 axe 无障碍和手机宽度检查）；GitHub Actions 在 PR 上跑这三项。
+- 后端 `mvn clean test` 119 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 28 项全部通过（含 axe 无障碍和手机宽度检查）；GitHub Actions 在 PR 上跑这三项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
 - 已完成：一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。

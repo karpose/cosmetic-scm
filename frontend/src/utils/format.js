@@ -25,6 +25,14 @@ export function pct(ratio) {
   return ratio === null || ratio === undefined ? '—' : `${Math.round(ratio * 100)}%`
 }
 
+/** n 天后的本地日期。不要用 toISOString：它按 UTC 算，北京时间早上 8 点前会少一天。 */
+export function daysFromToday(n) {
+  const d = new Date()
+  d.setDate(d.getDate() + n)
+  const p = (x) => String(x).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
 export function today() {
   const d = new Date()
   const p = (x) => String(x).padStart(2, '0')

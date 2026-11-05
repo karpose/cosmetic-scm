@@ -43,6 +43,20 @@ public class AuditService {
         repository.save(a);
     }
 
+    /** 登录这类请求还没有登录身份，操作人要明确传入，否则会记成“系统”。 */
+    @Transactional
+    public void logAs(AppUser user, String action, String detail) {
+        AuditLog a = new AuditLog();
+        a.setCreatedAt(time.now());
+        a.setUserId(user.getId());
+        a.setUsername(user.getUsername());
+        a.setDisplayName(user.getDisplayName());
+        a.setAction(action);
+        a.setTarget(user.getUsername());
+        a.setDetail(truncate(detail, 1000));
+        repository.save(a);
+    }
+
     @Transactional(readOnly = true)
     public List<AuditLog> list(String q, int limit) {
         PageRequest page = PageRequest.of(0, Math.max(1, Math.min(limit, 1000)));

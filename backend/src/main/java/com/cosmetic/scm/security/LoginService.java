@@ -57,16 +57,18 @@ public class LoginService {
                 u.setFailedLogins(0);
                 u.setLockedUntil(now.plusMinutes(lockMinutes));
                 users.save(u);
-                audit.log("登录锁定", u.getUsername(), "连续 " + failed + " 次密码错误，锁定至 " + u.getLockedUntil().format(HM));
+                audit.logAs(u, "登录锁定", "连续 " + failed + " 次密码错误，锁定至 " + u.getLockedUntil().format(HM));
                 throw new BizException(HttpStatus.LOCKED, "密码连续错误 " + failed + " 次，账号已锁定 " + lockMinutes + " 分钟");
             }
             u.setFailedLogins(failed);
             users.save(u);
+            audit.logAs(u, "登录失败", "密码错误，连续第 " + failed + " 次");
             throw badCredentials();
         }
         u.setFailedLogins(0);
         u.setLockedUntil(null);
         users.save(u);
+        audit.logAs(u, "登录", "");
         return new LoginResp(jwtService.issue(u), userService.view(u));
     }
 

@@ -1,5 +1,6 @@
 package com.cosmetic.scm.integration;
 
+import com.cosmetic.scm.common.Qty;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -74,11 +75,14 @@ public class IntegrationService {
     private final TimeProvider time;
     private final TransactionTemplate tx;
     private final TransactionTemplate txNew;
+    private final com.cosmetic.scm.audit.AuditService audit;
 
     public IntegrationService(ChannelOrderRepository orders, ChannelOrderLineRepository lines, IntegrationLogRepository logs,
                               PartnerRepository partners, ItemRepository items, WarehouseRepository warehouses,
                               SalesOrderRepository salesOrders, SalesService sales, InventoryService inventory,
-                              MasterLookup lookup, TimeProvider time, PlatformTransactionManager txManager) {
+                              MasterLookup lookup, TimeProvider time, PlatformTransactionManager txManager,
+                              com.cosmetic.scm.audit.AuditService audit) {
+        this.audit = audit;
         this.orders = orders;
         this.lines = lines;
         this.logs = logs;
@@ -97,7 +101,7 @@ public class IntegrationService {
 
     public static final String PLATFORM_REGEX = "^[A-Za-z0-9_]{2,20}$";
 
-    public record PushLine(@NotBlank @Size(max = 40) String sku, @NotNull @Positive BigDecimal qty) {
+    public record PushLine(@NotBlank @Size(max = 40) String sku, @NotNull @Positive @Qty BigDecimal qty) {
     }
 
     public record PushOrder(@NotBlank @Size(max = 64) String orderNo, LocalDateTime orderedAt,
@@ -218,6 +222,9 @@ public class IntegrationService {
             throw new BizException("只有出库失败的订单可以重试，当前为" + o.getStatus().getLabel());
         }
         PushResult r = fulfil(id);
+        // 对接日志不记操作人，手工操作要进审计日志
+        tx.executeWithoutResult(st -> audit.log("重试电商订单", o.getPlatformOrderNo(), r.statusLabel()
+                + (r.soNo() != null ? "，出库单 " + r.soNo() : r.error() != null ? "：" + r.error() : "")));
         log("IN", o.getPlatform(), "手工重试", o.getPlatformOrderNo(), r.status() == ChannelOrderStatus.SHIPPED,
                 r.error() != null ? r.error() : r.soNo() != null ? "出库单 " + r.soNo() : r.statusLabel());
         return r;
@@ -233,6 +240,7 @@ public class IntegrationService {
             o.setError(null);
             o.setUpdatedAt(time.now());
             orders.save(o);
+            audit.log("取消电商订单", o.getPlatformOrderNo(), o.getPlatform(), reason);
             return result(o, false);
         });
         log("IN", null, "取消订单", r.orderNo(), true, reason);

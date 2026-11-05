@@ -689,6 +689,47 @@ test('无障碍：常用弹窗 axe 无违规', async ({ page }) => {
   await audit('/qms', '登记偏差')
 })
 
+test('登录过期不丢表单：就地重新输入密码，填的内容还在，再提交成功', async ({ page }) => {
+  await login(page, 'qa1')
+  await page.goto('/qms')
+  await page.getByRole('button', { name: '登记偏差' }).click()
+  const d = dialog(page, '登记偏差')
+  await page.locator('#dv-title').fill('E2E 过期前填写的偏差')
+  await page.locator('#dv-desc').fill('写了很长一段调查内容，不能因为令牌过期就丢掉')
+  // 模拟令牌到期
+  await page.evaluate(() => localStorage.setItem('scm_token', 'expired-token'))
+  await d.getByRole('button', { name: '登记偏差' }).click()
+  const re = dialog(page, '登录已过期')
+  await expect(re).toBeVisible()
+  await expect(page).toHaveURL(/\/qms/)
+  // 密码错不关闭，表单也还在
+  await re.getByLabel('密码').fill('错误密码')
+  await re.getByRole('button', { name: '重新登录' }).click()
+  await toast(page, '账号或密码不正确')
+  await expect(re).toBeVisible()
+  await re.getByLabel('密码').fill(DEMO)
+  await re.getByRole('button', { name: '重新登录' }).click()
+  await expect(re).toBeHidden()
+  await expect(page.locator('#dv-desc')).toHaveValue('写了很长一段调查内容，不能因为令牌过期就丢掉')
+  await d.getByRole('button', { name: '登记偏差' }).click()
+  await toast(page, '偏差已登记')
+  await expect(page.getByText('E2E 过期前填写的偏差').first()).toBeVisible()
+})
+
+test('名称里的脚本标签只当文字显示', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  const name = '<img src=x onerror="window.__xss=1">'
+  await page.evaluate(async (n) => {
+    const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
+    await fetch('/api/items', { method: 'POST', headers: h, body: JSON.stringify({ code: 'FG-E2E-XSS', name: n, itemType: 'FG', unit: '瓶', banned: false, shelfMonths: 36, active: true }) })
+  }, name)
+  await page.goto('/master')
+  await page.getByPlaceholder('搜索编码、名称、INCI、备案编号').fill('FG-E2E-XSS')
+  await expect(page.getByText(name).first()).toBeVisible()
+  expect(await page.evaluate(() => window.__xss)).toBeUndefined()
+  expect(await page.locator('main img[src="x"]').count()).toBe(0)
+})
+
 test('门户账号进不了内部页面', async ({ page }) => {
   await login(page, 'dealer1')
   await expect(page).toHaveURL(/\/portal\/dealer/)

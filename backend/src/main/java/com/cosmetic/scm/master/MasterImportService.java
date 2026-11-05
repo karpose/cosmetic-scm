@@ -68,7 +68,7 @@ public class MasterImportService {
     /** 配方的一行。同一个成品写多行，一起作为它的首版配方。 */
     public record BomImportRow(@NotBlank(message = "请填写成品编码") String fgCode,
                                @NotBlank(message = "请填写物料编码") String itemCode,
-                               @NotNull(message = "请填写单耗") @Positive(message = "单耗要大于 0") BigDecimal qtyPer,
+                               @NotNull(message = "请填写单耗") @Positive(message = "单耗要大于 0") @jakarta.validation.constraints.Digits(integer = 12, fraction = 6, message = "单耗最多 12 位整数、6 位小数") BigDecimal qtyPer,
                                @NotNull(message = "请填写供料方式") SupplyMode supplyMode) {
     }
 

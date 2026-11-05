@@ -1,5 +1,6 @@
 package com.cosmetic.scm.purchase;
 
+import com.cosmetic.scm.common.Qty;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -58,14 +59,14 @@ public class PurchaseService {
     private final TimeProvider time;
     private final CurrentUser currentUser;
 
-    public record PoLineReq(@NotNull Long itemId, @NotNull @Positive BigDecimal qty) {
+    public record PoLineReq(@NotNull Long itemId, @NotNull @Positive @Qty BigDecimal qty) {
     }
 
     public record CreatePoReq(@NotNull Long supplierId, @NotEmpty(message = "至少一行物料") @Valid List<PoLineReq> lines) {
     }
 
     public record ReceiveLineReq(@NotNull Long poLineId,
-                                 @NotNull @Positive BigDecimal qty,
+                                 @NotNull @Positive @Qty BigDecimal qty,
                                  @NotBlank(message = "请填写供应商批号") @Size(max = 60) String extBatchNo,
                                  LocalDate mfgDate,
                                  LocalDate expDate,

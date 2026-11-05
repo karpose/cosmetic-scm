@@ -12,6 +12,7 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 
 import com.cosmetic.scm.audit.AuditService;
+import com.cosmetic.scm.common.FieldDiff;
 import com.cosmetic.scm.common.BizException;
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.domain.FilingStatus;
@@ -98,11 +99,13 @@ public class MasterService {
         if (filingChanged && !filings.findByFgItemIdAndStatusOrderByIdDesc(id, FilingStatus.FILED).isEmpty()) {
             throw new BizException(item.getName() + " 的备案编号由备案记录决定，修改请到“配方与备案 → 备案登记”登记新的备案");
         }
+        Map<String, Object> before = itemFields(item);
         applyItem(item, req);
         if (filingChanged) {
             recordFilingFromMaster(item);
         }
-        audit.log("修改物料", item.getCode(), item.getName());
+        String changes = FieldDiff.of(before, itemFields(item));
+        audit.log("修改物料", item.getCode(), item.getName() + "：" + (changes.isEmpty() ? "内容没有变化" : changes));
         return item;
     }
 
@@ -123,6 +126,22 @@ public class MasterService {
         f.setCreatedBy(currentUser.usernameOrSystem());
         f.setCreatedAt(time.now());
         filings.save(f);
+    }
+
+    private static Map<String, Object> itemFields(Item i) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("名称", i.getName());
+        m.put("单位", i.getUnit());
+        m.put("INCI", i.getInci());
+        m.put("限用浓度上限", i.getLimitPct());
+        m.put("禁用", i.isBanned());
+        m.put("保质期（月）", i.getShelfMonths());
+        m.put("备案编号", i.getFilingNo());
+        m.put("净含量", i.getNetG());
+        m.put("启用", i.isActive());
+        m.put("标准成本", i.getStdCost());
+        m.put("指导价", i.getListPrice());
+        return m;
     }
 
     private void applyItem(Item item, ItemReq req) {
@@ -173,10 +192,10 @@ public class MasterService {
         if (!p.getCode().equals(req.code().trim())) {
             throw new BizException("往来单位编码创建后不能修改");
         }
-        String before = describeLicense(p);
+        Map<String, Object> before = partnerFields(p);
         applyPartner(p, req);
-        String after = describeLicense(p);
-        audit.log("修改往来单位", p.getCode(), before.equals(after) ? p.getName() : before + " → " + after);
+        String changes = FieldDiff.of(before, partnerFields(p));
+        audit.log("修改往来单位", p.getCode(), p.getName() + "：" + (changes.isEmpty() ? "内容没有变化" : changes));
         return toView(p, time.today());
     }
 
@@ -212,9 +231,21 @@ public class MasterService {
                 p.isQualified(), p.isCriticalSupplier());
     }
 
-    private static String describeLicense(Partner p) {
-        return "资质 " + (p.getLicenseNo() == null ? "—" : p.getLicenseNo()) + " 至 "
-                + (p.getLicenseExpiry() == null ? "—" : p.getLicenseExpiry()) + (p.isQualified() ? "，合格名录内" : "，不在合格名录");
+    private static Map<String, Object> partnerFields(Partner p) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("名称", p.getName());
+        m.put("类别", p.getKind().getLabel());
+        m.put("资质编号", p.getLicenseNo());
+        m.put("资质有效期", p.getLicenseExpiry());
+        m.put("许可范围", p.getLicenseScope());
+        m.put("批号前缀", p.getBatchPrefix());
+        m.put("渠道", p.getChannel());
+        m.put("剩余效期接收标准 %", p.getMinShelfPct());
+        m.put("联系人", p.getContact());
+        m.put("地址", p.getAddress());
+        m.put("合格名录", p.isQualified());
+        m.put("关键供应商", p.isCriticalSupplier());
+        return m;
     }
 
     // ---------- 仓库 ----------

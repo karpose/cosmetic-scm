@@ -113,7 +113,7 @@ import { CircleCheckFilled, WarningFilled } from '@element-plus/icons-vue'
 import http from '../api'
 import LoadError from '../components/LoadError.vue'
 import { useAuth } from '../stores/auth'
-import { fmtMoney, fmtQty } from '../utils/format'
+import { daysFromToday, fmtMoney, fmtQty } from '../utils/format'
 import { useLoader } from '../utils/loader'
 import { useRefData } from '../utils/refdata'
 
@@ -174,12 +174,6 @@ async function calcMaterials() {
 const creatingMo = ref(false)
 const creatingPo = ref(false)
 
-function addDays(n) {
-  const d = new Date()
-  d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
-}
-
 async function createMos() {
   const lines = planLines()
   if (lines.some((l) => !l.factoryId)) return ElMessage.warning('请为每个勾选的成品选择生产方')
@@ -188,7 +182,7 @@ async function createMos() {
   try {
     const nos = []
     for (const l of lines) {
-      const mo = await http.post('/mfg-orders', { factoryId: l.factoryId, fgItemId: l.fgItemId, plannedQty: l.qty, plannedDate: addDays(p.leadDays) })
+      const mo = await http.post('/mfg-orders', { factoryId: l.factoryId, fgItemId: l.fgItemId, plannedQty: l.qty, plannedDate: daysFromToday(p.leadDays) })
       nos.push(mo.moNo)
     }
     ElMessage.success(`已生成 ${nos.join('、')}，到“生产与委托”里发料`)

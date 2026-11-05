@@ -30,9 +30,38 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiError> invalid(MethodArgumentNotValidException e) {
         FieldError fe = e.getBindingResult().getFieldError();
-        String msg = fe == null ? "提交的数据不完整" : fe.getField() + "：" + fe.getDefaultMessage();
-        return ResponseEntity.badRequest().body(new ApiError(msg));
+        return ResponseEntity.badRequest().body(new ApiError(fe == null ? "提交的数据不完整" : describe(fe)));
     }
+
+    /** 注解里写了中文说明的（如“请选择产品”）直接显示；默认提示（如“不能为空”）要加上是哪一项。不能把 lines[0].qty 这种字段名给用户看。 */
+    private static String describe(FieldError fe) {
+        boolean custom = fe.contains(jakarta.validation.ConstraintViolation.class)
+                && !fe.unwrap(jakarta.validation.ConstraintViolation.class).getMessageTemplate().startsWith("{");
+        if (custom) {
+            return fe.getDefaultMessage();
+        }
+        java.util.regex.Matcher row = LINE_FIELD.matcher(fe.getField());
+        String prefix = row.find() ? "第 " + (Integer.parseInt(row.group(1)) + 1) + " 行" : "";
+        String last = fe.getField().substring(fe.getField().lastIndexOf('.') + 1).replaceAll("\\[\\d+]", "");
+        return prefix + FIELD_LABELS.getOrDefault(last, last) + "：" + fe.getDefaultMessage();
+    }
+
+    private static final java.util.regex.Pattern LINE_FIELD = java.util.regex.Pattern.compile("\\[(\\d+)]");
+
+    private static final java.util.Map<String, String> FIELD_LABELS = java.util.Map.ofEntries(
+            java.util.Map.entry("code", "编码"), java.util.Map.entry("name", "名称"), java.util.Map.entry("username", "账号"),
+            java.util.Map.entry("displayName", "姓名"), java.util.Map.entry("password", "密码"), java.util.Map.entry("unit", "单位"),
+            java.util.Map.entry("inci", "INCI 名称"), java.util.Map.entry("qty", "数量"), java.util.Map.entry("itemId", "物料"),
+            java.util.Map.entry("batchId", "批次"), java.util.Map.entry("itemType", "物料类型"), java.util.Map.entry("kind", "类别"),
+            java.util.Map.entry("licenseNo", "资质编号"), java.util.Map.entry("licenseScope", "许可范围"), java.util.Map.entry("contact", "联系人"),
+            java.util.Map.entry("address", "地址"), java.util.Map.entry("channel", "渠道"), java.util.Map.entry("filingNo", "备案编号"),
+            java.util.Map.entry("shelfMonths", "保质期"), java.util.Map.entry("minShelfPct", "剩余效期接收标准"), java.util.Map.entry("supplyMode", "供料方式"),
+            java.util.Map.entry("qtyPer", "单耗"), java.util.Map.entry("lines", "明细"), java.util.Map.entry("warehouseId", "仓库"),
+            java.util.Map.entry("reason", "原因"), java.util.Map.entry("note", "说明"), java.util.Map.entry("area", "区域"),
+            java.util.Map.entry("level", "等级"), java.util.Map.entry("sourceType", "来源"), java.util.Map.entry("actionType", "措施类型"),
+            java.util.Map.entry("disposition", "处置方式"), java.util.Map.entry("decision", "结论"), java.util.Map.entry("filingType", "备案类型"),
+            java.util.Map.entry("orderNo", "订单号"), java.util.Map.entry("sku", "SKU"), java.util.Map.entry("platform", "平台"),
+            java.util.Map.entry("orders", "订单"), java.util.Map.entry("roles", "角色"), java.util.Map.entry("email", "邮箱"), java.util.Map.entry("severity", "严重程度"));
 
     /** 地址写错、参数缺失或类型不对是调用方的问题，不是系统错误，不该进错误日志。 */
     @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
@@ -81,6 +110,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiError> integrity(DataIntegrityViolationException e) {
         log.warn("数据完整性冲突: {}", e.getMostSpecificCause().getMessage());
+        String cause = String.valueOf(e.getMostSpecificCause().getMessage());
+        if (cause.contains("Data too long") || cause.contains("Out of range") || cause.contains("Data truncation")
+                || cause.contains("Value too long") || cause.contains("out of range")) {
+            return ResponseEntity.badRequest().body(new ApiError("内容超出了允许的长度或数值范围，请改短或改小后重试"));
+        }
         return ResponseEntity.status(HttpStatus.CONFLICT).body(new ApiError("数据冲突，可能是编码或单号重复，请检查后重试"));
     }
 

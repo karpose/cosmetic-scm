@@ -35,14 +35,14 @@ public final class MasterDtos {
             @NotNull ItemType itemType,
             @NotBlank @Size(max = 16) String unit,
             @Size(max = 200) String inci,
-            @DecimalMin(value = "0", inclusive = false) BigDecimal limitPct,
+            @DecimalMin(value = "0", inclusive = false) @jakarta.validation.constraints.Digits(integer = 5, fraction = 4, message = "限用浓度最多 4 位小数") BigDecimal limitPct,
             boolean banned,
             @Min(1) @Max(120) Integer shelfMonths,
-            @Size(max = 80) String filingNo,
-            @Positive BigDecimal netG,
+            @Size(max = 60) String filingNo,
+            @Positive @jakarta.validation.constraints.Digits(integer = 9, fraction = 3, message = "净含量最多 9 位整数、3 位小数") BigDecimal netG,
             Boolean active,
-            @DecimalMin(value = "0", message = "标准成本不能为负") BigDecimal stdCost,
-            @DecimalMin(value = "0", message = "指导价不能为负") BigDecimal listPrice) {
+            @DecimalMin(value = "0", message = "标准成本不能为负") @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "标准成本最多 14 位整数、4 位小数") BigDecimal stdCost,
+            @DecimalMin(value = "0", message = "指导价不能为负") @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "指导价最多 14 位整数、4 位小数") BigDecimal listPrice) {
     }
 
     public record PartnerReq(
@@ -81,7 +81,7 @@ public final class MasterDtos {
     }
 
     public record BomLineReq(@NotNull Long itemId,
-                             @NotNull @Positive BigDecimal qtyPer,
+                             @NotNull @Positive @jakarta.validation.constraints.Digits(integer = 12, fraction = 6, message = "单耗最多 12 位整数、6 位小数") BigDecimal qtyPer,
                              @NotNull SupplyMode supplyMode) {
     }
 
