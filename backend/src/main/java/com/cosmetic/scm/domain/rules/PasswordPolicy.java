@@ -8,6 +8,7 @@ public final class PasswordPolicy {
 
     public static final int MIN_LENGTH = 8;
     public static final int MAX_LENGTH = 64;
+    public static final int MAX_BYTES = 72;
     public static final int MIN_CLASSES = 3;
 
     private PasswordPolicy() {
@@ -19,6 +20,10 @@ public final class PasswordPolicy {
         }
         if (password.length() > MAX_LENGTH) {
             return "密码最长 " + MAX_LENGTH + " 位";
+        }
+        // BCrypt 只认前 72 字节，超过时加密直接报错。一个汉字占 3 个字节，30 个汉字就超了
+        if (password.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > MAX_BYTES) {
+            return "密码太长：最多 " + MAX_BYTES + " 个字节，一个汉字算 3 个";
         }
         int classes = 0;
         if (password.chars().anyMatch(Character::isUpperCase)) {

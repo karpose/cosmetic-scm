@@ -68,7 +68,7 @@ cp .env.example .env && docker compose up -d --build
 - 现有库存只能走期初导入（`OpeningStockService`，来源 `SourceType.OPEN`，流水 `OPENING`），不要造采购单或生产单。已放行的批次写放行记录，成品写留样，所以只给 QSO 并要签批。行上不加 `@Valid`，缺字段要按 Excel 行号报。
 - 工序勾了“须记录设备”时，`MesService.recordStep` 用 `EquipmentService.unusableReason` 校验；校准不合格的处理在 `EquipmentService.calibrate`，设备停用并生成偏差。
 - 导出（`ReportService`）必须用 `listAll` 类查询，不能用页面的 Top300 查询；超过 `MAX_ROWS` 报错，不截断。页面列表到上限时用 `ListCapHint` 提示。
-- 登录失败计数要落库，`LoginService.login` 对 BizException 不回滚；密码规则统一走 `PasswordPolicy`。 登录成功、失败和锁定都写审计，这时还没有登录身份，用 `AuditService.logAs`。
+- 登录失败计数要落库，`LoginService.login` 对 BizException 不回滚；密码规则统一走 `PasswordPolicy`（BCrypt 只认 72 字节，字符上限不够，汉字要算字节）。账号不存在也要算一次密码（否则响应时间能试出账号），同一来源每分钟失败 20 次限流（`ClientRateLimiter`，只认 nginx 覆盖的 `X-Real-IP`，后端端口不能对外）。`DeploymentSecretsCheck` 让 prod 配置拒绝用占位符和默认值启动，`.env.example` 改占位符时要同步。 登录成功、失败和锁定都写审计，这时还没有登录身份，用 `AuditService.logAs`。
 - 委托生产完工前必须确认受托厂已出厂放行；实际产量超出计划 95%–102% 必须填物料平衡说明；上市放行必须登记留样，保存期 = 有效期 + 6 个月。
 - 供应商 / 受托厂不在合格名录或资质过期，不能下单；禁用原料不能采购、不能进 BOM；限用原料按净含量校验浓度上限。
 - 追溯有标准答案的回归在 `TraceRecallDrillTest`，改流向相关的逻辑（发料、完工、出库、退货、召回）要跑它。供应商和受托厂只给得出自己的批号，追溯页查不到系统批号时走 `TraceService.search`。
@@ -87,7 +87,7 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-05）
 
-- 后端 `mvn clean test` 125 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 29 项全部通过（含 axe 无障碍和手机宽度检查）；GitHub Actions 在 PR 上跑这三项。
+- 后端 `mvn clean test` 130 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 29 项全部通过（含 axe 无障碍和手机宽度检查）；GitHub Actions 在 PR 上跑这三项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
 - 已完成：一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。

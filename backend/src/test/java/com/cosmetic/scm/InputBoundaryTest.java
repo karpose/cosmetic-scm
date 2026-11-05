@@ -79,4 +79,24 @@ class InputBoundaryTest {
         item.put("stdCost", new java.math.BigDecimal("1E+20"));
         assertThat(rejected(admin, "/api/items", item)).contains("标准成本最多");
     }
+
+    private int loginFrom(String ip, String xff, String user, String password) throws Exception {
+        return mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of("username", user, "password", password)))
+                        .header("X-Real-IP", ip).header("X-Forwarded-For", xff))
+                .andReturn().getResponse().getStatus();
+    }
+
+    @Test
+    void tooManyFailedLoginsFromOneSourceAreThrottled() throws Exception {
+        String ip = "203.0.113." + System.nanoTime() % 200;
+        for (int i = 0; i < 20; i++) {
+            // 换账号试、换 X-Forwarded-For 都没用，nginx 会覆盖 X-Real-IP
+            assertThat(loginFrom(ip, "9.9.9." + i, "spray" + i, "wrong")).isEqualTo(401);
+        }
+        assertThat(loginFrom(ip, "8.8.8.8", "spray-x", "wrong")).isEqualTo(429);
+        // 这一分钟里这个来源连正确密码也进不了，别的来源不受影响
+        assertThat(loginFrom(ip, "8.8.8.8", "qa1", "Demo@12345")).isEqualTo(429);
+        assertThat(loginFrom("198.51.100.7", "8.8.8.8", "qa1", "Demo@12345")).isEqualTo(200);
+    }
 }

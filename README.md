@@ -101,7 +101,7 @@ docker compose up -d --build
 - 账号安全：连续输错 5 次密码锁定 15 分钟；密码至少 8 位、四类字符至少三类；生产环境下管理员新建 / 重置的账号首次登录必须改密，密码 90 天过期（`application.yml` 的 `scm.security.*`，本地开发默认不强制改密）。
 - 电商对接：在 `.env` 里设置 `SCM_INTEGRATION_API_KEY` 后，ERP 用请求头 `X-Api-Key` 调用 `/api/integration/**`；不设置则对接接口关闭。
 - 一物一码：`SCM_VERIFY_URL_PREFIX` 设成正式域名加 `/v/`（如 `https://scm.example.com/v/`），导出的扫码链接会用它。
-- `SCM_JWT_SECRET` 用随机长字符串并妥善保管。
+- `SCM_JWT_SECRET` 用随机长字符串并妥善保管。正式环境如果还是 `.env.example` 的占位符或开发默认值，后端会拒绝启动并说明要改哪一项。
 - 每日提醒：设置 `SCM_NOTIFY_ENABLED=true` 和时间 `SCM_NOTIFY_CRON`（默认每天 8:30），再配置企业微信群机器人 `SCM_NOTIFY_WECOM_WEBHOOK`，或邮件 `SCM_SMTP_*` 和收件人 `SCM_NOTIFY_MAIL_TO`（见 `.env.example`）。只推送总览里警告和紧急的待办；今天没事就不发。账号填了邮箱的只收自己岗位的事项，配置的收件人和企业微信群收全部。配好后用 `admin` 在“消息提醒”点“立即发送一次”验证。
 - 附件文件存在 `files-data` 卷（后端的 `/app/files`），数据库只存元数据和 SHA-256。上传限制分三层：前端和 `AttachmentService` 按 20 MB，nginx 按 25 MB，Spring 解析上限 30 MB。**Spring 的上限必须高于 nginx**：否则后端没读完请求体就回错误，和 nginx 互相等待直到超时。
 

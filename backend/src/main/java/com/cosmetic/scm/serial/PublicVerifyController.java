@@ -1,8 +1,5 @@
 package com.cosmetic.scm.serial;
 
-import java.time.Instant;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -31,31 +28,17 @@ public class PublicVerifyController {
     private static final int LIMIT_PER_MINUTE = 30;
 
     private final SerialService serials;
-    private final Map<String, long[]> hits = new ConcurrentHashMap<>();
+    private final com.cosmetic.scm.common.ClientRateLimiter limiter = new com.cosmetic.scm.common.ClientRateLimiter(LIMIT_PER_MINUTE);
 
     public record VerifyReq(@NotBlank @Size(max = 40) String code) {
     }
 
     @PostMapping("/verify")
     public VerifyView verify(@Valid @RequestBody VerifyReq req, HttpServletRequest http) {
-        throttle(clientIp(http));
+        if (limiter.record(com.cosmetic.scm.common.ClientRateLimiter.clientIp(http))) {
+            throw new BizException(HttpStatus.TOO_MANY_REQUESTS, "查询太频繁，请稍后再试");
+        }
         return serials.verify(req.code());
     }
 
-    private void throttle(String ip) {
-        long minute = Instant.now().getEpochSecond() / 60;
-        long[] w = hits.compute(ip, (k, v) -> v == null || v[0] != minute ? new long[] {minute, 1} : new long[] {minute, v[1] + 1});
-        if (w[1] > LIMIT_PER_MINUTE) {
-            throw new BizException(HttpStatus.TOO_MANY_REQUESTS, "查询太频繁，请稍后再试");
-        }
-        if (hits.size() > 10_000) {
-            hits.entrySet().removeIf(e -> e.getValue()[0] != minute);
-        }
-    }
-
-    private static String clientIp(HttpServletRequest http) {
-        // X-Forwarded-For 第一段是客户端自己填的，换个值就能绕过限流；X-Real-IP 由 nginx 覆盖写入，不能伪造
-        String real = http.getHeader("X-Real-IP");
-        return real == null || real.isBlank() ? http.getRemoteAddr() : real.trim();
-    }
 }
