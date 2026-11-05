@@ -9,4 +9,6 @@ public interface GenealogyRepository extends JpaRepository<BatchGenealogy, Long>
     List<BatchGenealogy> findByChildBatchId(Long childBatchId);
 
     List<BatchGenealogy> findByParentBatchId(Long parentBatchId);
+
+    List<BatchGenealogy> findByExtBatchNo(String extBatchNo);
 }

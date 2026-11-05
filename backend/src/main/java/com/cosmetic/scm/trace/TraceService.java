@@ -102,6 +102,37 @@ public class TraceService {
                             long elapsedMs) {
     }
 
+    public record LotHit(String batchNo, String itemCode, String itemName, String statusLabel, String extBatchNo, String matchLabel) {
+    }
+
+    /**
+     * 按外部批号找系统批次。供应商、受托厂通知问题时，只给得出他们自己的批号。
+     * 品牌供料：外部批号在批次上；工厂代采：没有系统批次，记在成品的用料记录里，直接给出成品。
+     */
+    @Transactional(readOnly = true)
+    public List<LotHit> search(String q) {
+        String ext = q == null ? "" : q.trim();
+        if (ext.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, Item> im = lookup.itemMap();
+        List<LotHit> hits = new ArrayList<>();
+        for (Batch b : batches.findByExtBatchNo(ext)) {
+            Item i = im.get(b.getItemId());
+            hits.add(new LotHit(b.getBatchNo(), i.getCode(), i.getName(), b.getStatus().getLabel(), b.getExtBatchNo(),
+                    i.getItemType() == ItemType.FG ? "受托厂成品批号" : "供应商批号"));
+        }
+        List<BatchGenealogy> used = genealogy.findByExtBatchNo(ext).stream().filter(g -> g.getParentBatchId() == null).toList();
+        Map<Long, Batch> children = batches.findAllById(used.stream().map(BatchGenealogy::getChildBatchId).distinct().toList())
+                .stream().collect(Collectors.toMap(Batch::getId, Function.identity()));
+        for (BatchGenealogy g : used) {
+            Batch c = children.get(g.getChildBatchId());
+            hits.add(new LotHit(c.getBatchNo(), im.get(c.getItemId()).getCode(), im.get(c.getItemId()).getName(), c.getStatus().getLabel(),
+                    g.getExtBatchNo(), "受托厂代采 " + im.get(g.getItemId()).getName() + "，用于这个成品"));
+        }
+        return hits;
+    }
+
     @Transactional(readOnly = true)
     public TraceView trace(String batchNo) {
         long start = System.nanoTime();

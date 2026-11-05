@@ -47,7 +47,7 @@ cp .env.example .env && docker compose up -d --build
 - 单号、批号由 `DocNoService.next(prefix, date)` 生成（必须在事务内）。
 - FEFO 分配只取 `RELEASED` 批次；出库时再次确认批次状态（防止分配后被冻结）。退货隔离区（`WarehouseKind.RETURN`）的库存永远不参与分配，只能走退货处置。
 - 成品上市放行接口只授予 `QSO` 角色（管理员也不行）；放行、拒收、冻结、解冻都通过 `SignatureService.verify` 要求再次输入密码。
-- 召回发起 / 关闭只授予 `QSO`；发起时冻结批次并按出库记录逐客户生成通知，所有客户通知后才能关闭。不良反应投诉未登记上报不能关闭。报废、退货处置须 QA / QSO 签批。
+- 召回发起 / 关闭只授予 `QSO`；发起时冻结批次并按出库记录逐客户生成通知，所有客户通知后才能关闭。召回进行中不能解冻。回收进度按“发出 - 普通退货”算在外量（普通退货转可售后可能再发给别人，只看发出量永远到不了 100%）。期初批次没有发货记录也能发起召回，因为上线前可能已发出，名单要线下核对。不良反应投诉未登记上报不能关闭。报废、退货处置须 QA / QSO 签批。
 - 单据状态流转必须先锁行再判断状态（各 Repository 的 `lockById`，只在写事务里用，读事务里 FOR UPDATE 在 MySQL 上会报错）。检查和修改之间不加锁，连点按钮就会重复入库，实测过。出库和发料用 `InventoryService.allocateForUpdate`，预览用 `allocate`。库存行加锁走 `lockStock`：实体已载入时直接用锁查询，Hibernate 会因版本不同报冲突。
 - “算出来才知道能不能做”的操作（退货可退量 = 已发 - 已退、同批次只能有一个进行中的召回）没有单据可锁，要锁它们依赖的行（客户、批次），而且必须是事务里第一条语句：MySQL 可重复读下，锁之前有过普通查询，之后读不到别人刚提交的数据。出库失败回滚后另开事务写“失败”时也要重新锁并判断状态，不能盖掉同时发生的取消。
 - MySQL 的 `DATETIME` 会把小数秒四舍五入（H2 不同）。要和令牌 iat 比较的时间（`passwordChangedAt`）必须先截断到整秒，曾因此让一半用户改密后被踢出。
@@ -59,7 +59,7 @@ cp .env.example .env && docker compose up -d --build
 - 金额是标准成本估值：`MasterService.unitCosts()` 优先用标准成本，成品退回 BOM 物料成本；没成本的物料不计入，并显示数量提示。不要当账面成本用。
 - 配方：`bom` / `bom_line` 永远是当前生效版本的内容，其它模块照常读。生效配方不能直接改（`MasterService.saveBom` 只接受首版），要走 `FormulaService`：草稿 → 提交 → QSO 签批，发起人不能批自己的；原料变化必须有该版本 FILED 的 `product_filing`。生产单 `formula_version_id`：未发料跟随生效版本，发料后锁定，用量按版本读（`MasterService.versionLines`）。
 - 备案编号：首次可在主数据或 CSV 里填（同时生成一条 FILED 记录，便于上线初始化）；有已完成的记录后只能走 `FilingService`，`MasterService.updateItem` 拒绝直接修改。
-- 放行的前置检查在 `QualityService`：批次有未关闭的重大及以上偏差、注册证过期都不能放行。放行时写 `retain_sample`，这是留样台账的唯一入口。
+- 放行的前置检查在 `QualityService`：批次有未关闭的重大及以上偏差、注册证过期、用到的物料批次被冻结或判定不合格，都不能放行。放行时写 `retain_sample`，这是留样台账的唯一入口。
 - 批记录（`MesService`）只对自产且发料时有工艺路线的单子生效，在发料事务里固化。`ProductionService.complete` 先查 `mes.missing()`，并把这张单的偏差挂到产出批次。工序记录提交后不提供修改接口。过程检验超限不阻止生产，但必须自动生成偏差。
 - 签批、复核、验证类操作的执行人不能是操作人本身（CAPA 完成人、工序操作人、配方发起人），规则写在服务层，不靠界面隐藏。
 - 导出在服务端生成（`ReportService` + `common/XlsxWriter`），每次写审计。单元格文本只写内联字符串，不写公式。新增报表在 `registry()` 里加一项。预测规则在 `domain/rules/DemandForecast`，历史按首次出库到上个完整月。
@@ -71,6 +71,7 @@ cp .env.example .env && docker compose up -d --build
 - 登录失败计数要落库，`LoginService.login` 对 BizException 不回滚；密码规则统一走 `PasswordPolicy`。 登录成功、失败和锁定都写审计，这时还没有登录身份，用 `AuditService.logAs`。
 - 委托生产完工前必须确认受托厂已出厂放行；实际产量超出计划 95%–102% 必须填物料平衡说明；上市放行必须登记留样，保存期 = 有效期 + 6 个月。
 - 供应商 / 受托厂不在合格名录或资质过期，不能下单；禁用原料不能采购、不能进 BOM；限用原料按净含量校验浓度上限。
+- 追溯有标准答案的回归在 `TraceRecallDrillTest`，改流向相关的逻辑（发料、完工、出库、退货、召回）要跑它。供应商和受托厂只给得出自己的批号，追溯页查不到系统批号时走 `TraceService.search`。
 - 示例数据只通过业务服务写入（`DemoDataLoader`），日期相对“今天”生成，名称带“（示例）”。
 
 ## 代码约定
@@ -86,7 +87,7 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-05）
 
-- 后端 `mvn clean test` 119 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 28 项全部通过（含 axe 无障碍和手机宽度检查）；GitHub Actions 在 PR 上跑这三项。
+- 后端 `mvn clean test` 125 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 29 项全部通过（含 axe 无障碍和手机宽度检查）；GitHub Actions 在 PR 上跑这三项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
 - 已完成：一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。

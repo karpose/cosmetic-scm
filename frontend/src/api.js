@@ -38,7 +38,7 @@ http.interceptors.response.use(
     }
     if (!err.config?.silent) ElMessage.error(msg)
     // handled：已经提示过用户，main.js 的全局错误处理不再重复报到控制台
-    return Promise.reject(Object.assign(new Error(msg), { handled: true }))
+    return Promise.reject(Object.assign(new Error(msg), { handled: true, status }))
   }
 )
 

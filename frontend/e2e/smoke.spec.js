@@ -730,6 +730,32 @@ test('名称里的脚本标签只当文字显示', async ({ page }) => {
   expect(await page.locator('main img[src="x"]').count()).toBe(0)
 })
 
+test('追溯：按供应商批号也能查到，打印时只留报告内容', async ({ page }) => {
+  await login(page, 'qa1')
+  const b = (await api(page, '/batches')).find((x) => x.itemType === 'RM' && x.extBatchNo)
+  await page.goto('/trace')
+  await page.locator('#trace-no').fill(b.extBatchNo)
+  await page.getByRole('button', { name: '追溯', exact: true }).click()
+  await expect(page.getByText('不是系统批号')).toBeVisible()
+  await expect(page.getByText('供应商批号')).toBeVisible()
+  await page.getByRole('button', { name: b.batchNo, exact: true }).click()
+  await expect(page.getByRole('button', { name: '打印追溯报告' })).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`no=${b.batchNo}`))
+
+  await page.locator('#trace-no').fill('完全不存在-999')
+  await page.getByRole('button', { name: '追溯', exact: true }).click()
+  await toast(page, '也没有匹配的供应商或受托厂批号')
+
+  await page.goto(`/trace?no=${encodeURIComponent(b.batchNo)}`)
+  await expect(page.getByRole('button', { name: '打印追溯报告' })).toBeVisible()
+  await page.emulateMedia({ media: 'print' })
+  await expect(page.locator('nav.menu')).toBeHidden()
+  await expect(page.locator('#trace-no')).toBeHidden()
+  await expect(page.getByRole('button', { name: '打印追溯报告' })).toBeHidden()
+  await expect(page.getByText('批次追溯报告')).toBeVisible()
+  await page.emulateMedia({ media: 'screen' })
+})
+
 test('门户账号进不了内部页面', async ({ page }) => {
   await login(page, 'dealer1')
   await expect(page).toHaveURL(/\/portal\/dealer/)

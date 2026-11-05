@@ -81,14 +81,16 @@ public class RecallService {
 
     public record NoticeView(Long id, Long customerId, String customerName, String channel, String contact,
                              BigDecimal shippedQty, BigDecimal recoveredQty, LocalDateTime notifiedAt,
-                             String notifiedBy, String note) {
+                             String notifiedBy, String note,
+                             BigDecimal returnedQty) {
     }
 
     public record RecallView(Long id, String recallNo, Long batchId, String batchNo, String itemName, String unit,
                              String batchStatusLabel, Long complaintId, String complaintNo, String reason,
                              CaseStatus status, String statusLabel, BigDecimal shippedQty, BigDecimal recoveredQty,
                              long notifiedCount, String conclusion, String openedByName, LocalDateTime openedAt,
-                             String closedByName, LocalDateTime closedAt, List<NoticeView> notices) {
+                             String closedByName, LocalDateTime closedAt, List<NoticeView> notices,
+                             BigDecimal returnedQty, boolean openingBatch) {
     }
 
     @Transactional(readOnly = true)
@@ -115,7 +117,8 @@ public class RecallService {
             throw new BizException("批次 " + b.getBatchNo() + " 已有进行中的召回");
         }
         Map<Long, BigDecimal> shippedByCustomer = shippedByCustomer(b.getId());
-        if (shippedByCustomer.isEmpty()) {
+        // 期初批次上线前可能已经发出去了，发货记录不在系统里，不能因此拒绝召回
+        if (shippedByCustomer.isEmpty() && b.getSourceType() != com.cosmetic.scm.domain.SourceType.OPEN) {
             throw new BizException("批次 " + b.getBatchNo() + " 还没有出库记录，在库冻结即可，无需召回");
         }
         Complaint complaint = null;
@@ -201,7 +204,7 @@ public class RecallService {
         r.setClosedByName(signer.getDisplayName());
         r.setClosedAt(time.now());
         recalls.save(r);
-        audit.log("关闭召回", r.getRecallNo(), "已回收 " + plain(v.recoveredQty()) + " / " + plain(v.shippedQty())
+        audit.log("关闭召回", r.getRecallNo(), "已回收 " + plain(v.recoveredQty()) + " / 在外 " + plain(v.shippedQty().subtract(v.returnedQty()))
                 + "，签批人 " + signer.getDisplayName(), r.getConclusion());
         return single(r);
     }
@@ -246,17 +249,39 @@ public class RecallService {
             Batch b = bm.get(r.getBatchId());
             Item i = im.get(b.getItemId());
             Map<Long, BigDecimal> recovered = recoveredByCustomer(r);
+            Map<Long, BigDecimal> returned = returnedOutsideRecall(r);
             List<NoticeView> nv = nm.getOrDefault(r.getId(), List.of()).stream().map(n -> {
                 Partner c = pm.get(n.getCustomerId());
                 return new NoticeView(n.getId(), c.getId(), c.getName(), c.getChannel(), c.getContact(), n.getShippedQty(),
-                        recovered.getOrDefault(c.getId(), BigDecimal.ZERO), n.getNotifiedAt(), n.getNotifiedBy(), n.getNote());
+                        recovered.getOrDefault(c.getId(), BigDecimal.ZERO), n.getNotifiedAt(), n.getNotifiedBy(), n.getNote(),
+                        returned.getOrDefault(c.getId(), BigDecimal.ZERO));
             }).toList();
             BigDecimal recoveredTotal = recovered.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
             out.add(new RecallView(r.getId(), r.getRecallNo(), b.getId(), b.getBatchNo(), i.getName(), i.getUnit(),
                     b.getStatus().getLabel(), r.getComplaintId(), complaintNos.get(r.getComplaintId()), r.getReason(),
                     r.getStatus(), r.getStatus().getLabel(), r.getShippedQty(), recoveredTotal,
                     nv.stream().filter(n -> n.notifiedAt() != null).count(), r.getConclusion(), r.getOpenedByName(),
-                    r.getOpenedAt(), r.getClosedByName(), r.getClosedAt(), nv));
+                    r.getOpenedAt(), r.getClosedByName(), r.getClosedAt(), nv,
+                    returned.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add),
+                    b.getSourceType() == com.cosmetic.scm.domain.SourceType.OPEN));
+        }
+        return out;
+    }
+
+    /** 不是这次召回回收的退货（普通退货、转可售后可能再发给别人）。发出量减去它才是还在外面的量，否则回收率永远到不了 100%。 */
+    private Map<Long, BigDecimal> returnedOutsideRecall(Recall r) {
+        List<SalesReturnLine> lines = returnLines.findByBatchIdIn(List.of(r.getBatchId()));
+        if (lines.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, SalesReturn> rm = returns.findAllById(lines.stream().map(SalesReturnLine::getReturnId).distinct().toList()).stream()
+                .collect(Collectors.toMap(SalesReturn::getId, Function.identity()));
+        Map<Long, BigDecimal> out = new LinkedHashMap<>();
+        for (SalesReturnLine l : lines) {
+            SalesReturn sr = rm.get(l.getReturnId());
+            if (!r.getId().equals(sr.getRecallId())) {
+                out.merge(sr.getCustomerId(), l.getQty(), BigDecimal::add);
+            }
         }
         return out;
     }

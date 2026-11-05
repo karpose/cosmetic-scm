@@ -348,3 +348,27 @@ html.dark .el-button--warning:not(.is-plain):not(.is-text):not(.is-link) {
   .el-date-range-picker .el-date-range-picker__content { padding: 12px 4px; }
   .el-date-range-picker .el-date-range-picker__content .el-date-range-picker__header div { margin-left: 34px; margin-right: 34px; white-space: nowrap; font-size: 12px; }
 }
+
+/* 打印页面（追溯报告等）：去掉导航和玻璃效果，内容按纸张排，不留滚动区 */
+.print-only { display: none; }
+@media print {
+  body::before { display: none !important; }
+  html, body, #app { height: auto !important; overflow: visible !important; background: #fff !important; }
+  .no-print, .aside, .header, .scrim, .el-message { display: none !important; }
+  .print-only { display: block; }
+  .main button { display: none !important; }
+  /* 表格按纸宽收缩：Element 算好的列宽是按屏幕的，直接打印右边的列会被裁掉 */
+  .el-table, .el-table__inner-wrapper, .el-table__header-wrapper, .el-table__body-wrapper, .el-scrollbar__wrap { overflow: visible !important; width: 100% !important; }
+  .el-table table { width: 100% !important; table-layout: fixed !important; }
+  .el-table col { width: auto !important; }
+  .el-table .cell { white-space: normal; word-break: break-all; padding: 0 4px; }
+  .el-table .cell { font-size: 11px; line-height: 1.4; }
+  .el-table .cell .batch { font-size: 10.5px !important; padding: 0 !important; background: none !important; border: 0 !important; box-shadow: none !important; }
+  /* 报告里的批号必须看得全，不能显示成省略号 */
+  .el-table .cell * { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; max-width: none !important; word-break: break-all; }
+  .shell { display: block !important; height: auto !important; padding: 0 !important; }
+  .body, .main { display: block !important; height: auto !important; overflow: visible !important; }
+  .glass, .el-card { background: #fff !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; box-shadow: none !important; }
+  .el-card { break-inside: auto; margin-bottom: 10px; }
+  tr { break-inside: avoid; }
+}
