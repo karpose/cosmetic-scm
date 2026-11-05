@@ -57,7 +57,7 @@
         <el-form-item label="物料与数量">
           <div style="width:100%">
             <div v-for="(l, i) in create.lines" :key="i" class="line-row">
-              <el-select :id="`po-item-${i}`" v-model="l.itemId" placeholder="选择物料" filterable>
+              <el-select aria-label="物料" :id="`po-item-${i}`" v-model="l.itemId" placeholder="选择物料" filterable>
                 <el-option v-for="m in rd.materials.value" :key="m.id" :value="m.id" :disabled="m.banned"
                            :label="`${m.code} ${m.name}${m.banned ? '（禁用原料）' : ''}`" />
               </el-select>

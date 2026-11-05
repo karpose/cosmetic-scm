@@ -178,7 +178,7 @@
             <div v-for="x in done.ext" :key="x.itemId" class="line-row">
               <span>{{ x.itemName }} <span class="muted small">理论 {{ fmtQty(x.requiredQty) }} {{ x.unit }}</span></span>
               <el-input :id="`cp-xb-${x.itemId}`" v-model="x.extBatchNo" placeholder="受托厂原料批号" />
-              <el-input-number :id="`cp-xq-${x.itemId}`" v-model="x.qty" :min="0" :precision="4" :controls="false" />
+              <el-input-number aria-label="实际用量" :id="`cp-xq-${x.itemId}`" v-model="x.qty" :min="0" :precision="4" :controls="false" />
             </div>
           </div>
         </el-form-item>

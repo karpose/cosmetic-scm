@@ -46,6 +46,12 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(new ApiError("请求参数不正确"));
     }
 
+    /** 客户端发错了请求格式，不是系统故障；否则会落到兜底处理，返回 500 和“系统内部错误”。 */
+    @ExceptionHandler(org.springframework.web.HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ApiError> badMediaType(Exception e) {
+        return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE).body(new ApiError("提交的数据格式不正确"));
+    }
+
     @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<ApiError> badMethod(Exception e) {
         return ResponseEntity.status(org.springframework.http.HttpStatus.METHOD_NOT_ALLOWED).body(new ApiError("不支持的请求方法"));

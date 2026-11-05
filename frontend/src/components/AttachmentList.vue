@@ -2,9 +2,11 @@
   <div class="att">
     <div class="att-h">
       <span class="small muted">{{ title }}<template v-if="list.length">（{{ list.length }}）</template></span>
-      <el-upload v-if="canUpload" :show-file-list="false" :http-request="upload" :accept="ACCEPT" :disabled="uploading">
-        <el-button size="small" :loading="uploading" :icon="Upload">上传附件</el-button>
-      </el-upload>
+      <!-- 不用 el-upload：它把按钮再包一层 role=button，读屏和键盘会碰到两个重叠的按钮 -->
+      <template v-if="canUpload">
+        <input ref="picker" type="file" hidden :accept="ACCEPT" @change="onPick" />
+        <el-button size="small" :loading="uploading" :icon="Upload" @click="picker.click()">上传附件</el-button>
+      </template>
     </div>
     <div v-if="!list.length" class="muted small empty">{{ emptyText }}</div>
     <div v-for="a in list" :key="a.id" class="file">
@@ -40,6 +42,7 @@ const props = defineProps({
 const ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.xlsx,.docx,.csv,.txt'
 const list = ref([])
 const uploading = ref(false)
+const picker = ref(null)
 
 const listUrl = () => (props.portal ? `/portal/oem/orders/${props.ownerId}/attachments` : '/attachments')
 const downloadUrl = (id) => (props.portal ? `/portal/oem/attachments/${id}/download` : `/attachments/${id}/download`)
@@ -50,7 +53,14 @@ async function load() {
     : await http.get(listUrl(), { params: { ownerType: props.ownerType, ownerId: props.ownerId } })
 }
 
-async function upload({ file }) {
+function onPick(e) {
+  const file = e.target.files[0]
+  // 清空，否则同一个文件连选两次不会触发 change
+  e.target.value = ''
+  if (file) upload(file)
+}
+
+async function upload(file) {
   if (file.size > 20 * 1024 * 1024) return ElMessage.warning('文件超过 20 MB，请压缩后再传')
   const form = new FormData()
   form.append('file', file)

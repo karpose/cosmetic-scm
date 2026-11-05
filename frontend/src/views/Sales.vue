@@ -55,7 +55,7 @@
         <el-form-item label="品项">
           <div style="width:100%">
             <div v-for="(l, i) in form.lines" :key="i" class="line-row">
-              <el-select :id="`so-item-${i}`" v-model="l.itemId" placeholder="选择成品" filterable @change="preview">
+              <el-select aria-label="成品" :id="`so-item-${i}`" v-model="l.itemId" placeholder="选择成品" filterable @change="preview">
                 <el-option v-for="f in rd.finished.value" :key="f.id" :value="f.id" :label="`${f.code} ${f.name}`" />
               </el-select>
               <el-input-number :id="`so-qty-${i}`" v-model="l.qty" :min="0" :precision="0" :controls="false" placeholder="数量" style="width:100%" @change="preview" />
