@@ -87,7 +87,7 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-05）
 
-- 后端 `mvn clean test` 141 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 30 项全部通过（含 axe 无障碍和手机宽度检查）；GitHub Actions 在 PR 上跑这三项。
+- 后端 `mvn clean test` 142 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 30 项全部通过（含 axe 无障碍和手机宽度检查）；GitHub Actions 在 PR 上跑这三项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
   - `pom.xml` 把 Tomcat、Jackson、log4j 钉在修复了已知漏洞的版本，升 Spring Boot 时要删掉这几行。Spring MVC 6.2.19 还有两条 OSV 记录（SSE 片段渲染、XsltView），修复只在 7.x，系统没用到这两个功能。扫描方法：`mvn dependency:list` 后查 OSV，记录见 07。
