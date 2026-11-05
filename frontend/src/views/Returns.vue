@@ -74,7 +74,7 @@
         <el-form-item label="退回批次">
           <div style="width:100%">
             <div v-for="(l, i) in c.lines" :key="i" class="line-row">
-              <el-select v-model="l.batchId" filterable :placeholder="c.customerId ? '选择发给该客户的批次' : '先选客户'" :disabled="!c.customerId">
+              <el-select aria-label="退货批次" v-model="l.batchId" filterable :placeholder="c.customerId ? '选择发给该客户的批次' : '先选客户'" :disabled="!c.customerId">
                 <el-option v-for="b in returnableOptions" :key="b.batchId" :value="b.batchId" :disabled="Number(b.returnableQty) <= 0"
                            :label="`${b.itemName} · ${b.batchNo} · 已发 ${fmtQty(b.shippedQty)}，可退 ${fmtQty(b.returnableQty)}`" />
               </el-select>

@@ -169,6 +169,15 @@ class CostAttachmentScanTest {
         assertThat(audit.list("MO-TEST-01", 5)).anyMatch(l -> l.getAction().equals("发料扫码核对"));
     }
 
+    @Test
+    void wrongContentTypeIsAClientErrorNotAServerFault() throws Exception {
+        String sales = login("sales1");
+        mvc.perform(post("/api/attachments").contentType(MediaType.APPLICATION_JSON).content("{}")
+                .header("Authorization", "Bearer " + sales)).andExpect(status().isUnsupportedMediaType());
+        mvc.perform(post("/api/items").contentType(MediaType.TEXT_PLAIN).content("x")
+                .header("Authorization", "Bearer " + sales)).andExpect(status().isUnsupportedMediaType());
+    }
+
     private String login(String username) throws Exception {
         String resp = mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content(json.writeValueAsString(Map.of("username", username, "password", DemoDataLoader.DEMO_PASSWORD))))

@@ -1,6 +1,8 @@
 <template>
   <div class="shell" :class="{ collapsed }">
-    <aside class="aside glass">
+    <!-- 手机上侧栏是抽屉：默认藏起来，不占屏幕；展开时盖在内容上 -->
+    <div v-if="isMobile && !collapsed" class="scrim" @click="collapsed = true" />
+    <aside class="aside glass" @keydown.esc="isMobile && (collapsed = true)">
       <div class="brand" title="化妆品批次主线系统">
         <span class="mark">批</span>
         <span v-if="!collapsed" class="name">批次主线系统</span>
@@ -72,7 +74,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -85,6 +87,16 @@ const auth = useAuth()
 const route = useRoute()
 const router = useRouter()
 const collapsed = ref(window.innerWidth < 900)
+const mobileQuery = window.matchMedia('(max-width: 768px)')
+const isMobile = ref(mobileQuery.matches)
+function onViewportChange(e) {
+  isMobile.value = e.matches
+  if (e.matches) collapsed.value = true
+}
+mobileQuery.addEventListener('change', onViewportChange)
+onBeforeUnmount(() => mobileQuery.removeEventListener('change', onViewportChange))
+// 手机上选完菜单就收起抽屉
+watch(() => route.path, () => { if (isMobile.value) collapsed.value = true })
 
 const groups = computed(() => {
   if (auth.hasAny('OEM_PORTAL')) return [{ title: '协同', items: [{ path: '/portal/oem', title: '委托生产协同', icon: OfficeBuilding }] }]
@@ -214,8 +226,15 @@ async function changePassword() {
 .main { flex: 1; min-height: 0; overflow: auto; padding: 0 2px; border-radius: 18px; }
 
 @media (max-width: 768px) {
-  .shell { --gap: 8px; --aside-w: 64px; }
-  .shell:not(.collapsed) { --aside-w: 200px; }
+  .shell, .shell.collapsed { --gap: 8px; grid-template-columns: minmax(0, 1fr); }
+  .aside {
+    position: fixed; top: 8px; bottom: 8px; left: 8px; width: 228px; z-index: 1500;
+    transition: transform .25s ease, visibility 0s;
+  }
+  /* visibility 让收起的链接也不能被 Tab 选中 */
+  .shell.collapsed .aside { transform: translateX(calc(-100% - 16px)); visibility: hidden; transition: transform .25s ease, visibility 0s .25s; }
+  .scrim { position: fixed; inset: 0; z-index: 1400; background: var(--el-overlay-color-lighter); }
+  .header :deep(.el-button) { width: 40px; height: 40px; }
   .who { display: none; }
 }
 </style>

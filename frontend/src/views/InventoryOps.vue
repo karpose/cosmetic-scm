@@ -74,16 +74,20 @@
             <el-input v-model="d.countFilter" size="small" placeholder="筛选物料或批号" clearable style="width:200px" />
           </div>
           <el-table :data="countRows" max-height="320" size="small" empty-text="该仓没有库存">
-            <el-table-column label="物料 / 批号" min-width="200">
-              <template #default="{ row }">{{ row.itemName }} <BatchNo :no="row.batchNo" /></template>
+            <el-table-column label="物料 / 批号" :min-width="narrow ? 120 : 200">
+              <template #default="{ row }">
+                {{ row.itemName }} <BatchNo :no="row.batchNo" />
+                <div v-if="narrow" class="muted small">账面 <span class="mono">{{ fmtQty(row.qty) }}</span></div>
+              </template>
             </el-table-column>
-            <el-table-column label="账面" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span></template></el-table-column>
-            <el-table-column label="实盘" width="150">
+            <!-- 手机上账面并到第一列，实盘不用横向滚动就能填 -->
+            <el-table-column v-if="!narrow" label="账面" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span></template></el-table-column>
+            <el-table-column label="实盘" :width="narrow ? 110 : 150">
               <template #default="{ row }">
                 <el-input-number aria-label="实盘数量" v-model="counted[row.batchId]" :min="0" :controls="false" size="small" style="width:100%" />
               </template>
             </el-table-column>
-            <el-table-column label="差异" width="100" align="right">
+            <el-table-column label="差异" :width="narrow ? 64 : 100" align="right">
               <template #default="{ row }">
                 <span class="mono" :class="diffOf(row) < 0 ? 'neg' : diffOf(row) > 0 ? 'pos' : 'muted'">{{ diffOf(row) > 0 ? '+' : '' }}{{ fmtQty(diffOf(row)) }}</span>
               </template>
@@ -95,7 +99,7 @@
         <el-form-item v-else label="批次与数量">
           <div style="width:100%">
             <div v-for="(l, i) in d.lines" :key="i" class="line-row">
-              <el-select v-model="l.batchId" placeholder="选择在库批次" filterable :disabled="!d.fromId">
+              <el-select aria-label="批次" v-model="l.batchId" placeholder="选择在库批次" filterable :disabled="!d.fromId">
                 <el-option v-for="s in stock" :key="s.batchId" :value="s.batchId"
                            :label="`${s.itemName} · ${s.batchNo} · 在库 ${fmtQty(s.qty)} ${s.unit}（${s.statusLabel}）`" />
               </el-select>
@@ -146,6 +150,7 @@ const auth = useAuth()
 const rd = useRefData()
 const docs = ref([])
 const type = ref('')
+const narrow = window.innerWidth < 640
 const canMove = computed(() => auth.hasAny('ADMIN', 'WAREHOUSE'))
 const canScrap = computed(() => auth.hasAny('QA', 'QSO'))
 const isQso = computed(() => auth.hasAny('QSO'))

@@ -624,6 +624,71 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await expect(page.locator('nav [aria-current=page]')).toHaveText('经营看板')
 })
 
+test('手机宽度：侧栏是抽屉，弹窗不超出屏幕，确认按钮够得到，门户能填数量', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 })
+  await login(page, 'admin', 'Admin@123456')
+  await page.goto('/purchase')
+  // 侧栏默认藏起来，内容占满宽度；展开后选菜单会自动收起
+  await expect(page.locator('nav.menu')).toBeHidden()
+  expect(await page.locator('main').evaluate((e) => e.getBoundingClientRect().width)).toBeGreaterThan(340)
+  await page.getByRole('button', { name: '展开菜单' }).click()
+  await page.locator('nav.menu').getByRole('link', { name: '库存作业' }).click()
+  await expect(page).toHaveURL(/\/inventory-ops/)
+  await expect(page.locator('nav.menu')).toBeHidden()
+
+  for (const [path, open] of [['/purchase', '新建采购单'], ['/inventory-ops', '仓间调拨'], ['/master', '批量导入']]) {
+    await page.goto(path)
+    await page.getByRole('button', { name: open }).click()
+    const box = await page.locator('.el-dialog:visible').boundingBox()
+    expect(box.x, path).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width, path).toBeLessThanOrEqual(375)
+    await page.keyboard.press('Escape')
+  }
+  // 放行确认这类长句不能被截断
+  const mo = await page.evaluate(async () => {
+    const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
+    const get = (u) => fetch(`/api${u}`, { headers: h }).then((r) => r.json())
+    const oem = (await get('/partners')).find((p) => p.kind === 'OEM')
+    const fg = (await get('/items')).find((i) => i.code === 'FG-SER-001')
+    const m = await fetch('/api/mfg-orders', { method: 'POST', headers: h, body: JSON.stringify({ factoryId: oem.id, fgItemId: fg.id, plannedQty: 1 }) }).then((r) => r.json())
+    await fetch(`/api/mfg-orders/${m.id}/issue`, { method: 'POST', headers: h })
+    return m.moNo
+  })
+  await page.goto('/production')
+  await page.locator('tr').filter({ hasText: mo }).getByRole('button', { name: '完工入库' }).first().click()
+  const dlg = page.locator('.el-dialog:visible')
+  await expect(dlg.getByText('受托厂已完成出厂放行')).toBeVisible()
+  const clipped = await dlg.evaluate((e) => e.scrollWidth - e.clientWidth)
+  expect(clipped).toBeLessThanOrEqual(1)
+
+  await login(page, 'dealer1')
+  const qty = page.getByRole('spinbutton', { name: '订购数量' }).first()
+  await expect(qty).toBeVisible()
+  expect((await qty.boundingBox()).x + (await qty.boundingBox()).width).toBeLessThanOrEqual(375)
+  await page.setViewportSize({ width: 1280, height: 720 })
+})
+
+test('无障碍：常用弹窗 axe 无违规', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  const audit = async (path, open) => {
+    await page.goto(path)
+    await page.getByRole('button', { name: open }).click()
+    await expect(page.locator('.el-dialog:visible')).toBeVisible()
+    await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+    const bad = await page.locator('.el-dialog:visible').evaluate(async (e) => {
+      const r = await window.axe.run(e, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+      return r.violations.map((v) => `${v.id} ×${v.nodes.length}：${v.nodes[0].target[0]}`)
+    })
+    expect(bad, open).toEqual([])
+  }
+  await audit('/purchase', '新建采购单')
+  await audit('/sales', '新建出库单')
+  await audit('/returns', '登记退货')
+  await audit('/inventory-ops', '仓间调拨')
+  await audit('/production', '新建生产 / 委托单')
+  await audit('/qms', '登记偏差')
+})
+
 test('门户账号进不了内部页面', async ({ page }) => {
   await login(page, 'dealer1')
   await expect(page).toHaveURL(/\/portal\/dealer/)

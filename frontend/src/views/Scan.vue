@@ -237,6 +237,8 @@ onBeforeUnmount(stopCamera)
 <style scoped>
 .pick { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .scanbar { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 12px; border-radius: 18px; }
+/* 手机上输入框独占一行，提示文字才显示得全，摄像头按钮也更好按 */
+@media (max-width: 640px) { .scanbar { grid-template-columns: minmax(0, 1fr); } }
 .flash { display: flex; gap: 12px; align-items: center; padding: 14px 18px; border-radius: 18px; border: 1px solid var(--lg-stroke); background: var(--lg-surface); }
 .flash b { font-size: 16px; }
 .ficon { font-size: 30px; flex: none; }

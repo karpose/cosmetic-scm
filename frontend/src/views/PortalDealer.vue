@@ -24,12 +24,18 @@
     <!-- 订货 -->
     <el-card v-else-if="tab === 'order'" shadow="never" body-style="padding:0 0 8px">
       <el-table :data="catalog" v-loading="loader.loading.value" empty-text="暂时没有可订商品">
-        <el-table-column label="商品" min-width="200"><template #default="{ row }">{{ row.name }}<div class="muted small mono">{{ row.code }}</div></template></el-table-column>
-        <el-table-column prop="filingNo" label="备案编号" min-width="140" />
-        <el-table-column label="可订数量" width="130" align="right">
+        <el-table-column label="商品" :min-width="narrow ? 150 : 200">
+          <template #default="{ row }">
+            {{ row.name }}<div class="muted small mono">{{ row.code }}</div>
+            <div v-if="narrow" class="muted small">可订 <span class="mono">{{ Number(row.available) ? fmtQty(row.available) : '暂无' }}</span> {{ row.unit }}</div>
+          </template>
+        </el-table-column>
+        <!-- 手机屏幕放不下这两列，可订数量并到商品里，订购数量不用横向滚动就能填 -->
+        <el-table-column v-if="!narrow" prop="filingNo" label="备案编号" min-width="140" />
+        <el-table-column v-if="!narrow" label="可订数量" width="130" align="right">
           <template #default="{ row }"><span class="mono" :class="{ muted: !Number(row.available) }">{{ Number(row.available) ? fmtQty(row.available) : '暂无' }}</span> {{ row.unit }}</template>
         </el-table-column>
-        <el-table-column label="订购数量" width="170">
+        <el-table-column label="订购数量" :width="narrow ? 110 : 170">
           <template #default="{ row }">
             <el-input-number aria-label="订购数量" v-model="cart[row.itemId]" :min="0" :max="Number(row.available)" :precision="0" :disabled="!Number(row.available)" :controls="false" placeholder="0" style="width:100%" />
           </template>
@@ -95,6 +101,7 @@ import { useLoader } from '../utils/loader'
 
 const auth = useAuth()
 const tab = ref('order')
+const narrow = window.innerWidth < 640
 const catalog = ref([])
 const orders = ref([])
 const recalls = ref([])

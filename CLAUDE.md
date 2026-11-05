@@ -38,6 +38,7 @@ cp .env.example .env && docker compose up -d --build
 - 前端 `frontend/src/`：Vue 3 `<script setup>` + Element Plus，JavaScript（非 TS）。接口统一走 `src/api.js`（自动带 JWT，错误统一 `ElMessage` 提示，`{ silent: true }` 可静默）。主数据下拉用 `utils/refdata.js` 的 `useRefData()`。列表筛选 + 分页统一用 `utils/table.js` 的 `usePaged()` 和 `components/ListPager.vue`，加载失败用 `LoadError.vue`。
 - 样式是 Liquid Glass：设计变量和 Element Plus 换皮都在 `src/styles.css`（`--lg-*` 变量、`.glass` 原语）。新页面直接用 `el-card` / `.glass`，不要写死背景色；颜色用变量，深浅色都要能看。
 - 无障碍：冒烟测试用 axe 查 WCAG A/AA，新页面要能过。不在带 label 的 `el-form-item` 里的 `el-select`、`el-input-number`、`el-progress` 要写 `aria-label`（占位文字不算名称）；表格可能滚动又没有可聚焦内容时加 `scrollbar-tabindex="0"`。文字色用 `--el-text-color-*` 和 `--el-color-*`（浅色已调到 4.5:1），不要写死 Element 默认色。axe 判断不了半透明和渐变背景，改颜色时要另外算。侧栏是 `<nav>` + 真实链接，不是 `el-menu`。
+- 手机宽度（≤768px）：侧栏是抽屉，默认藏起来。弹窗宽度可以照常写，全局限制了不超出屏幕。放不下的表格列要想清楚：要填数据的列（订购数量、实盘）不能靠横向滚动才看到，把次要列并进第一列（`narrow` 判断，见 `PortalDealer.vue`、`InventoryOps.vue`）。同一个 `el-form-item` 里放多个控件时，只有第一个关联 label，其余要写 `aria-label`。不要用 `el-upload` 包按钮（嵌套交互控件），见 `AttachmentList.vue`。
 
 ## 必须保持的规则
 
@@ -80,9 +81,9 @@ cp .env.example .env && docker compose up -d --build
 - 时间取 `TimeProvider.today()/now()`（Asia/Shanghai），不要直接 `LocalDate.now()`。
 - 前端文案用中文，按钮写清动作（“确认收货”“签批”），不要用“提交”“确定”这种泛词。
 
-## 当前状态（2026-11-04）
+## 当前状态（2026-11-05）
 
-- 后端 `mvn clean test` 110 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 24 项全部通过（含 axe 无障碍检查）；GitHub Actions 在 PR 上跑这三项。
+- 后端 `mvn clean test` 111 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 26 项全部通过（含 axe 无障碍和手机宽度检查）；GitHub Actions 在 PR 上跑这三项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
 - 已完成：一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。

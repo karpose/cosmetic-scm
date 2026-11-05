@@ -267,6 +267,12 @@ html.dark .el-dialog::after {
   box-shadow: var(--lg-highlight), var(--lg-shadow-pop) !important;
 }
 .el-dialog { border-radius: 24px; padding: 22px 24px 20px; position: relative; overflow: hidden; }
+/* 弹窗宽度都写死在页面上（420–860px）。手机上不限宽会被裁掉右边，连确认按钮都点不到 */
+.el-dialog { max-width: calc(100vw - 24px); box-sizing: border-box; }
+.el-drawer { max-width: 100vw; }
+/* 复选框默认不换行。放行确认这类长句在窄弹窗里会被截断，看不全就勾选 */
+.el-checkbox { height: auto; min-height: var(--el-checkbox-height, 32px); white-space: normal; align-items: flex-start; padding: 6px 0; box-sizing: border-box; }
+.el-checkbox__label { white-space: normal; line-height: 1.45; }
 .el-dialog__title { font-weight: 650; font-size: 17px; }
 .el-drawer { border-radius: 24px 0 0 24px; }
 .el-drawer__header { margin-bottom: 8px; }
@@ -335,4 +341,10 @@ html.dark .el-button--warning:not(.is-plain):not(.is-text):not(.is-link) {
   .line-row { grid-template-columns: 1fr 1fr; }
   .line-row > :first-child { grid-column: 1 / -1; }
   .filters .el-input, .filters .el-select { width: 100%; }
+  .el-dialog { --el-dialog-margin-top: 12px; padding: 16px; border-radius: 18px; }
+  /* 日期范围面板默认至少 513px 宽；手机上压窄，月份标题不换行才不会压住星期 */
+  .el-date-range-picker.el-picker-panel { width: calc(100vw - 16px); }
+  .el-date-range-picker .el-picker-panel__body { min-width: 0; display: table; table-layout: fixed; width: 100%; }
+  .el-date-range-picker .el-date-range-picker__content { padding: 12px 4px; }
+  .el-date-range-picker .el-date-range-picker__content .el-date-range-picker__header div { margin-left: 34px; margin-right: 34px; white-space: nowrap; font-size: 12px; }
 }

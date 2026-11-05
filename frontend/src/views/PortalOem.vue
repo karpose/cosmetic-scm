@@ -107,7 +107,7 @@
             <div v-for="m in rp.materials" :key="m.itemId" class="line-row">
               <span>{{ m.itemName }} <span class="muted small">理论 {{ fmtQty(m.requiredQty) }} {{ m.unit }}</span></span>
               <el-input v-model="m.extBatchNo" placeholder="原料批号" maxlength="60" />
-              <el-input-number v-model="m.qty" :min="0" :precision="4" :controls="false" />
+              <el-input-number aria-label="实际用量" v-model="m.qty" :min="0" :precision="4" :controls="false" />
             </div>
           </div>
         </el-form-item>
