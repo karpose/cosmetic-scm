@@ -40,13 +40,19 @@ public class LoginService {
     @Value("${scm.security.lock-minutes:15}")
     private int lockMinutes;
 
+    private volatile String decoyHash;
+
     public record LoginResp(String token, UserView user) {
     }
 
     @Transactional(noRollbackFor = BizException.class)
     public LoginResp login(String username, String password) {
-        AppUser u = users.findByUsername(username.trim()).filter(AppUser::isEnabled)
-                .orElseThrow(LoginService::badCredentials);
+        AppUser u = users.findByUsername(username.trim()).filter(AppUser::isEnabled).orElse(null);
+        if (u == null) {
+            // 账号不存在也算一次密码：否则响应快几十倍，能试出哪些账号存在
+            passwordEncoder.matches(password, decoyHash());
+            throw badCredentials();
+        }
         LocalDateTime now = time.now();
         if (u.getLockedUntil() != null && u.getLockedUntil().isAfter(now)) {
             throw new BizException(HttpStatus.LOCKED, "账号已锁定，请于 " + u.getLockedUntil().format(HM) + " 后再试，或联系管理员解锁");
@@ -70,6 +76,13 @@ public class LoginService {
         users.save(u);
         audit.logAs(u, "登录", "");
         return new LoginResp(jwtService.issue(u), userService.view(u));
+    }
+
+    private String decoyHash() {
+        if (decoyHash == null) {
+            decoyHash = passwordEncoder.encode(java.util.UUID.randomUUID().toString());
+        }
+        return decoyHash;
     }
 
     private static BizException badCredentials() {

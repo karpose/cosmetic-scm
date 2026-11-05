@@ -1,5 +1,6 @@
 package com.cosmetic.scm.security;
 
+import com.cosmetic.scm.common.BizException;
 import java.util.Arrays;
 import java.util.List;
 
@@ -22,6 +23,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class AuthController {
 
+    private static final int MAX_FAILED_PER_MINUTE = 20;
+
+    private final com.cosmetic.scm.common.ClientRateLimiter failedLogins = new com.cosmetic.scm.common.ClientRateLimiter(MAX_FAILED_PER_MINUTE);
     private final LoginService loginService;
     private final CurrentUser currentUser;
     private final JwtService jwtService;
@@ -34,8 +38,18 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public LoginService.LoginResp login(@Valid @RequestBody LoginReq req) {
-        return loginService.login(req.username(), req.password());
+    public LoginService.LoginResp login(@Valid @RequestBody LoginReq req, jakarta.servlet.http.HttpServletRequest http) {
+        String ip = com.cosmetic.scm.common.ClientRateLimiter.clientIp(http);
+        // 账号锁定只防盯着一个账号猜；换着账号试同一个弱密码要按来源限制。只数失败，办公室共用出口 IP 时正常登录不受影响
+        if (failedLogins.exceeded(ip)) {
+            throw new BizException(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, "登录失败次数太多，请 1 分钟后再试");
+        }
+        try {
+            return loginService.login(req.username(), req.password());
+        } catch (BizException e) {
+            failedLogins.record(ip);
+            throw e;
+        }
     }
 
     @GetMapping("/me")
