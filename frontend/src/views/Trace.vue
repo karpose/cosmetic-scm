@@ -1,20 +1,39 @@
 <template>
   <div class="page">
-    <div class="page-head">
+    <div class="page-head no-print">
       <div>
         <h2>批次追溯</h2>
         <p>输入任一批号：向上查到原料批次、供应商和生产方，向下查到成品批次和收货客户。发现问题时可在这里一键冻结受影响批次。</p>
       </div>
     </div>
 
-    <el-card shadow="never">
+    <el-card shadow="never" class="no-print">
       <form class="toolbar" @submit.prevent="go">
-        <el-input id="trace-no" v-model="input" placeholder="输入批号，如 A3-261102-01" clearable class="mono" style="flex:1 1 260px" />
+        <el-input id="trace-no" v-model="input" placeholder="输入系统批号，或供应商、受托厂的批号" clearable class="mono" style="flex:1 1 260px" />
         <el-button type="primary" native-type="submit" :loading="loading">追溯</el-button>
       </form>
     </el-card>
 
+    <!-- 查的不是系统批号，而是外部批号时：列出对应的系统批次 -->
+    <el-card v-if="hits.length" shadow="never" class="no-print">
+      <template #header>“{{ searched }}”不是系统批号，找到这些匹配的批次</template>
+      <el-table :data="hits" empty-text="没有匹配">
+        <el-table-column label="系统批号" min-width="170">
+          <template #default="{ row }"><el-button link type="primary" @click="openHit(row)">{{ row.batchNo }}</el-button></template>
+        </el-table-column>
+        <el-table-column label="物料" min-width="180"><template #default="{ row }">{{ row.itemName }}<div class="muted small mono">{{ row.itemCode }}</div></template></el-table-column>
+        <el-table-column prop="matchLabel" label="匹配方式" min-width="220" />
+        <el-table-column prop="statusLabel" label="状态" width="110" />
+      </el-table>
+    </el-card>
+
     <template v-if="t">
+      <div class="print-only print-head">
+        <h2>批次追溯报告</h2>
+        <p class="small">打印时间 {{ printedAt }} · 打印人 {{ auth.user?.displayName }}</p>
+      </div>
+      <el-alert v-if="t.source.type === '期初导入'" type="warning" show-icon :closable="false"
+                title="这是期初导入的批次：上线前的领用和发货记录不在系统里，下面的流向可能不完整，请到旧系统或台账核对。" />
       <el-card shadow="never">
         <template #header>
           <div class="head">
@@ -22,7 +41,8 @@
             <span class="toolbar">
               <StatusTag :status="t.batch.status" :label="t.batch.statusLabel" />
               <span class="muted small">追溯用时 {{ elapsedText }} 毫秒</span>
-              <el-button size="small" @click="$router.push({ path: '/labels', query: { batches: t.batch.batchNo } })">打印标签</el-button>
+              <el-button class="no-print" size="small" @click="printReport">打印追溯报告</el-button>
+              <el-button class="no-print" size="small" @click="$router.push({ path: '/labels', query: { batches: t.batch.batchNo } })">打印标签</el-button>
             </span>
           </div>
         </template>
@@ -153,7 +173,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import http from '../api'
@@ -169,6 +189,9 @@ const route = useRoute()
 const router = useRouter()
 const input = ref(route.query.no || '')
 const t = ref(null)
+const hits = ref([])
+const searched = ref('')
+const printedAt = ref('')
 const loading = ref(false)
 const canFreeze = computed(() => auth.hasAny('QA', 'QSO'))
 const elapsedText = computed(() => (t.value && t.value.elapsedMs >= 1 ? String(t.value.elapsedMs) : '不到 1'))
@@ -184,16 +207,35 @@ function go() {
   if (no) router.push({ name: 'trace', query: { no } })
 }
 
+async function searchExternal(no) {
+  searched.value = no
+  hits.value = await http.get('/trace/search', { params: { q: no } })
+  if (!hits.value.length) ElMessage.error(`没有找到批号 ${no}，也没有匹配的供应商或受托厂批号`)
+}
+
+function openHit(row) {
+  input.value = row.batchNo
+  go()
+}
+
+function printReport() {
+  printedAt.value = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 16)
+  nextTick(() => window.print())
+}
+
 async function load(no) {
   if (!no) {
     t.value = null
     return
   }
   loading.value = true
+  hits.value = []
   try {
-    t.value = await http.get(`/trace/${encodeURIComponent(no)}`)
-  } catch {
+    t.value = await http.get(`/trace/${encodeURIComponent(no)}`, { silent: true })
+  } catch (e) {
     t.value = null
+    if (e.status === 404) await searchExternal(no)
+    else if (e.status) ElMessage.error(e.message)
   } finally {
     loading.value = false
   }

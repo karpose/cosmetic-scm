@@ -17,6 +17,8 @@ public interface BatchRepository extends JpaRepository<Batch, Long> {
 
     Optional<Batch> findByBatchNo(String batchNo);
 
+    List<Batch> findByExtBatchNo(String extBatchNo);
+
     List<Batch> findByStatusInOrderByIdDesc(Collection<BatchStatus> statuses);
 
     List<Batch> findTop500ByOrderByIdDesc();

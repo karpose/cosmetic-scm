@@ -16,6 +16,11 @@ public class TraceController {
 
     private final TraceService trace;
 
+    @GetMapping("/search")
+    public java.util.List<TraceService.LotHit> search(@org.springframework.web.bind.annotation.RequestParam String q) {
+        return trace.search(q);
+    }
+
     @GetMapping("/{batchNo}")
     public TraceView trace(@PathVariable String batchNo) {
         return trace.trace(batchNo);

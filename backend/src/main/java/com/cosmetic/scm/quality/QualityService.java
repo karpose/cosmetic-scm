@@ -56,6 +56,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class QualityService {
 
     private final QualityDecisionRepository decisions;
+    private final com.cosmetic.scm.inventory.GenealogyRepository genealogy;
+    private final com.cosmetic.scm.recall.RecallRepository recalls;
     private final BatchRepository batches;
     private final InventoryService inventory;
     private final MfgOrderRepository mfgOrders;
@@ -179,6 +181,7 @@ public class QualityService {
                 throw new BizException(item.getName() + " 还没有登记备案或注册编号，不能上市放行");
             }
             requireNoOpenDeviation(b);
+            requireMaterialsUsable(b);
             // 只看最新一条已完成的记录：注册证续期后，旧证的到期日不再有效
             filings.findByFgItemIdAndStatusOrderByIdDesc(item.getId(), FilingStatus.FILED).stream().findFirst()
                     .filter(f -> f.getExpiryDate() != null && f.getExpiryDate().isBefore(time.today()))
@@ -249,6 +252,10 @@ public class QualityService {
         if (b.getStatus() != BatchStatus.FROZEN) {
             throw new BizException("批次 " + b.getBatchNo() + " 没有被冻结");
         }
+        // 召回没结束就解冻，已召回的批次又能发货了
+        if (recalls.existsByBatchIdAndStatus(b.getId(), com.cosmetic.scm.domain.CaseStatus.OPEN)) {
+            throw new BizException("批次 " + b.getBatchNo() + " 有进行中的召回，要先关闭召回才能解冻");
+        }
         BatchStatus back = b.getStatusBeforeFreeze() == null ? BatchStatus.QUARANTINE : b.getStatusBeforeFreeze();
         b.setStatus(back);
         b.setStatusBeforeFreeze(null);
@@ -263,6 +270,18 @@ public class QualityService {
     }
 
     /** 微小偏差不挡放行；重大及以上的必须先关闭。 */
+    /** 原料被冻结后，已发料的单子照样能完工。成品放行这一关要拦住，否则问题原料做的成品还是会上市。 */
+    private void requireMaterialsUsable(Batch fg) {
+        List<Long> parents = genealogy.findByChildBatchId(fg.getId()).stream()
+                .map(com.cosmetic.scm.inventory.BatchGenealogy::getParentBatchId).filter(java.util.Objects::nonNull).distinct().toList();
+        List<String> bad = batches.findAllById(parents).stream()
+                .filter(p -> p.getStatus() == BatchStatus.FROZEN || p.getStatus() == BatchStatus.REJECTED)
+                .map(p -> p.getBatchNo() + "（" + p.getStatus().getLabel() + "）").toList();
+        if (!bad.isEmpty()) {
+            throw new BizException("用到的物料批次 " + String.join("、", bad) + " 有问题，不能放行；调查清楚并解冻后再放行，或判定不合格");
+        }
+    }
+
     private void requireNoOpenDeviation(Batch b) {
         List<String> open = deviations.findByBatchIdAndStatus(b.getId(), CaseStatus.OPEN).stream()
                 .filter(x -> x.getLevel() != DeviationLevel.MINOR).map(Deviation::getDeviationNo).toList();
