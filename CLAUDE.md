@@ -54,7 +54,7 @@ cp .env.example .env && docker compose up -d --build
 - 令牌只证明身份，角色每次从数据库读（`DbJwtAuthenticationConverter`），不要往令牌里加权限判断。改密后旧令牌失效，改密接口返回新令牌。
 - 列表和统计不能靠“最近 N 条”做判断（曾因此漏掉最老的临期批次、半年前没上报的不良反应，呆滞金额也只加了列表里的 10 个）。列表可以截断，合计要按全部算。可用库存不含已过期批次。期初导入写的放行记录不算放行周期。呆滞只看发料和出库，调拨不算。看板和补货的手算回归在 `NumbersGroundTruthTest`（关掉示例数据）。不要 `findAll` 全表：用分组或专门的查询。看板、补货建议的短时缓存在 Controller 层（`ShortCache`），测试和开发环境 ttl 为 0。
 - 权限边界在 `SecurityConfig` 的 URL 层：`/api/portal/oem/**` 只给 OEM_PORTAL，`/api/portal/dealer/**` 只给 DEALER，`/api/integration/**` 只认 X-Api-Key，`/api/public/**` 和 `/api/health` 无需登录（只能放不含内部数据的接口，前端调用时加 `{ public: true }` 不带令牌），其余 `/api/**` 只给内部角色。门户服务里的每个查询都必须用 `CurrentUser.portalPartnerId()` 过滤，别人的数据一律当“不存在”。新增内部接口不需要额外处理，新增门户接口要放在对应前缀下。
-- 附件只增不删，存储用 `CREATE_NEW` 不覆盖；上传校验白名单扩展名和文件头，记录 SHA-256，下载时重新核对。文件在 `scm.storage.dir`（Docker 里是 `files-data` 卷），数据库只存元数据。受托厂上传走 `/api/portal/oem/orders/{moId}/attachments`，只能传本厂未完工的单子。
+- 附件只增不删，存储用 `CREATE_NEW` 不覆盖；上传校验白名单扩展名和文件头，记录 SHA-256，下载时重新核对。文件在 `scm.storage.dir`（Docker 里是 `files-data` 卷），数据库只存元数据。受托厂上传走 `/api/portal/oem/orders/{moId}/attachments`，只能传本厂未完工的单子。受托厂能看到内部传到本单的附件，这是用户确认过的，不是漏洞。
 - `spring.servlet.multipart` 的上限必须高于 nginx 的 `client_max_body_size`（现在 30 MB 对 25 MB）。业务上限（20 MB）在 `AttachmentService` 判断。反过来配置会让后端没读完请求体就回错误，和 nginx 互相等待到超时。
 - 金额是标准成本估值：`MasterService.unitCosts()` 优先用标准成本，成品退回 BOM 物料成本；没成本的物料不计入，并显示数量提示。不要当账面成本用。
 - 配方：`bom` / `bom_line` 永远是当前生效版本的内容，其它模块照常读。生效配方不能直接改（`MasterService.saveBom` 只接受首版），要走 `FormulaService`：草稿 → 提交 → QSO 签批，发起人不能批自己的；原料变化必须有该版本 FILED 的 `product_filing`。生产单 `formula_version_id`：未发料跟随生效版本，发料后锁定，用量按版本读（`MasterService.versionLines`）。
@@ -87,7 +87,7 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-05）
 
-- 后端 `mvn clean test` 141 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 29 项全部通过（含 axe 无障碍和手机宽度检查）；GitHub Actions 在 PR 上跑这三项。
+- 后端 `mvn clean test` 141 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 30 项全部通过（含 axe 无障碍和手机宽度检查）；GitHub Actions 在 PR 上跑这三项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
   - `pom.xml` 把 Tomcat、Jackson、log4j 钉在修复了已知漏洞的版本，升 Spring Boot 时要删掉这几行。Spring MVC 6.2.19 还有两条 OSV 记录（SSE 片段渲染、XsltView），修复只在 7.x，系统没用到这两个功能。扫描方法：`mvn dependency:list` 后查 OSV，记录见 07。
