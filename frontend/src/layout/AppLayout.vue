@@ -50,7 +50,8 @@
         </el-dropdown>
       </header>
       <main class="main">
-        <router-view />
+        <!-- 必须先改密码时后端会拒绝所有业务接口。不加载页面，否则新员工第一眼看到的是红色报错 -->
+        <router-view v-if="!forced" />
       </main>
     </div>
 

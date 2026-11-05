@@ -116,7 +116,9 @@ public class GoLiveService {
         c.add(allItems.isEmpty() ? new Check(g, "物料和成品", "BLOCK", "还没有导入物料", "/master")
                 : new Check(g, "物料和成品", fg.isEmpty() ? "BLOCK" : "OK", "物料 " + (allItems.size() - fg.size()) + " 个，成品 " + fg.size() + " 个", "/master"));
         List<Item> noCost = allItems.stream().filter(i -> i.getItemType() != ItemType.FG && i.getStdCost() == null).toList();
-        c.add(noCost.isEmpty() ? new Check(g, "标准成本", "OK", "物料都已填写", "/master")
+        boolean noMaterials = allItems.stream().allMatch(i -> i.getItemType() == ItemType.FG);
+        // 一个都没有时不能写“都已填写”，看着像已经检查通过了
+        c.add(noCost.isEmpty() ? new Check(g, "标准成本", "OK", noMaterials ? "还没有物料，导入后再检查" : "物料都已填写", "/master")
                 : new Check(g, "标准成本", "WARN", noCost.size() + " 个物料没填，看板金额会偏低：" + codes(noCost), "/master"));
 
         List<Partner> all = partners.findAll();
@@ -129,10 +131,12 @@ public class GoLiveService {
         c.add(factories.isEmpty() ? new Check(g, "生产方", "BLOCK", "至少要有一个受托厂或自有工厂才能下生产单", "/master")
                 : new Check(g, "生产方", "OK", factories.size() + " 家", "/master"));
         List<Partner> bad = all.stream().filter(p -> p.getKind() != PartnerKind.CUSTOMER && !p.usable(today)).toList();
-        c.add(bad.isEmpty() ? new Check(g, "供应商和受托厂资质", "OK", "都在合格名录内且未过期", "/master")
+        boolean noVendors = all.stream().allMatch(p -> p.getKind() == PartnerKind.CUSTOMER);
+        c.add(bad.isEmpty() ? new Check(g, "供应商和受托厂资质", "OK", noVendors ? "还没有供应商和受托厂，导入后再检查" : "都在合格名录内且未过期", "/master")
                 : new Check(g, "供应商和受托厂资质", "WARN", bad.size() + " 家不能下单（不在名录或资质过期）：" + names(bad), "/master"));
         List<Partner> noContact = all.stream().filter(p -> p.getKind() == PartnerKind.CUSTOMER && (p.getContact() == null || p.getAddress() == null)).toList();
-        c.add(noContact.isEmpty() ? new Check(g, "客户联系方式", "OK", "都已填写", "/master")
+        boolean noCustomers = all.stream().noneMatch(p -> p.getKind() == PartnerKind.CUSTOMER);
+        c.add(noContact.isEmpty() ? new Check(g, "客户联系方式", "OK", noCustomers ? "还没有客户，导入后再检查" : "都已填写", "/master")
                 : new Check(g, "客户联系方式", "WARN", noContact.size() + " 家缺联系人或地址，召回时要用：" + names(noContact), "/master"));
     }
 
@@ -140,13 +144,13 @@ public class GoLiveService {
         String g = "配方与备案";
         List<Item> fg = items.findAll().stream().filter(i -> i.isActive() && i.getItemType() == ItemType.FG).toList();
         List<Item> noFormula = fg.stream().filter(i -> formulas.findFirstByFgItemIdAndStatus(i.getId(), FormulaStatus.EFFECTIVE).isEmpty()).toList();
-        c.add(noFormula.isEmpty() ? new Check(g, "成品配方", "OK", "都已录入", "/master")
+        c.add(noFormula.isEmpty() ? new Check(g, "成品配方", "OK", fg.isEmpty() ? "还没有成品，导入后再检查" : "都已录入", "/master")
                 : new Check(g, "成品配方", "BLOCK", noFormula.size() + " 个成品没有配方，不能下生产单：" + codes(noFormula), "/master"));
         List<Item> noFiling = fg.stream().filter(i -> i.getFilingNo() == null).toList();
-        c.add(noFiling.isEmpty() ? new Check(g, "备案编号", "OK", "都已登记", "/formulas?tab=filings")
+        c.add(noFiling.isEmpty() ? new Check(g, "备案编号", "OK", fg.isEmpty() ? "还没有成品，导入后再检查" : "都已登记", "/formulas?tab=filings")
                 : new Check(g, "备案编号", "BLOCK", noFiling.size() + " 个成品没有备案编号，不能上市放行：" + codes(noFiling), "/formulas?tab=filings"));
         long unchecked = filings.findByStatus(FilingStatus.FILED).stream().filter(f -> f.getFiledDate() == null).count();
-        c.add(unchecked == 0 ? new Check(g, "备案记录", "OK", "类型和日期都已核对", "/formulas?tab=filings")
+        c.add(unchecked == 0 ? new Check(g, "备案记录", "OK", fg.isEmpty() ? "还没有成品，导入后再检查" : "类型和日期都已核对", "/formulas?tab=filings")
                 : new Check(g, "备案记录", "WARN", unchecked + " 条是自动生成的，请核对类型和日期；特殊化妆品要补注册证有效期，否则到期提醒不生效", "/formulas?tab=filings"));
     }
 

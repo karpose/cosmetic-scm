@@ -116,7 +116,7 @@ public class DashboardService {
         for (RecallView r : openRecalls) {
             todos.add(new Todo("RECALL", "召回进行中", "bad", r.itemName(), r.batchNo(),
                     r.recallNo() + " · 已通知 " + r.notifiedCount() + "/" + r.notices().size() + " 个客户 · 已回收 "
-                            + plain(r.recoveredQty()) + "/" + plain(r.shippedQty()), "/quality-events?tab=recalls&recall=" + r.id()));
+                            + plain(r.recoveredQty()) + "/" + plain(r.shippedQty().subtract(r.returnedQty())), "/quality-events?tab=recalls&recall=" + r.id()));
         }
         for (ComplaintView c : openComplaints) {
             if ("PENDING".equals(c.reportState()) || "OVERDUE".equals(c.reportState())) {

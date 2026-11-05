@@ -118,7 +118,7 @@
             <el-table-column label="进度" min-width="220">
               <template #default="{ row }">
                 <div class="prog"><span class="muted small">通知</span><el-progress aria-label="已通知客户比例" :percentage="pctOf(row.notifiedCount, row.notices.length)" :stroke-width="8" :show-text="false" /><span class="mono small">{{ row.notifiedCount }}/{{ row.notices.length }}</span></div>
-                <div class="prog"><span class="muted small">回收</span><el-progress aria-label="已回收数量比例" :percentage="pctOf(row.recoveredQty, outstanding(row))" :stroke-width="8" :show-text="false" status="success" /><span class="mono small">{{ fmtQty(row.recoveredQty) }}/{{ fmtQty(row.shippedQty) }}</span></div>
+                <div class="prog"><span class="muted small">回收</span><el-progress aria-label="已回收数量比例" :percentage="pctOf(row.recoveredQty, outstanding(row))" :stroke-width="8" :show-text="false" status="success" /><span class="mono small">{{ fmtQty(row.recoveredQty) }}/{{ fmtQty(outstanding(row)) }}</span></div>
               </template>
             </el-table-column>
             <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'OPEN' ? 'danger' : 'info'" size="small" disable-transitions>{{ row.statusLabel }}</el-tag></template></el-table-column>
@@ -241,7 +241,7 @@
         <h4 class="sec">收货客户（已回收 {{ fmtQty(dr.recall.recoveredQty) }} / 在外 {{ fmtQty(outstanding(dr.recall)) }}<template v-if="Number(dr.recall.returnedQty)">，另有 {{ fmtQty(dr.recall.returnedQty) }} 按普通退货退回</template>）</h4>
         <el-table :data="dr.recall.notices" size="small">
           <el-table-column label="客户" min-width="150"><template #default="{ row }">{{ row.customerName }}<div class="muted small">{{ row.channel }} · {{ row.contact || '—' }}</div></template></el-table-column>
-          <el-table-column label="已出 / 已回收" width="120" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.recoveredQty) }} / {{ fmtQty(row.shippedQty) }}</span></template></el-table-column>
+          <el-table-column label="已回收 / 在外" width="120" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.recoveredQty) }} / {{ fmtQty(outstanding(row)) }}</span></template></el-table-column>
           <el-table-column label="通知" min-width="150">
             <template #default="{ row }">
               <template v-if="row.notifiedAt"><el-tag type="success" size="small" disable-transitions>已通知</el-tag><div class="muted small">{{ row.notifiedBy }} · {{ fmtTime(row.notifiedAt) }}</div><div v-if="row.note" class="muted small">{{ row.note }}</div></template>
