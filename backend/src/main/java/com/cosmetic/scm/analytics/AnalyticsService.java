@@ -200,7 +200,9 @@ public class AnalyticsService {
 
         // ---------- 呆滞：已生产超过 60 天、近 60 天没有任何出库类流水的在库批次 ----------
         LocalDateTime since = today.minusDays(SLOW_MOVING_DAYS).atStartOfDay();
+        // 只有发料和出库算动过。调拨、盘点、退货转可售的负向流水不算：调过仓的老批次还是呆滞
         Set<Long> moved = txns.findByCreatedAtGreaterThanEqualAndQtyDeltaLessThan(since, BigDecimal.ZERO).stream()
+                .filter(t -> t.getTxnType() == com.cosmetic.scm.domain.TxnType.ISSUE || t.getTxnType() == com.cosmetic.scm.domain.TxnType.SHIP)
                 .map(StockTxn::getBatchId).collect(Collectors.toSet());
         Map<Long, BigDecimal> qtyByBatch = new HashMap<>();
         for (Stock s : rows) {
@@ -208,7 +210,7 @@ public class AnalyticsService {
                 qtyByBatch.merge(s.getBatchId(), s.getQty(), BigDecimal::add);
             }
         }
-        List<SlowRow> slow = qtyByBatch.entrySet().stream()
+        List<SlowRow> allSlow = qtyByBatch.entrySet().stream()
                 .map(e -> bm.get(e.getKey()))
                 .filter(b -> b.getStatus() == BatchStatus.RELEASED && !moved.contains(b.getId())
                         && b.getMfgDate() != null && b.getMfgDate().isBefore(today.minusDays(SLOW_MOVING_DAYS)))
@@ -219,8 +221,9 @@ public class AnalyticsService {
                             i.getUnit(), b.getMfgDate(), ShelfLife.remainingRatio(b.getMfgDate(), b.getExpDate(), today),
                             c == null ? null : money(c.multiply(qtyByBatch.get(b.getId()))));
                 })
-                .sorted(Comparator.comparing(SlowRow::mfgDate))
-                .limit(10).toList();
+                .sorted(Comparator.comparing(SlowRow::mfgDate)).toList();
+        // 页面只列最老的 10 个，金额要按全部算
+        List<SlowRow> slow = allSlow.stream().limit(10).toList();
 
         // ---------- 受托厂 / 自有工厂交付与收率（近 180 天完工） ----------
         LocalDateTime from = today.minusDays(LOOKBACK_DAYS).atStartOfDay();
@@ -264,6 +267,10 @@ public class AnalyticsService {
         List<Double> rel = new ArrayList<>();
         int mqPass = 0;
         for (QualityDecision d : ds) {
+            // 期初导入的放行是上线时补录的，算进来会把放行周期拉到接近 0
+            if (dbm.get(d.getBatchId()).getSourceType() == com.cosmetic.scm.domain.SourceType.OPEN) {
+                continue;
+            }
             double days = ChronoUnit.MINUTES.between(dbm.get(d.getBatchId()).getCreatedAt(), d.getSignedAt()) / 1440.0;
             if (d.getStage() == QcStage.MATERIAL_QC) {
                 mq.add(days);
@@ -286,8 +293,10 @@ public class AnalyticsService {
             List<Complaint> in = cs.stream().filter(c -> YearMonth.from(c.getReceivedDate()).equals(ym)).toList();
             monthly.add(new MonthCount(ym.toString(), in.size(), in.stream().filter(c -> c.getCategory() == ComplaintCategory.ADVERSE).count()));
         }
-        long open = cs.stream().filter(c -> c.getClosedAt() == null).count();
-        long overdue = cs.stream().filter(c -> c.getCategory() == ComplaintCategory.ADVERSE && c.getReportedDate() == null
+        // 未结和超期不能只看最近 6 个月：半年前没上报的不良反应才最要紧
+        List<Complaint> allOpen = complaints.findByStatus(com.cosmetic.scm.domain.CaseStatus.OPEN);
+        long open = allOpen.size();
+        long overdue = allOpen.stream().filter(c -> c.getCategory() == ComplaintCategory.ADVERSE && c.getReportedDate() == null
                 && ComplaintService.reportDeadline(c).isBefore(today)).count();
         List<Complaint> adverseReported = cs.stream().filter(c -> c.getCategory() == ComplaintCategory.ADVERSE
                 && c.getReportedDate() != null).toList();
@@ -316,7 +325,7 @@ public class AnalyticsService {
         Headline headline = new Headline(fgTotal, fgTotal.signum() == 0 ? null : round1(fgNear.doubleValue() * 100 / fgTotal.doubleValue()),
                 medianDos, allDone == 0 ? null : round1(allOnTime * 100.0 / allDone), quality.avgReleaseDays(), per10k,
                 traceStats.avgMs());
-        BigDecimal slowValue = slow.stream().map(SlowRow::value).filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal slowValue = allSlow.stream().map(SlowRow::value).filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
         Money moneyView = new Money(money(fgValue.add(matValue)), money(fgValue), money(matValue), money(nearValue),
                 money(slowValue), money(returnValue), noCost.size());
         return new Kpi(time.now(), headline, moneyView, shelf, supply, slow, factories, quality, complaintStats, traceStats);

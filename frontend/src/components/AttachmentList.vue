@@ -8,6 +8,7 @@
         <el-button size="small" :loading="uploading" :icon="Upload" @click="picker.click()">上传附件</el-button>
       </template>
     </div>
+    <p v-if="notice" class="notice small">{{ notice }}</p>
     <div v-if="!list.length" class="muted small empty">{{ emptyText }}</div>
     <div v-for="a in list" :key="a.id" class="file">
       <el-icon class="ficon"><Document /></el-icon>
@@ -37,6 +38,8 @@ const props = defineProps({
   canUpload: { type: Boolean, default: false },
   portal: { type: Boolean, default: false },
   title: { type: String, default: '附件' },
+  // 上传前要知道的事，比如谁能看到这些文件
+  notice: { type: String, default: '' },
   emptyText: { type: String, default: '还没有附件' }
 })
 const ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.xlsx,.docx,.csv,.txt'
@@ -57,7 +60,8 @@ function onPick(e) {
   const file = e.target.files[0]
   // 清空，否则同一个文件连选两次不会触发 change
   e.target.value = ''
-  if (file) upload(file)
+  // 失败时接口层已提示，这里只是别留下未处理的 Promise
+  if (file) upload(file).catch(() => {})
 }
 
 async function upload(file) {
@@ -95,6 +99,7 @@ onMounted(load)
 </script>
 
 <style scoped>
+.notice { margin: 4px 0 8px; color: var(--el-color-warning); line-height: 1.5; }
 .att { display: grid; gap: 6px; }
 .att-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .empty { padding: 4px 0; }

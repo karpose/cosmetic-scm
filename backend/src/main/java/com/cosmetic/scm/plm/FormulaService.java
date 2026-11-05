@@ -47,6 +47,7 @@ public class FormulaService {
     private static final List<FormulaStatus> IN_PROGRESS = List.of(FormulaStatus.DRAFT, FormulaStatus.PENDING);
 
     private final FormulaVersionRepository versions;
+    private final com.cosmetic.scm.master.ItemRepository items;
     private final FormulaLineRepository lines;
     private final ProductFilingRepository filings;
     private final MfgOrderRepository orders;
@@ -91,6 +92,8 @@ public class FormulaService {
 
     @Transactional
     public VersionView createDraft(Long fgItemId, DraftReq req) {
+        // 一个成品同时只能有一个进行中的变更：先锁成品行再检查，否则同时发起会建出两个草稿
+        items.lockById(fgItemId).orElseThrow(() -> BizException.notFound("成品"));
         Item fg = requireFg(fgItemId);
         if (versions.existsByFgItemIdAndStatusIn(fgItemId, IN_PROGRESS)) {
             throw new BizException(fg.getName() + " 已有一个进行中的配方变更，请先处理完再发起新的");

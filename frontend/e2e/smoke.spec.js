@@ -756,6 +756,28 @@ test('追溯：按供应商批号也能查到，打印时只留报告内容', as
   await page.emulateMedia({ media: 'screen' })
 })
 
+test('委托生产单的附件区提示受托厂能看到，自产单和批次不提示', async ({ page }) => {
+  await login(page, 'prod1')
+  const hint = '受托厂能在门户里看到这里的所有附件'
+  const orders = await api(page, '/mfg-orders')
+  const open = async (moNo) => {
+    await page.goto('/production')
+    await page.getByPlaceholder(/搜索单号/).fill(moNo)
+    await page.locator('.el-table__row').filter({ hasText: moNo }).first().getByRole('button', { name: '明细' }).click()
+    await expect(page.locator('.el-drawer .att')).toBeVisible()
+  }
+  await open(orders.find((m) => m.moType === 'OEM').moNo)
+  await expect(page.locator('.el-drawer').getByText(hint)).toBeVisible()
+  const own = orders.find((m) => m.moType === 'OWN')
+  if (own) {
+    await open(own.moNo)
+    await expect(page.locator('.el-drawer').getByText(hint)).toHaveCount(0)
+  }
+  await page.goto(`/trace?no=${encodeURIComponent((await api(page, '/stock'))[0].batchNo)}`)
+  await expect(page.locator('.att').first()).toBeVisible()
+  await expect(page.getByText(hint)).toHaveCount(0)
+})
+
 test('门户账号进不了内部页面', async ({ page }) => {
   await login(page, 'dealer1')
   await expect(page).toHaveURL(/\/portal\/dealer/)

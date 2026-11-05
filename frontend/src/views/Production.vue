@@ -122,6 +122,7 @@
         <BatchRecord v-if="detail.data.mo.moType === 'OWN'" :key="detail.data.mo.id" :mo-id="detail.data.mo.id" />
         <h4 class="sec">附件</h4>
         <AttachmentList owner-type="MFG_ORDER" :owner-id="detail.data.mo.id" :can-upload="auth.canAttach()"
+                        :notice="detail.data.mo.moType === 'OEM' ? '受托厂能在门户里看到这里的所有附件。内部调查、成本这类文件请不要传到这里，可以传到对应批次上。' : ''"
                         :title="detail.data.mo.moType === 'OEM' ? '受托厂出厂报告、批生产记录等（受托厂可在门户上传）' : '批生产记录、检验报告等'" />
         <template v-if="detail.data.mo.moType === 'OEM' && detail.trail">
           <h4 class="sec">受托厂门户回传</h4>

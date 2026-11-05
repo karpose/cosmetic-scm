@@ -154,6 +154,10 @@ public class PlanningService {
         for (Stock s : rows) {
             Batch b = bm.get(s.getBatchId());
             WarehouseKind kind = wm.get(s.getWarehouseId()).getKind();
+            // 过期的不能再卖，算成可用会少补货
+            if (ShelfLife.isExpired(b.getExpDate(), today)) {
+                continue;
+            }
             if (b.getStatus() == BatchStatus.RELEASED && kind == WarehouseKind.OWN) {
                 available.merge(s.getItemId(), s.getQty(), BigDecimal::add);
                 Double ratio = ShelfLife.remainingRatio(b.getMfgDate(), b.getExpDate(), today);
@@ -272,6 +276,10 @@ public class PlanningService {
         Map<Long, BigDecimal> quarantine = new HashMap<>();
         for (Stock s : rows) {
             if (wm.get(s.getWarehouseId()).getKind() != WarehouseKind.OWN) {
+                continue;
+            }
+            // 过期的不能发料，算成可用会少采购
+            if (ShelfLife.isExpired(bm.get(s.getBatchId()).getExpDate(), time.today())) {
                 continue;
             }
             BatchStatus st = bm.get(s.getBatchId()).getStatus();

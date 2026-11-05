@@ -83,7 +83,7 @@ public class DashboardService {
     }
 
     /**
-     * kind: QC / RELEASE / MO_ISSUE / MO_COMPLETE / LICENSE / NEAR_EXPIRY / RECALL / ADVERSE / COMPLAINT / RETURN /
+     * kind: QC / RELEASE / MO_ISSUE / MO_COMPLETE / LICENSE / NEAR_EXPIRY / EXPIRED_MATERIAL / RECALL / ADVERSE / COMPLAINT / RETURN /
      * OEM_REPORT / DEALER_ORDER / CHANNEL_FAILED / DEVIATION / CAPA / SUPPLIER_AUDIT / RETAIN / FORMULA / FILING / EQUIPMENT；
      * level: warn / info / bad / muted
      */
@@ -183,8 +183,18 @@ public class DashboardService {
         // 查全部在库的已放行成品，不是“最近 N 个批次”：最老的批次才最可能临期
         for (BatchView b : inventory.toViews(batches.findInStockByStatusAndItemType(BatchStatus.RELEASED, ItemType.FG))) {
             if (b.shelfRatio() != null && b.shelfRatio() < NEAR_EXPIRY_RATIO) {
-                todos.add(new Todo("NEAR_EXPIRY", "成品临期", "bad", b.itemName(), b.batchNo(),
+                boolean expired = com.cosmetic.scm.domain.rules.ShelfLife.isExpired(b.expDate(), today);
+                todos.add(new Todo("NEAR_EXPIRY", expired ? "成品已过期" : "成品临期", "bad", b.itemName(), b.batchNo(),
                         "剩余 " + plain(b.onHand()) + " · 效期至 " + b.expDate(), "/stock"));
+            }
+        }
+        // 过期物料不能发料，但也不会有人主动看到：到发料时才报缺货就晚了
+        for (ItemType type : List.of(ItemType.RM, ItemType.PK)) {
+            List<com.cosmetic.scm.inventory.Batch> expired = batches.findInStockByStatusAndItemType(BatchStatus.RELEASED, type).stream()
+                    .filter(b -> com.cosmetic.scm.domain.rules.ShelfLife.isExpired(b.getExpDate(), today)).toList();
+            for (BatchView b : inventory.toViews(expired)) {
+                todos.add(new Todo("EXPIRED_MATERIAL", "物料已过期", "bad", b.itemName(), b.batchNo(),
+                        "剩余 " + plain(b.onHand()) + " " + b.unit() + " · 效期至 " + b.expDate() + "，请报废或判定处理", "/stock"));
             }
         }
         return new Summary(counts, todos, audit.list(null, 8));
