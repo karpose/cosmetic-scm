@@ -18,6 +18,7 @@ final class TodoRouting {
             Map.entry("OEM_REPORT", Set.of(Role.PRODUCTION)),
             Map.entry("LICENSE", Set.of(Role.PURCHASE, Role.QA, Role.QSO)),
             Map.entry("NEAR_EXPIRY", Set.of(Role.SALES, Role.WAREHOUSE)),
+            Map.entry("EXPIRED_MATERIAL", Set.of(Role.WAREHOUSE, Role.QA, Role.QSO)),
             Map.entry("RECALL", Set.of(Role.QA, Role.QSO, Role.SALES)),
             Map.entry("ADVERSE", QUALITY),
             Map.entry("COMPLAINT", QUALITY),

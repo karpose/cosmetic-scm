@@ -22,6 +22,11 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!-- Spring Boot 3.3 自带的 Lombok 1.18.34 在 JDK 27 上编译会崩溃，这里升到支持新 JDK 的版本 -->
         <lombok.version>1.18.48</lombok.version>
+        <!-- Spring Boot 3.5.16 带的这几个版本有已知漏洞，先钉到修复版。升 Spring Boot 时删掉，
+             记录见 docs/csv/07-部署预验证记录-2026-11-03.md -->
+        <tomcat.version>10.1.61</tomcat.version>
+        <jackson-bom.version>2.21.8</jackson-bom.version>
+        <log4j2.version>2.25.5</log4j2.version>
     </properties>
 
     <dependencies>

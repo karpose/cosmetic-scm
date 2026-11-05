@@ -80,7 +80,7 @@ const stages = computed(() => {
 })
 
 const tagType = (level) => ({ warn: 'warning', info: 'primary', bad: 'danger', muted: 'info' }[level] || 'info')
-const isBatch = (t) => ['QC', 'RELEASE', 'NEAR_EXPIRY', 'RECALL'].includes(t.kind)
+const isBatch = (t) => ['QC', 'RELEASE', 'NEAR_EXPIRY', 'EXPIRED_MATERIAL', 'RECALL'].includes(t.kind)
 
 async function load() {
   loading.value = true

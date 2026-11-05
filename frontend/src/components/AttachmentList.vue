@@ -57,7 +57,8 @@ function onPick(e) {
   const file = e.target.files[0]
   // 清空，否则同一个文件连选两次不会触发 change
   e.target.value = ''
-  if (file) upload(file)
+  // 失败时接口层已提示，这里只是别留下未处理的 Promise
+  if (file) upload(file).catch(() => {})
 }
 
 async function upload(file) {
