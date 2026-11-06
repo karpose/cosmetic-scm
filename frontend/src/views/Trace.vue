@@ -174,7 +174,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import http from '../api'
@@ -193,7 +193,12 @@ const input = ref(route.query.no || '')
 const t = ref(null)
 const hits = ref([])
 const searched = ref('')
-const printedAt = ref('')
+// 按 Ctrl+P 打印不经过按钮，所以在打印前的事件里取时间
+const printTime = () => new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 16)
+const printedAt = ref(printTime())
+const stampPrintTime = () => { printedAt.value = printTime() }
+onMounted(() => window.addEventListener('beforeprint', stampPrintTime))
+onBeforeUnmount(() => window.removeEventListener('beforeprint', stampPrintTime))
 const loading = ref(false)
 const canFreeze = computed(() => auth.hasAny('QA', 'QSO'))
 const elapsedText = computed(() => (t.value && t.value.elapsedMs >= 1 ? String(t.value.elapsedMs) : '不到 1'))
@@ -223,7 +228,7 @@ function openHit(row) {
 }
 
 function printReport() {
-  printedAt.value = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 16)
+  stampPrintTime()
   nextTick(() => window.print())
 }
 
@@ -283,4 +288,10 @@ async function submitFreeze() {
 .node.hl { border-color: color-mix(in srgb, var(--el-color-primary) 55%, transparent); background: var(--lg-tint); }
 .tagno { font-size: 12px; padding: 1px 8px; border: 1px solid var(--el-border-color); border-radius: 999px; }
 @media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+@media print {
+  .grid2 { display: block; }
+  /* 一个批次的信息不要被切到两页 */
+  .node { break-inside: avoid; }
+  .col-h { break-after: avoid; margin-top: 10px; }
+}
 </style>

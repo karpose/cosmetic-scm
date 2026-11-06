@@ -20,7 +20,7 @@
         <span class="mono small muted hash">{{ a.sha256.slice(0, 8) }}</span>
       </el-tooltip>
     </div>
-    <p v-if="canUpload" class="muted small hint">PDF、图片、Excel、Word、CSV，单个不超过 20 MB。附件作为记录保存，上传后不能删除。</p>
+    <p v-if="canUpload" class="muted small hint no-print">PDF、图片、Excel、Word、CSV，单个不超过 20 MB。附件作为记录保存，上传后不能删除。</p>
   </div>
 </template>
 
