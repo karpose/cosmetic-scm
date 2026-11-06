@@ -21,6 +21,7 @@ rm -rf backend/data                 # 重置本地数据
 cd frontend && npm install && npm run dev     # http://localhost:5173，/api 代理到 8080
 cd frontend && npm run build
 cd frontend && npm run e2e                     # Playwright 冒烟测试，自带内存库后端（8090）和前端（5174）
+cd frontend && npm run e2e:empty               # 空库走查：无示例数据、开启强制改密，只用页面走上线和业务（8091、5175）
 docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build   # 带 HTTPS 部署
 
 # 整体部署
@@ -87,7 +88,7 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-05）
 
-- 后端 `mvn clean test` 142 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 30 项全部通过（含 axe 无障碍和手机宽度检查）；GitHub Actions 在 PR 上跑这三项。
+- 后端 `mvn clean test` 142 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 30 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 14 项全部通过；GitHub Actions 在 PR 上跑这四项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
   - `pom.xml` 把 Tomcat、Jackson、log4j 钉在修复了已知漏洞的版本，升 Spring Boot 时要删掉这几行。Spring MVC 6.2.19 还有两条 OSV 记录（SSE 片段渲染、XsltView），修复只在 7.x，系统没用到这两个功能。扫描方法：`mvn dependency:list` 后查 OSV，记录见 07。
@@ -96,7 +97,7 @@ cp .env.example .env && docker compose up -d --build
 - 看板图表配色用 dataviz 参考调色板，已用校验脚本在浅色、深色下验过；图表是纯 HTML/CSS，没有引入图表库。
 - 示例数据含：精华液 V2 配方待签批且备案在途、面霜工艺路线、明瓶包装审核快到期、电子秤校准快到期、一条微小偏差和 CAPA；老批次精华液（效期门槛、呆滞）、退货隔离区 + 待处置退货、待上报的不良反应投诉、受托厂已排产的委托单、经销商待审核订单、一张缺货失败的电商订单、第一批精华液的 20 个防伪码。
 
-- `docs/操作手册.md` 是给使用者看的，改了按钮名称、流程或提示要同步。手册标了哪些章节没走查过。
+- `docs/操作手册.md` 是给使用者看的，改了按钮名称、流程或提示要同步。对应的走查在 `frontend/e2e-empty/go-live.spec.js`，用例之间依赖前面留下的数据，不要单独重试。
 
 ## 下一步（按优先级）
 

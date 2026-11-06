@@ -75,3 +75,39 @@ jobs:
             frontend/playwright-report
             frontend/test-results
           retention-days: 7
+
+  e2e-empty:
+    name: 空库走查（Playwright）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: 安装依赖和浏览器
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: 预先编译后端（让测试启动更快）
+        working-directory: backend
+        run: mvn -B -q -DskipTests compile
+      - name: playwright test
+        working-directory: frontend
+        run: npm run e2e:empty
+      - name: 上传失败报告
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-empty
+          path: |
+            frontend/playwright-report-empty
+            frontend/test-results-empty
+          retention-days: 7

@@ -10,3 +10,5 @@ frontend/dist/
 frontend/test-results/
 frontend/playwright-report/
 backups/
+frontend/test-results-empty/
+frontend/playwright-report-empty/
