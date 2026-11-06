@@ -58,10 +58,10 @@ public class MasterImportService {
     private final Validator validator;
     private final AuditService audit;
 
-    public record ItemImportReq(@NotEmpty(message = "没有可导入的行") @Size(max = 2000) List<ItemReq> rows, boolean dryRun) {
+    public record ItemImportReq(@NotEmpty(message = "没有可导入的行") @Size(max = 2000, message = "一次最多导入 2000 行，请分成几个文件") List<ItemReq> rows, boolean dryRun) {
     }
 
-    public record PartnerImportReq(@NotEmpty(message = "没有可导入的行") @Size(max = 2000) List<PartnerReq> rows,
+    public record PartnerImportReq(@NotEmpty(message = "没有可导入的行") @Size(max = 2000, message = "一次最多导入 2000 行，请分成几个文件") List<PartnerReq> rows,
                                    boolean dryRun) {
     }
 
@@ -72,7 +72,7 @@ public class MasterImportService {
                                @NotNull(message = "请填写供料方式") SupplyMode supplyMode) {
     }
 
-    public record BomImportReq(@NotEmpty(message = "没有可导入的行") @Size(max = 20000) List<BomImportRow> rows, boolean dryRun) {
+    public record BomImportReq(@NotEmpty(message = "没有可导入的行") @Size(max = 20000, message = "一次最多导入 20000 行，请分成几个文件") List<BomImportRow> rows, boolean dryRun) {
     }
 
     public record RowError(int line, String code, String message) {

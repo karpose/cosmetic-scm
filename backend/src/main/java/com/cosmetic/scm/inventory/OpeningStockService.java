@@ -93,7 +93,7 @@ public class OpeningStockService {
                              @Size(max = 100) String retainLocation) {
     }
 
-    public record OpeningReq(@NotEmpty(message = "没有可导入的行") @Size(max = 5000) List<OpeningRow> rows, boolean dryRun, String password) {
+    public record OpeningReq(@NotEmpty(message = "没有可导入的行") @Size(max = 5000, message = "一次最多导入 5000 行，请分成几个文件") List<OpeningRow> rows, boolean dryRun, String password) {
     }
 
     /** 同一批号的多行合并后的结果。 */

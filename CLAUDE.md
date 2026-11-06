@@ -67,6 +67,7 @@ cp .env.example .env && docker compose up -d --build
 - 导出在服务端生成（`ReportService` + `common/XlsxWriter`），每次写审计。单元格文本只写内联字符串，不写公式。新增报表在 `registry()` 里加一项。预测规则在 `domain/rules/DemandForecast`，历史按首次出库到上个完整月。
 - 提醒内容直接取 `DashboardService.summary()` 的待办（全部），总览页面经 `forDisplay` 每类最多显示 30 条，`todoTotal` 是全部数量。总览没有缓存（放行后待办要立刻消失），新加的待办不要把整张表读出来再过滤。新的到期规则加到总览待办就会进提醒，新的待办类型要在 `TodoRouting` 里指定岗位，否则不进个人邮件。错误信息写库前要去掉 webhook 地址（含密钥）。
 - 生产单取消（`ProductionService.cancel`）：未发料直接取消；已发料未开工退料并删除 `mfg_issue`（否则追溯会显示批次流向这张单，流水和审计保留）；开工后（`mes.started`）或受托厂已回传生产中、已申报的不能取消。新增读生产单状态的代码要想到 CANCELLED。采购单：没收货 CANCELLED，部分收货 CLOSED。
+- 主数据导入：已存在的编码，留空的格和文件里没有的列都保留原值（曾因留空把禁用原料悄悄解禁、清空标准成本），要清空到主数据页面改；预检列出每一处修改。是否类的格认不出就报错，不当成“否”。模板里新加列时，`/items`、`/partners` 的返回要有同名字段，否则留空还是会被清空。
 - 现有库存只能走期初导入（`OpeningStockService`，来源 `SourceType.OPEN`，流水 `OPENING`），不要造采购单或生产单。已放行的批次写放行记录，成品写留样，所以只给 QSO 并要签批。行上不加 `@Valid`，缺字段要按 Excel 行号报。
 - 工序勾了“须记录设备”时，`MesService.recordStep` 用 `EquipmentService.unusableReason` 校验；校准不合格的处理在 `EquipmentService.calibrate`，设备停用并生成偏差。
 - 导出（`ReportService`）必须用 `listAll` 类查询，不能用页面的 Top300 查询；超过 `MAX_ROWS` 报错，不截断。页面列表到上限时用 `ListCapHint` 提示。
@@ -90,7 +91,7 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-06）
 
-- 后端 `mvn clean test` 145 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 39 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 14 项全部通过；GitHub Actions 在 PR 上跑这四项。
+- 后端 `mvn clean test` 145 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 44 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 14 项全部通过；GitHub Actions 在 PR 上跑这四项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
   - `pom.xml` 把 Tomcat、Jackson、log4j 钉在修复了已知漏洞的版本，升 Spring Boot 时要删掉这几行。Spring MVC 6.2.19 还有两条 OSV 记录（SSE 片段渲染、XsltView），修复只在 7.x，系统没用到这两个功能。扫描脚本 `scripts/dep-scan.py`，判断过不影响的漏洞登记在 `scripts/dep-scan-allow.txt`，`dep-scan.yml` 每周跑一次（不是 PR 检查）。
