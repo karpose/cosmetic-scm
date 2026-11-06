@@ -9,7 +9,7 @@
 
     <el-card shadow="never" body-style="padding:14px 18px">
       <form class="ask" @submit.prevent="lookup">
-        <el-input v-model="q" placeholder="输入防伪码查扫码记录，如 7K3M-Q9TX-2B8R" clearable class="mono" />
+        <el-input v-model="q" @keydown.enter.prevent="lookup" placeholder="输入防伪码查扫码记录，如 7K3M-Q9TX-2B8R" clearable class="mono" />
         <el-button native-type="submit" :loading="looking">查询</el-button>
       </form>
       <div v-if="found" class="found">
@@ -71,12 +71,13 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import http from '../api'
+import http, { LONG_TIMEOUT } from '../api'
 import BatchNo from '../components/BatchNo.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import { useAuth } from '../stores/auth'
 import { fmtQty, fmtTime } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 import { useLoader } from '../utils/loader'
 import { textMatch, usePaged } from '../utils/table'
 
@@ -116,7 +117,7 @@ async function generate() {
 async function exportCsv(row) {
   exporting.value = row.batchId
   try {
-    const blob = await http.get(`/serials/batches/${row.batchId}/export`, { responseType: 'blob' })
+    const blob = await http.get(`/serials/batches/${row.batchId}/export`, { responseType: 'blob', timeout: LONG_TIMEOUT })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = `防伪码-${row.batchNo}.csv`
@@ -127,14 +128,21 @@ async function exportCsv(row) {
   }
 }
 
+const lookupReq = latestOnly()
+
 async function lookup() {
+  const current = lookupReq()
   found.value = null
-  if (!q.value.trim()) return
+  if (!q.value.trim()) {
+    looking.value = false
+    return
+  }
   looking.value = true
   try {
-    found.value = await http.get(`/serials/codes/${encodeURIComponent(q.value.trim())}`)
+    const res = await http.get(`/serials/codes/${encodeURIComponent(q.value.trim())}`)
+    if (current()) found.value = res
   } finally {
-    looking.value = false
+    if (current()) looking.value = false
   }
 }
 

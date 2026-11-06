@@ -24,8 +24,8 @@
 
     <div class="scanbar glass">
       <el-input ref="input" v-model="code" size="large" placeholder="扫码枪对准标签，或输入批号后回车" clearable class="mono"
-                :disabled="mode !== 'lookup' && !refId" @keyup.enter="onScan(code)" />
-      <el-button v-if="cameraOk" size="large" :icon="Camera" :disabled="mode !== 'lookup' && !refId" @click="openCamera">摄像头</el-button>
+                :disabled="mode !== 'lookup' && (!refId || refLoading)" @keyup.enter="onScan(code)" />
+      <el-button v-if="cameraOk" size="large" :icon="Camera" :disabled="mode !== 'lookup' && (!refId || refLoading)" @click="openCamera">摄像头</el-button>
     </div>
 
     <!-- 最近一次扫码结果：颜色之外都有图标和文字 -->
@@ -87,6 +87,7 @@ import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
 import ShelfBar from '../components/ShelfBar.vue'
 import { fmtQty } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 
 const ICONS = { ok: CircleCheckFilled, warn: WarningFilled, bad: CircleCloseFilled }
 const ROW_ICONS = { ok: CircleCheckFilled, todo: Remove, bad: CircleCloseFilled }
@@ -99,6 +100,9 @@ const last = ref(null)
 const card = ref(null)
 const refs = ref([])
 const refId = ref(null)
+const refLoading = ref(false)
+const refReq = latestOnly()
+const lookupReq = latestOnly()
 const refNo = ref('')
 const expected = ref([])        // [{ batchNo, itemName, qty }]
 const scanned = ref([])         // 已扫批号，按顺序
@@ -113,13 +117,20 @@ async function onScan(raw) {
   code.value = ''
   focus()
   if (!no) return
+  // 等响应期间换了单据或页签，这次扫码不算数，不能记到新单据上
+  const context = `${mode.value}:${refId.value}`
+  const stillHere = () => context === `${mode.value}:${refId.value}`
+  const latest = lookupReq()
   let c
   try {
     c = await http.get(`/scan/batches/${encodeURIComponent(no)}`, { silent: true })
   } catch (e) {
+    if (!stillHere()) return
     return flash('bad', `查不到批号 ${no}`, e.message)
   }
+  if (!stillHere()) return
   if (mode.value === 'lookup') {
+    if (!latest()) return
     card.value = c
     return flash(c.level, `${c.batch.batchNo} · ${c.batch.itemName}`, c.warnings.join('；') || '状态正常，可以发料 / 出库')
   }
@@ -160,15 +171,26 @@ async function loadRefs() {
 }
 
 async function loadRef() {
+  const current = refReq()
   scanned.value = []
   last.value = null
+  // 新单据的应扫清单到手之前不能核对：还留着上一张的清单，扫到它的批次会显示“一致”
+  expected.value = []
   const r = refs.value.find((x) => x.id === refId.value)
   refNo.value = r?.no || ''
   if (mode.value === 'MO') {
     // 已计划的单子取先到期先出的预分配，已发料的取实际发料批次；只核对品牌供料
-    const d = await http.get(`/mfg-orders/${refId.value}`)
-    expected.value = d.requirements.filter((q) => q.supplyMode === 'BRAND')
-      .flatMap((q) => q.picks.map((p) => ({ batchNo: p.batchNo, itemName: q.itemName, qty: p.qty })))
+    refLoading.value = true
+    try {
+      const d = await http.get(`/mfg-orders/${refId.value}`)
+      if (!current()) return
+      expected.value = d.requirements.filter((q) => q.supplyMode === 'BRAND')
+        .flatMap((q) => q.picks.map((p) => ({ batchNo: p.batchNo, itemName: q.itemName, qty: p.qty })))
+    } finally {
+      if (current()) refLoading.value = false
+    }
+    // 输入框刚从禁用恢复，等界面更新后才能聚焦
+    await nextTick()
   } else {
     expected.value = (r?.so.allocations || []).map((a) => ({ batchNo: a.batchNo, itemName: a.itemName, qty: a.qty }))
   }
@@ -188,6 +210,8 @@ async function submit() {
 }
 
 function reset() {
+  refReq()
+  refLoading.value = false
   refId.value = null
   refNo.value = ''
   expected.value = []

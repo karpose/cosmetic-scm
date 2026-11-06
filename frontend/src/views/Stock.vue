@@ -51,6 +51,7 @@ import StatusTag from '../components/StatusTag.vue'
 import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
 import { ITEM_TYPE, fmtDate, fmtQty } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 import { usePaged } from '../utils/table'
 
 const f = reactive({ type: '', warehouseId: null, q: '', includeZero: false })
@@ -64,7 +65,10 @@ const picked = ref([])
 // 同一批次在多个仓库时只打一次
 const printLabels = () => router.push({ path: '/labels', query: { batches: [...new Set(picked.value.map((r) => r.batchNo))].join(',') } })
 
+const listReq = latestOnly()
+
 async function load() {
+  const current = listReq()
   loading.value = true
   error.value = ''
   try {
@@ -72,11 +76,12 @@ async function load() {
     if (f.type) params.type = f.type
     if (f.warehouseId) params.warehouseId = f.warehouseId
     if (f.q) params.q = f.q
-    rows.value = await http.get('/stock', { params })
+    const res = await http.get('/stock', { params })
+    if (current()) rows.value = res
   } catch (e) {
-    error.value = e.message
+    if (current()) error.value = e.message
   } finally {
-    loading.value = false
+    if (current()) loading.value = false
   }
 }
 

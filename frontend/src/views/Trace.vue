@@ -8,8 +8,9 @@
     </div>
 
     <el-card shadow="never" class="no-print">
+      <!-- 回车由输入框处理：按钮加载中是禁用的，浏览器此时不提交表单，新批号会被悄悄忽略 -->
       <form class="toolbar" @submit.prevent="go">
-        <el-input id="trace-no" v-model="input" placeholder="输入系统批号，或供应商、受托厂的批号" clearable class="mono" style="flex:1 1 260px" />
+        <el-input id="trace-no" v-model="input" @keydown.enter.prevent="go" placeholder="输入系统批号，或供应商、受托厂的批号" clearable class="mono" style="flex:1 1 260px" />
         <el-button type="primary" native-type="submit" :loading="loading">追溯</el-button>
       </form>
     </el-card>
@@ -183,6 +184,7 @@ import StatusTag from '../components/StatusTag.vue'
 import AttachmentList from '../components/AttachmentList.vue'
 import { useAuth } from '../stores/auth'
 import { ITEM_TYPE, fmtDate, fmtQty, fmtTime } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 
 const auth = useAuth()
 const route = useRoute()
@@ -207,10 +209,12 @@ function go() {
   if (no) router.push({ name: 'trace', query: { no } })
 }
 
-async function searchExternal(no) {
+async function searchExternal(no, current) {
+  const found = await http.get('/trace/search', { params: { q: no } })
+  if (!current()) return
   searched.value = no
-  hits.value = await http.get('/trace/search', { params: { q: no } })
-  if (!hits.value.length) ElMessage.error(`没有找到批号 ${no}，也没有匹配的供应商或受托厂批号`)
+  hits.value = found
+  if (!found.length) ElMessage.error(`没有找到批号 ${no}，也没有匹配的供应商或受托厂批号`)
 }
 
 function openHit(row) {
@@ -223,21 +227,27 @@ function printReport() {
   nextTick(() => window.print())
 }
 
+const traceReq = latestOnly()
+
 async function load(no) {
+  const current = traceReq()
   if (!no) {
     t.value = null
+    loading.value = false
     return
   }
   loading.value = true
   hits.value = []
   try {
-    t.value = await http.get(`/trace/${encodeURIComponent(no)}`, { silent: true })
+    const res = await http.get(`/trace/${encodeURIComponent(no)}`, { silent: true })
+    if (current()) t.value = res
   } catch (e) {
+    if (!current()) return
     t.value = null
-    if (e.status === 404) await searchExternal(no)
+    if (e.status === 404) await searchExternal(no, current)
     else if (e.status) ElMessage.error(e.message)
   } finally {
-    loading.value = false
+    if (current()) loading.value = false
   }
 }
 

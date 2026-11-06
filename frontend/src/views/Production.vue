@@ -210,6 +210,7 @@ import { useAuth } from '../stores/auth'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
 import { fmtQty, fmtTime, today } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 
 const auth = useAuth()
 const rd = useRefData()
@@ -326,8 +327,13 @@ async function submitIssue() {
   }
 }
 
+const completeReq = latestOnly()
+
 async function openComplete(row) {
+  const current = completeReq()
   const [d, trail] = await Promise.all([http.get(`/mfg-orders/${row.id}`), row.moType === 'OEM' ? http.get(`/mfg-orders/${row.id}/oem`) : null])
+  // 弹窗是响应回来才打开的，这之前可能又点了另一张单：以最后点的为准
+  if (!current()) return
   const own = rd.s.warehouses.find((w) => w.kind === 'OWN')
   // 受托厂已在门户申报的，用申报数据预填，品牌方核对即可
   const rep = trail?.reports.find((r) => r.status === 'SUBMITTED') || null

@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useAuth } from './stores/auth'
 import AppLayout from './layout/AppLayout.vue'
 
@@ -69,6 +70,22 @@ router.beforeEach(async (to) => {
 
 router.afterEach((to) => {
   document.title = `${to.meta.title || '首页'} · 化妆品批次主线系统`
+})
+
+// 升级后，开着的旧页面里记的文件名已经不存在，点菜单会下载失败、毫无反应。
+// 刷新一次就拿到新版本；刚刷新过又失败说明是网络问题，只提示，不反复刷新
+const CHUNK_ERROR = /dynamically imported module|Importing a module script failed|Unable to preload CSS/i
+const RELOAD_KEY = 'scm_chunk_reload_at'
+
+router.onError((err, to) => {
+  if (!CHUNK_ERROR.test(err?.message || '')) return
+  const last = Number(sessionStorage.getItem(RELOAD_KEY) || 0)
+  if (Date.now() - last > 30000) {
+    sessionStorage.setItem(RELOAD_KEY, String(Date.now()))
+    window.location.assign(to.fullPath)
+  } else {
+    ElMessage.error('页面加载失败，请检查网络后刷新重试')
+  }
 })
 
 export default router

@@ -137,6 +137,7 @@ import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
 import { fmtQty, fmtTime } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 import { useLoader } from '../utils/loader'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
@@ -181,12 +182,18 @@ async function open(mode) {
   loadStock()
 }
 
+const stockReq = latestOnly()
+
 async function loadStock() {
+  const current = stockReq()
   stock.value = []
   Object.keys(counted).forEach((k) => delete counted[k])
   d.lines.forEach((l) => { l.batchId = null })
   if (!d.fromId) return
-  stock.value = await http.get('/stock', { params: { warehouseId: d.fromId } })
+  const rows = await http.get('/stock', { params: { warehouseId: d.fromId } })
+  // 切换仓库后旧仓库的响应才回来时要丢掉，否则按 A 仓的盘点表调整 B 仓，B 仓会凭空多出库存
+  if (!current()) return
+  stock.value = rows
   stock.value.forEach((s) => { counted[s.batchId] = Number(s.qty) })
 }
 

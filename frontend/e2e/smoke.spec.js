@@ -27,6 +27,179 @@ const api = (page, url) => page.evaluate(async (u) => {
 }, url)
 const pdfFile = (name) => ({ name, mimeType: 'application/pdf', buffer: Buffer.from(`%PDF-1.4 ${name}`) })
 
+// 这一组不改数据，放在最前面：它们要两张还没发料的单子，后面的主线会把单子走完
+// 只拖慢第一个匹配的请求：先发的请求晚回来，模拟网络抖动
+async function slowFirst(page, match, ms = 2500) {
+  let first = true
+  await page.route(match, async (route) => {
+    if (first) {
+      first = false
+      await new Promise((r) => setTimeout(r, ms))
+    }
+    await route.continue()
+  })
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+test('网络抖动：盘点切换仓库，先发的请求晚回来不能盖掉当前仓库的盘点表', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  const warehouses = await api(page, '/warehouses')
+  const main = warehouses.find((w) => w.code === 'WH-MAIN')
+  const other = warehouses.find((w) => w.code === 'WH-A3')
+  const mainStock = await api(page, `/stock?warehouseId=${main.id}`)
+  const otherStock = await api(page, `/stock?warehouseId=${other.id}`)
+  expect(mainStock.length).not.toBe(otherStock.length)
+
+  await slowFirst(page, (url) => url.pathname === '/api/stock' && url.searchParams.get('warehouseId') === String(main.id))
+  await page.goto('/inventory-ops')
+  await page.getByRole('button', { name: '盘点调整' }).click()
+  const d = dialog(page, '盘点调整')
+  await d.locator('.el-form-item').filter({ hasText: '作业仓' }).locator('.el-select').click()
+  await page.getByRole('option', { name: other.name }).click()
+  await expect(d.getByText(`共 ${otherStock.length} 个批次在库`)).toBeVisible()
+  await sleep(3000)
+  await expect(d.getByText(`共 ${otherStock.length} 个批次在库`)).toBeVisible()
+})
+
+test('网络抖动：追溯连查两个批号，页面显示最后查的那个', async ({ page }) => {
+  await login(page, 'qa1')
+  const fg = (await api(page, '/stock')).filter((x) => x.itemType === 'FG')
+  const a = fg[0].batchNo
+  const b = fg.find((x) => x.batchNo !== a).batchNo
+  await slowFirst(page, (url) => url.pathname === `/api/trace/${a}`)
+  await page.goto('/trace')
+  const input = page.getByPlaceholder(/批号/).first()
+  await input.fill(a)
+  await input.press('Enter')
+  await sleep(300)
+  await input.fill(b)
+  await input.press('Enter')
+  await expect(page.getByText(b).first()).toBeVisible()
+  await sleep(3000)
+  await expect(page.getByText(b).first()).toBeVisible()
+  await expect(page.getByText(a)).toHaveCount(0)
+})
+
+test('网络抖动：召回预览显示的是当前填的批号', async ({ page }) => {
+  await login(page, 'qso1')
+  const fg = (await api(page, '/stock')).filter((x) => x.itemType === 'FG')
+  const a = fg[0].batchNo
+  const b = fg.find((x) => x.batchNo !== a).batchNo
+  await slowFirst(page, (url) => url.pathname === `/api/trace/${a}`)
+  await page.goto('/quality-events?tab=recalls')
+  await page.getByRole('button', { name: '发起召回' }).first().click()
+  const d = dialog(page, '发起召回')
+  const input = d.getByPlaceholder('如 A3-261103-01')
+  await input.fill(a)
+  await input.press('Tab')
+  await sleep(300)
+  await input.fill(b)
+  await input.press('Tab')
+  const impact = d.locator('.impact')
+  await expect(impact).toContainText(b)
+  await sleep(3000)
+  await expect(impact).toContainText(b)
+})
+
+test('网络抖动：切换核对单据时，加载完之前不能扫码，也不会串单', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  const orders = await api(page, '/mfg-orders')
+  const details = []
+  for (const o of orders.filter((x) => x.status === 'PLANNED' || x.status === 'ISSUED')) {
+    const full = await api(page, `/mfg-orders/${o.id}`)
+    const n = full.requirements.filter((q) => q.supplyMode === 'BRAND').flatMap((q) => q.picks).length
+    details.push({ no: o.moNo, id: o.id, n })
+  }
+  const a = details.find((x) => x.n > 0)
+  const b = details.find((x) => x.n !== a.n)
+  expect(a && b).toBeTruthy()
+
+  await page.goto('/scan')
+  await page.getByRole('tab', { name: '发料核对' }).click()
+  await slowFirst(page, (url) => url.pathname === `/api/mfg-orders/${a.id}`)
+  const pick = page.locator('.pick .el-select')
+  await pick.click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: a.no }).click()
+  // 加载期间扫码枪的输入不能被拿去和上一张单比对
+  await expect(page.getByPlaceholder('扫码枪对准标签，或输入批号后回车')).toBeDisabled()
+  await pick.click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: b.no }).click()
+  await sleep(3500)
+  if (b.n) await expect(page.getByText(`应扫 ${b.n} 个批次`)).toBeVisible()
+  else await expect(page.getByText(/应扫 \d+ 个批次/)).toHaveCount(0)
+})
+
+test('网络抖动：基础数据加载失败后，打开弹窗会重新加载', async ({ page }) => {
+  await login(page, 'sales1')
+  let first = true
+  await page.route('**/api/warehouses', async (route) => {
+    if (first) {
+      first = false
+      await route.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"测试：加载失败"}' })
+    } else await route.continue()
+  })
+  await page.goto('/returns')
+  await toast(page, '测试：加载失败')
+  await page.getByRole('button', { name: '登记退货' }).click()
+  const wh = dialog(page, '登记退货').locator('.el-form-item').filter({ hasText: '入退货隔离区' }).locator('.el-select')
+  await expect(wh).toContainText('退货')
+})
+
+test('网络抖动：写操作没收到响应时，提示先核对，不要直接重做', async ({ page }) => {
+  await login(page, 'prod1')
+  const batch = (await api(page, '/stock')).find((s) => s.itemType === 'FG').batchNo
+  await page.goto('/qms')
+  await page.getByRole('button', { name: '登记偏差' }).click()
+  const d = dialog(page, '登记偏差')
+  await page.locator('#dv-batch').fill(batch)
+  await page.locator('#dv-title').fill('E2E 网络中断')
+  await page.locator('#dv-desc').fill('没收到响应')
+  await page.route('**/api/qms/deviations', (route) => (route.request().method() === 'POST' ? route.abort('connectionreset') : route.continue()))
+  await d.getByRole('button', { name: '登记偏差' }).click()
+  await toast(page, '操作可能已经完成')
+})
+
+test('升级后旧页面：页面文件下载失败会自动刷新一次', async ({ page }) => {
+  await login(page, 'qa1')
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: '总览' })).toBeVisible()
+  let first = true
+  await page.route(/views\/Stock\.vue/, async (route) => {
+    if (first) {
+      first = false
+      await route.abort('failed')
+    } else await route.continue()
+  })
+  await page.getByRole('link', { name: '库存', exact: true }).click()
+  await expect(page).toHaveURL(/\/stock/)
+  await expect(page.getByRole('heading', { name: /库存/ }).first()).toBeVisible()
+})
+
+test('升级后旧页面：一直下载不了时给出提示，不会反复刷新', async ({ page }) => {
+  await login(page, 'qa1')
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: '总览' })).toBeVisible()
+  await page.route(/views\/Stock\.vue/, (route) => route.abort('failed'))
+  await page.getByRole('link', { name: '库存', exact: true }).click()
+  await toast(page, '页面加载失败')
+})
+
+test('基础数据加载慢时，弹窗的默认仓库在加载完后补上', async ({ page }) => {
+  await login(page, 'sales1')
+  // 网络慢或服务器忙时，用户可能比基础数据先点开弹窗
+  await page.route('**/api/warehouses', async (route) => {
+    await new Promise((r) => setTimeout(r, 2500))
+    await route.continue()
+  })
+  await page.goto('/returns')
+  await page.getByRole('button', { name: '登记退货' }).click()
+  const wh = dialog(page, '登记退货').locator('.el-form-item').filter({ hasText: '入退货隔离区' }).locator('.el-select')
+  await expect(wh).toContainText('退货')
+  // 等基础数据到了也不能被冲掉，再确认一次
+  await page.waitForTimeout(500)
+  await expect(wh).toContainText('退货')
+})
+
 test('登录后看到总览和各项待办', async ({ page }) => {
   await login(page, 'qa1')
   await expect(page.getByRole('heading', { name: '总览' })).toBeVisible()
@@ -776,22 +949,6 @@ test('委托生产单的附件区提示受托厂能看到，自产单和批次�
   await page.goto(`/trace?no=${encodeURIComponent((await api(page, '/stock'))[0].batchNo)}`)
   await expect(page.locator('.att').first()).toBeVisible()
   await expect(page.getByText(hint)).toHaveCount(0)
-})
-
-test('基础数据加载慢时，弹窗的默认仓库在加载完后补上', async ({ page }) => {
-  await login(page, 'sales1')
-  // 网络慢或服务器忙时，用户可能比基础数据先点开弹窗
-  await page.route('**/api/warehouses', async (route) => {
-    await new Promise((r) => setTimeout(r, 2500))
-    await route.continue()
-  })
-  await page.goto('/returns')
-  await page.getByRole('button', { name: '登记退货' }).click()
-  const wh = dialog(page, '登记退货').locator('.el-form-item').filter({ hasText: '入退货隔离区' }).locator('.el-select')
-  await expect(wh).toContainText('退货')
-  // 等基础数据到了也不能被冲掉，再确认一次
-  await page.waitForTimeout(500)
-  await expect(wh).toContainText('退货')
 })
 
 test('门户账号进不了内部页面', async ({ page }) => {

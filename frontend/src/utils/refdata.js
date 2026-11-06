@@ -14,6 +14,8 @@ export function useRefData() {
       ])
       Object.assign(s, { items, partners, warehouses, loaded: true })
     })()
+    // 失败后要能重来：留着失败的结果，之后打开弹窗就一直是空下拉，只能刷新页面
+    pending.catch(() => { pending = null })
     return pending
   }
 

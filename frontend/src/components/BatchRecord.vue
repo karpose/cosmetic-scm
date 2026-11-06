@@ -109,6 +109,7 @@ import http from '../api'
 import StatusTag from './StatusTag.vue'
 import { useAuth } from '../stores/auth'
 import { fmtQty, fmtTime } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 
 const props = defineProps({ moId: { type: Number, required: true } })
 const emit = defineEmits(['changed'])
@@ -126,8 +127,12 @@ const nextStep = computed(() => rec.value?.steps.find((s) => s.status === 'PENDI
 // 前面的关键工序没复核时，下一道工序的“执行”会被后端拦下并说明原因
 const allStepsDone = computed(() => rec.value?.steps.every((s) => s.status === 'REVIEWED' || (s.status === 'DONE' && !s.critical)))
 
+const recordReq = latestOnly()
+
 async function load() {
-  rec.value = await http.get(`/mes/records/${props.moId}`)
+  const current = recordReq()
+  const res = await http.get(`/mes/records/${props.moId}`)
+  if (current()) rec.value = res
 }
 const applied = (r) => {
   rec.value = r
