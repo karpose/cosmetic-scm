@@ -209,6 +209,10 @@ class MainLineIntegrationTest {
         assertThat(qtyAt(row.getBatchId(), main)).isEqualByComparingTo(counted);
         assertThatThrownBy(() -> stockOps.adjust(new StockOpsService.AdjustReq(main, "复盘", count)))
                 .hasMessageContaining("无需调整");
+        // 该仓没有这个批次的记录：不能按账面 0 算盘盈，否则错仓提交会凭空多出库存
+        assertThatThrownBy(() -> stockOps.adjust(new StockOpsService.AdjustReq(oem, "错仓",
+                List.of(new StockOpsService.CountLineReq(row.getBatchId(), new BigDecimal("777"))))))
+                .hasMessageContaining("没有库存记录");
 
         stockOps.transfer(new StockOpsService.TransferReq(main, oem, "调往代工厂",
                 List.of(new StockOpsService.QtyLineReq(row.getBatchId(), BigDecimal.ONE))));

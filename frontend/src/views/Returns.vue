@@ -145,6 +145,7 @@ import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
 import { fmtQty } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 import { useLoader } from '../utils/loader'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
@@ -192,9 +193,14 @@ async function openCreate(prefill = {}) {
   if (c.customerId) loadReturnable()
 }
 
+const returnableReq = latestOnly()
+
 async function loadReturnable() {
+  const current = returnableReq()
   c.lines.forEach((l) => { l.batchId = null })
-  returnable.value = c.customerId ? await http.get('/sales-returns/returnable', { params: { customerId: c.customerId } }) : []
+  const rows = c.customerId ? await http.get('/sales-returns/returnable', { params: { customerId: c.customerId } }) : []
+  if (!current()) return
+  returnable.value = rows
   onRecallChange()
 }
 

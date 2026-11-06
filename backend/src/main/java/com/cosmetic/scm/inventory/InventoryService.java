@@ -147,7 +147,9 @@ public class InventoryService {
         if (counted == null || counted.signum() < 0) {
             throw new BizException("实盘数量不能为负");
         }
-        BigDecimal book = lockStock(batch.getId(), warehouseId).map(Stock::getQty).orElse(BigDecimal.ZERO);
+        // 盘点表只列该仓有记录的批次。没有记录的不能按账面 0 算盘盈，否则错仓提交会凭空多出库存
+        BigDecimal book = lockStock(batch.getId(), warehouseId).map(Stock::getQty).orElseThrow(() -> new BizException(
+                "批次 " + batch.getBatchNo() + " 在该仓没有库存记录，不能盘点。请刷新盘点表后重新填写；货确实在这个仓时，先查清来源再走调拨"));
         BigDecimal delta = counted.subtract(book);
         if (delta.signum() != 0) {
             change(batch, warehouseId, delta, TxnType.ADJUST, refNo);

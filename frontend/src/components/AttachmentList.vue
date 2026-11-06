@@ -28,8 +28,9 @@
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Document, Upload } from '@element-plus/icons-vue'
-import http from '../api'
+import http, { LONG_TIMEOUT } from '../api'
 import { fmtTime } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 
 // portal=true 时走代工厂门户接口（只能是本厂委托单）；否则走系统内接口
 const props = defineProps({
@@ -50,10 +51,14 @@ const picker = ref(null)
 const listUrl = () => (props.portal ? `/portal/oem/orders/${props.ownerId}/attachments` : '/attachments')
 const downloadUrl = (id) => (props.portal ? `/portal/oem/attachments/${id}/download` : `/attachments/${id}/download`)
 
+const listReq = latestOnly()
+
 async function load() {
-  list.value = props.portal
+  const current = listReq()
+  const res = props.portal
     ? await http.get(listUrl())
     : await http.get(listUrl(), { params: { ownerType: props.ownerType, ownerId: props.ownerId } })
+  if (current()) list.value = res
 }
 
 function onPick(e) {
@@ -74,7 +79,7 @@ async function upload(file) {
   }
   uploading.value = true
   try {
-    await http.post(listUrl(), form)
+    await http.post(listUrl(), form, { timeout: LONG_TIMEOUT })
     ElMessage.success(`已上传 ${file.name}`)
     load()
   } finally {
@@ -83,7 +88,7 @@ async function upload(file) {
 }
 
 async function download(a) {
-  const blob = await http.get(downloadUrl(a.id), { responseType: 'blob' })
+  const blob = await http.get(downloadUrl(a.id), { responseType: 'blob', timeout: LONG_TIMEOUT })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url

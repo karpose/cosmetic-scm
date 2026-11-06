@@ -224,6 +224,7 @@ import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import { useAuth } from '../stores/auth'
 import { fmtQty, fmtTime, today } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 import { useLoader } from '../utils/loader'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
@@ -386,8 +387,13 @@ async function withdraw(row) {
 // ---------- 工艺路线 ----------
 const emptyStep = () => ({ name: '', instruction: '', critical: false, ipcName: '', ipcMin: undefined, ipcMax: undefined, ipcUnit: '', requiresEquipment: false })
 const rt = reactive({ fgItemId: null, steps: [], saving: false })
+const routingReq = latestOnly()
+
 async function loadRouting() {
+  const current = routingReq()
   const list = await http.get(`/mes/routings/${rt.fgItemId}`)
+  // 换了成品后旧响应才回来时要丢掉，否则 A 的工序会被存到 B 上
+  if (!current()) return
   rt.steps = list.map((s) => ({ ...s, ipcMin: s.ipcMin ?? undefined, ipcMax: s.ipcMax ?? undefined, ipcName: s.ipcName || '', ipcUnit: s.ipcUnit || '', instruction: s.instruction || '' }))
 }
 function move(i, d) {

@@ -56,7 +56,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import http from '../api'
+import http, { LONG_TIMEOUT } from '../api'
 import { ITEM_TYPE, PARTNER_KIND } from '../utils/format'
 
 const visible = defineModel({ type: Boolean, default: false })
@@ -303,7 +303,7 @@ async function send(dryRun) {
       ElMessage.warning('请输入签批密码')
       return
     }
-    const res = await http.post(spec.value.url, { rows: rows.value, dryRun, ...(spec.value.sign ? { password: password.value } : {}) })
+    const res = await http.post(spec.value.url, { rows: rows.value, dryRun, ...(spec.value.sign ? { password: password.value } : {}) }, { timeout: LONG_TIMEOUT })
     result.value = res
     if (!dryRun && res.applied) {
       ElMessage.success(spec.value.unit ? `已导入 ${res.created} ${spec.value.unit}` : spec.value.sign ? `已导入 ${res.created} 个批次` : `已导入：新增 ${res.created}，修改 ${res.updated}`)

@@ -39,6 +39,7 @@ import http from '../api'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import { fmtTime } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 import { usePaged } from '../utils/table'
 
 const q = ref('')
@@ -51,15 +52,19 @@ const error = ref('')
 const actions = computed(() => [...new Set(rows.value.map((r) => r.action))].sort())
 const t = usePaged(rows, { extra: (r) => !action.value || r.action === action.value, pageSize: 50 })
 
+const listReq = latestOnly()
+
 async function load() {
+  const current = listReq()
   loading.value = true
   error.value = ''
   try {
-    rows.value = await http.get('/audit', { params: { limit: 300, ...range.value, ...(q.value ? { q: q.value } : {}) } })
+    const res = await http.get('/audit', { params: { limit: 300, ...range.value, ...(q.value ? { q: q.value } : {}) } })
+    if (current()) rows.value = res
   } catch (e) {
-    error.value = e.message
+    if (current()) error.value = e.message
   } finally {
-    loading.value = false
+    if (current()) loading.value = false
   }
 }
 onMounted(load)

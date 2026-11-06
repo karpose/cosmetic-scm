@@ -286,6 +286,7 @@ import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
 import { useAuth } from '../stores/auth'
 import { COMPLAINT_CATEGORY, COMPLAINT_CHANNELS, SEVERITY, fmtQty, fmtTime, today } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 import { useLoader } from '../utils/loader'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
@@ -400,18 +401,23 @@ function openRecall(complaint = null) {
     visible: true, saving: false, complaint, batchNo: complaint?.batchNo || '', password: '', preview: null,
     reason: complaint ? `${complaint.categoryLabel}投诉 ${complaint.complaintNo}：${complaint.description}` : ''
   })
-  if (rc.batchNo) previewRecall()
+  previewRecall()
 }
 
+const previewReq = latestOnly()
+
 async function previewRecall() {
+  const current = previewReq()
   rc.preview = null
   if (!rc.batchNo.trim()) return
   try {
     const tr = await http.get(`/trace/${encodeURIComponent(rc.batchNo.trim())}`, { silent: true })
+    // 预览决定签批人看到的客户名单，不能是上一个批号的
+    if (!current()) return
     if (tr.batch.itemType !== 'FG') return ElMessage.warning('召回针对成品批次；物料问题请在批次追溯里冻结受影响批次')
     rc.preview = tr
   } catch (e) {
-    ElMessage.warning(e.message)
+    if (current()) ElMessage.warning(e.message)
   }
 }
 
