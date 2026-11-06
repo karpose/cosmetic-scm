@@ -34,7 +34,7 @@
       <el-table v-else ref="fgTable" :data="rows" v-loading="loader.loading.value" empty-text="没有在售成品" @selection-change="(s) => (chosen = s)">
         <el-table-column type="selection" width="44" />
         <el-table-column label="成品" min-width="170"><template #default="{ row }">{{ row.name }}<div class="muted small mono">{{ row.code }}</div></template></el-table-column>
-        <el-table-column label="近 3 个月出库" width="220">
+        <el-table-column label="近 3 个月净出库（已扣退货）" width="220">
           <template #default="{ row }"><span v-for="mq in row.monthly" :key="mq.month" class="mq"><span class="muted small">{{ mq.month.slice(5) }}月</span> <span class="mono">{{ fmtQty(mq.qty) }}</span></span></template>
         </el-table-column>
         <el-table-column label="未来 3 个月预测" width="220">

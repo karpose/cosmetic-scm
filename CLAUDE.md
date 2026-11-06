@@ -53,7 +53,7 @@ cp .env.example .env && docker compose up -d --build
 - “算出来才知道能不能做”的操作（退货可退量 = 已发 - 已退、同批次只能有一个进行中的召回）没有单据可锁，要锁它们依赖的行（客户、批次），而且必须是事务里第一条语句：MySQL 可重复读下，锁之前有过普通查询，之后读不到别人刚提交的数据。出库失败回滚后另开事务写“失败”时也要重新锁并判断状态，不能盖掉同时发生的取消。
 - MySQL 的 `DATETIME` 会把小数秒四舍五入（H2 不同）。要和令牌 iat 比较的时间（`passwordChangedAt`）必须先截断到整秒，曾因此让一半用户改密后被踢出。
 - 令牌只证明身份，角色每次从数据库读（`DbJwtAuthenticationConverter`），不要往令牌里加权限判断。改密后旧令牌失效，改密接口返回新令牌。
-- 列表和统计不能靠“最近 N 条”做判断（曾因此漏掉最老的临期批次、半年前没上报的不良反应，呆滞金额也只加了列表里的 10 个）。列表可以截断，合计要按全部算。可用库存不含已过期批次。期初导入写的放行记录不算放行周期。呆滞只看发料和出库，调拨不算。看板和补货的手算回归在 `NumbersGroundTruthTest`（关掉示例数据）。不要 `findAll` 全表：用分组或专门的查询。看板、补货建议的短时缓存在 Controller 层（`ShortCache`），测试和开发环境 ttl 为 0。
+- 列表和统计不能靠“最近 N 条”做判断（曾因此漏掉最老的临期批次、半年前没上报的不良反应，呆滞金额也只加了列表里的 10 个）。列表可以截断，合计要按全部算。可用库存不含已过期批次。补货日均和预测历史扣普通退货，召回回收的不扣（货确实卖掉了）。期初导入写的放行记录不算放行周期。呆滞只看发料和出库，调拨不算。看板和补货的手算回归在 `NumbersGroundTruthTest`（关掉示例数据）。不要 `findAll` 全表：用分组或专门的查询。看板、补货建议的短时缓存在 Controller 层（`ShortCache`），测试和开发环境 ttl 为 0。
 - 权限边界在 `SecurityConfig` 的 URL 层：`/api/portal/oem/**` 只给 OEM_PORTAL，`/api/portal/dealer/**` 只给 DEALER，`/api/integration/**` 只认 X-Api-Key，`/api/public/**` 和 `/api/health` 无需登录（只能放不含内部数据的接口，前端调用时加 `{ public: true }` 不带令牌），其余 `/api/**` 只给内部角色。门户服务里的每个查询都必须用 `CurrentUser.portalPartnerId()` 过滤，别人的数据一律当“不存在”。新增内部接口不需要额外处理，新增门户接口要放在对应前缀下。
 - 附件只增不删，存储用 `CREATE_NEW` 不覆盖；上传校验白名单扩展名和文件头，记录 SHA-256，下载时重新核对。文件在 `scm.storage.dir`（Docker 里是 `files-data` 卷），数据库只存元数据。受托厂上传走 `/api/portal/oem/orders/{moId}/attachments`，只能传本厂未完工的单子。受托厂能看到内部传到本单的附件，这是用户确认过的，不是漏洞。
 - `spring.servlet.multipart` 的上限必须高于 nginx 的 `client_max_body_size`（现在 30 MB 对 25 MB）。业务上限（20 MB）在 `AttachmentService` 判断。反过来配置会让后端没读完请求体就回错误，和 nginx 互相等待到超时。
@@ -64,7 +64,7 @@ cp .env.example .env && docker compose up -d --build
 - 批记录（`MesService`）只对自产且发料时有工艺路线的单子生效，在发料事务里固化。`ProductionService.complete` 先查 `mes.missing()`，并把这张单的偏差挂到产出批次。工序记录提交后不提供修改接口。过程检验超限不阻止生产，但必须自动生成偏差。
 - 签批、复核、验证类操作的执行人不能是操作人本身（CAPA 完成人、工序操作人、配方发起人），规则写在服务层，不靠界面隐藏。
 - 导出在服务端生成（`ReportService` + `common/XlsxWriter`），每次写审计。单元格文本只写内联字符串，不写公式。新增报表在 `registry()` 里加一项。预测规则在 `domain/rules/DemandForecast`，历史按首次出库到上个完整月。
-- 提醒内容直接取 `DashboardService.summary()` 的待办，不另算；新的到期规则加到总览待办就会进提醒，新的待办类型要在 `TodoRouting` 里指定岗位，否则不进个人邮件。错误信息写库前要去掉 webhook 地址（含密钥）。
+- 提醒内容直接取 `DashboardService.summary()` 的待办（全部），总览页面经 `forDisplay` 每类最多显示 30 条，`todoTotal` 是全部数量。总览没有缓存（放行后待办要立刻消失），新加的待办不要把整张表读出来再过滤。新的到期规则加到总览待办就会进提醒，新的待办类型要在 `TodoRouting` 里指定岗位，否则不进个人邮件。错误信息写库前要去掉 webhook 地址（含密钥）。
 - 生产单取消（`ProductionService.cancel`）：未发料直接取消；已发料未开工退料并删除 `mfg_issue`（否则追溯会显示批次流向这张单，流水和审计保留）；开工后（`mes.started`）或受托厂已回传生产中、已申报的不能取消。新增读生产单状态的代码要想到 CANCELLED。采购单：没收货 CANCELLED，部分收货 CLOSED。
 - 现有库存只能走期初导入（`OpeningStockService`，来源 `SourceType.OPEN`，流水 `OPENING`），不要造采购单或生产单。已放行的批次写放行记录，成品写留样，所以只给 QSO 并要签批。行上不加 `@Valid`，缺字段要按 Excel 行号报。
 - 工序勾了“须记录设备”时，`MesService.recordStep` 用 `EquipmentService.unusableReason` 校验；校准不合格的处理在 `EquipmentService.calibrate`，设备停用并生成偏差。
@@ -77,6 +77,7 @@ cp .env.example .env && docker compose up -d --build
 
 ## 代码约定
 
+- JSON 请求里的文字由 `common/JacksonConfig` 统一去掉控制字符（保留制表符和换行）。CSV 导入走 JSON，也会过滤。
 - 面向用户的错误用 `BizException`，消息写中文、说清怎么改；不要把异常堆栈返回前端。
 - 录入的数量加 `@Qty`（DECIMAL(18,4)，超出小数位数据库会悄悄四舍五入，0.00001 会存成 0），其它小数用 `@Digits` 对齐列定义。`@Size` 不能超过实际写入的列宽，一个字段写进多张表时按最短的算（备案编号曾因此报错）。校验默认提示靠 `GlobalExceptionHandler.FIELD_LABELS` 翻译字段名，新字段要加；注解写了中文 message 的直接显示。
 - 前端日期用 `utils/format.js` 的 `today()`、`daysFromToday()`，不要用 `toISOString`：它按 UTC 算，北京时间早上 8 点前会少一天。
@@ -88,10 +89,10 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-05）
 
-- 后端 `mvn clean test` 142 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 30 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 14 项全部通过；GitHub Actions 在 PR 上跑这四项。
+- 后端 `mvn clean test` 145 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 30 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 14 项全部通过；GitHub Actions 在 PR 上跑这四项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
-  - `pom.xml` 把 Tomcat、Jackson、log4j 钉在修复了已知漏洞的版本，升 Spring Boot 时要删掉这几行。Spring MVC 6.2.19 还有两条 OSV 记录（SSE 片段渲染、XsltView），修复只在 7.x，系统没用到这两个功能。扫描方法：`mvn dependency:list` 后查 OSV，记录见 07。
+  - `pom.xml` 把 Tomcat、Jackson、log4j 钉在修复了已知漏洞的版本，升 Spring Boot 时要删掉这几行。Spring MVC 6.2.19 还有两条 OSV 记录（SSE 片段渲染、XsltView），修复只在 7.x，系统没用到这两个功能。扫描脚本 `scripts/dep-scan.py`，判断过不影响的漏洞登记在 `scripts/dep-scan-allow.txt`，`dep-scan.yml` 每周跑一次（不是 PR 检查）。
 - 已完成：一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。
 - Docker 部署已在本机 Colima（profile `cosmetic-scm`）上完整演练过：MySQL 8 上迁移和示例数据都正常，HTTPS、首次改密、备份恢复、数据库宕机时的健康检查都实测通过，记录见 `docs/csv/07-部署预验证记录-2026-11-03.md`（含历次升级、备份恢复、并发、容量测试和空库上线演练）。所有自动化测试都带示例数据，改动上线流程后要在空库上再走一遍。并发、死锁和 CSP 这类问题 H2 和开发服务器测不全，改到这些要到 MySQL 上跑。CSP、Permissions-Policy 和上传限制只有经过 nginx 才生效，开发服务器测不出来，改这些要走一遍 Docker。这台 Colima 没有共享宿主机目录，绑定挂载会是空目录；里面还有一套用 8088 端口的 `cosmetic-scm` 旧部署，不要动它。
 - 看板图表配色用 dataviz 参考调色板，已用校验脚本在浅色、深色下验过；图表是纯 HTML/CSS，没有引入图表库。

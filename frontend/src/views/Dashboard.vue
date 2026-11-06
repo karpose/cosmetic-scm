@@ -20,7 +20,7 @@
 
     <div v-if="data" class="grid2">
       <el-card shadow="never">
-        <template #header><div class="card-h"><b>待办</b><span class="muted small">{{ data.todos.length }} 项</span></div></template>
+        <template #header><div class="card-h"><b>待办</b><span class="muted small">{{ data.todoTotal }} 项</span></div></template>
         <el-empty v-if="!data.todos.length" description="没有待办事项" :image-size="60" />
         <ul v-else class="list">
           <li v-for="(t, i) in data.todos" :key="i">
