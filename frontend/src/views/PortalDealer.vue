@@ -96,7 +96,7 @@ import http from '../api'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
-import { fmtQty, fmtTime } from '../utils/format'
+import { fmtQty, fmtTime, startOfBusinessDay } from '../utils/format'
 import { useLoader } from '../utils/loader'
 
 const auth = useAuth()
@@ -109,7 +109,7 @@ const cart = reactive({})
 const requestedDate = ref(null)
 const note = ref('')
 const saving = ref(false)
-const startOfToday = new Date(new Date().setHours(0, 0, 0, 0))
+const startOfToday = startOfBusinessDay()
 
 const loader = useLoader(async () => {
   const [c, o, r] = await Promise.all([http.get('/portal/dealer/catalog'), http.get('/portal/dealer/orders'), http.get('/portal/dealer/recalls')])

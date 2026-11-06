@@ -25,18 +25,23 @@ export function pct(ratio) {
   return ratio === null || ratio === undefined ? '—' : `${Math.round(ratio * 100)}%`
 }
 
-/** n 天后的本地日期。不要用 toISOString：它按 UTC 算，北京时间早上 8 点前会少一天。 */
-export function daysFromToday(n) {
-  const d = new Date()
-  d.setDate(d.getDate() + n)
-  const p = (x) => String(x).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+// “今天”按业务时区算，和后端 TimeProvider 一致。按浏览器时区算的话，电脑时区比上海早时，
+// 默认生产日期就是明天，后端会拒绝；不用 toISOString，它按 UTC 算，早上 8 点前会少一天
+export function today() {
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
 }
 
-export function today() {
-  const d = new Date()
+export function daysFromToday(n) {
+  const [y, m, d] = today().split('-').map(Number)
+  const t = new Date(y, m - 1, d + n)
   const p = (x) => String(x).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`
+}
+
+// 日期选择器的 disabled-date 要和本地零点的 Date 比较
+export function startOfBusinessDay() {
+  const [y, m, d] = today().split('-').map(Number)
+  return new Date(y, m - 1, d)
 }
 
 export const ITEM_TYPE = { RM: '原料', PK: '包材', FG: '成品' }

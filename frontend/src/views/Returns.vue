@@ -74,7 +74,7 @@
         <el-form-item label="退回批次">
           <div style="width:100%">
             <div v-for="(l, i) in c.lines" :key="i" class="line-row">
-              <el-select aria-label="退货批次" v-model="l.batchId" filterable :placeholder="c.customerId ? '选择发给该客户的批次' : '先选客户'" :disabled="!c.customerId">
+              <el-select aria-label="退货批次" v-model="l.batchId" :loading="returnableLoading" filterable :placeholder="c.customerId ? '选择发给该客户的批次' : '先选客户'" :disabled="!c.customerId">
                 <el-option v-for="b in returnableOptions" :key="b.batchId" :value="b.batchId" :disabled="Number(b.returnableQty) <= 0"
                            :label="`${b.itemName} · ${b.batchNo} · 已发 ${fmtQty(b.shippedQty)}，可退 ${fmtQty(b.returnableQty)}`" />
               </el-select>
@@ -91,7 +91,7 @@
       </el-form>
       <template #footer>
         <el-button @click="c.visible = false">取消</el-button>
-        <el-button type="primary" :loading="c.saving" @click="submitCreate">确认退货入库</el-button>
+        <el-button type="primary" :loading="c.saving" :disabled="returnableLoading" @click="submitCreate">确认退货入库</el-button>
       </template>
     </el-dialog>
 
@@ -194,14 +194,21 @@ async function openCreate(prefill = {}) {
 }
 
 const returnableReq = latestOnly()
+// 可退批次到手之前不能提交：批次还是空的，点了只会提示“请至少填一行”，响应回来又自动填上，看不出刚才为什么没成
+const returnableLoading = ref(false)
 
 async function loadReturnable() {
   const current = returnableReq()
   c.lines.forEach((l) => { l.batchId = null })
-  const rows = c.customerId ? await http.get('/sales-returns/returnable', { params: { customerId: c.customerId } }) : []
-  if (!current()) return
-  returnable.value = rows
-  onRecallChange()
+  returnableLoading.value = !!c.customerId
+  try {
+    const rows = c.customerId ? await http.get('/sales-returns/returnable', { params: { customerId: c.customerId } }) : []
+    if (!current()) return
+    returnable.value = rows
+    onRecallChange()
+  } finally {
+    if (current()) returnableLoading.value = false
+  }
 }
 
 function onRecallChange() {

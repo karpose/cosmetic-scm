@@ -184,6 +184,19 @@ test('升级后旧页面：一直下载不了时给出提示，不会反复刷�
   await toast(page, '页面加载失败')
 })
 
+test('网络抖动：可退批次加载完之前，确认退货按钮不能点', async ({ page }) => {
+  await login(page, 'sales1')
+  await slowFirst(page, '**/api/sales-returns/returnable**')
+  await page.goto('/returns')
+  await page.getByRole('button', { name: '登记退货' }).click()
+  const d = dialog(page, '登记退货')
+  await d.locator('.el-form-item').filter({ hasText: '客户' }).first().locator('.el-select').click()
+  await page.locator('.el-select-dropdown__item:visible').first().click()
+  const confirm = d.getByRole('button', { name: '确认退货入库' })
+  await expect(confirm).toBeDisabled()
+  await expect(confirm).toBeEnabled()
+})
+
 test('基础数据加载慢时，弹窗的默认仓库在加载完后补上', async ({ page }) => {
   await login(page, 'sales1')
   // 网络慢或服务器忙时，用户可能比基础数据先点开弹窗
@@ -654,6 +667,23 @@ test('审计日志按日期查询，补货建议显示预测', async ({ page }) 
   await inputs.nth(1).fill('2020-01-31')
   await inputs.nth(1).press('Enter')
   await expect(page.getByText('没有记录')).toBeVisible()
+})
+
+test('浏览器时区和上海不同：默认日期仍按上海的今天', async ({ browser }) => {
+  // 挑一个此刻日期和上海不同的时区：上海 18 点以后比基里巴斯早一天，19 点以前比美属萨摩亚晚一天
+  const shanghai = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
+  const hour = Number(new Date().toLocaleString('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false }))
+  const timezoneId = hour >= 18 ? 'Pacific/Kiritimati' : 'Pacific/Pago_Pago'
+  expect(new Date().toLocaleDateString('sv-SE', { timeZone: timezoneId })).not.toBe(shanghai())
+
+  const context = await browser.newContext({ timezoneId, locale: 'zh-CN', baseURL: test.info().project.use.baseURL })
+  const page = await context.newPage()
+  await login(page, 'sales1')
+  await page.goto('/quality-events')
+  await page.getByRole('button', { name: '登记投诉' }).click()
+  const date = dialog(page, '登记投诉').locator('.el-form-item').filter({ hasText: '受理日期' }).locator('input')
+  await expect(date).toHaveValue(shanghai())
+  await context.close()
 })
 
 const ITEM_HEADER = '编码,名称,类型,单位,INCI 名称,限用浓度上限（%）,禁用,保质期（月）,备案编号,净含量（g）,启用,标准成本（元）,指导价（元）'

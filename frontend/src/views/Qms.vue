@@ -379,7 +379,7 @@ import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
-import { fmtTime, today } from '../utils/format'
+import { daysFromToday, fmtTime, today } from '../utils/format'
 import { useLoader } from '../utils/loader'
 import { textMatch, usePaged } from '../utils/table'
 
@@ -389,11 +389,7 @@ const LEVEL = { MINOR: '微小偏差', MAJOR: '重大偏差', CRITICAL: '严重�
 const LEVEL_TAG = { MINOR: 'info', MAJOR: 'warning', CRITICAL: 'danger' }
 const CAPA_TAG = { OPEN: 'OPEN', DONE: 'PARTIAL', VERIFIED: 'RELEASED' }
 const RESULT_TAG = { PASS: 'success', CONDITIONAL: 'warning', FAIL: 'danger' }
-const plusDays = (n) => {
-  const d = new Date()
-  d.setDate(d.getDate() + n)
-  return d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
-}
+const plusDays = daysFromToday
 
 const auth = useAuth()
 const route = useRoute()

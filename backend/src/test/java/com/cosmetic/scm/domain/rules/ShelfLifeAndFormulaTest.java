@@ -21,6 +21,20 @@ class ShelfLifeAndFormulaTest {
     }
 
     @Test
+    void monthEndAndLeapDayBoundaries() {
+        // 目标月没有这一天时落到月末，不会顺延到下个月
+        assertThat(ShelfLife.expiryFrom(LocalDate.of(2026, 8, 31), 6)).isEqualTo(LocalDate.of(2027, 2, 28));
+        assertThat(ShelfLife.expiryFrom(LocalDate.of(2028, 2, 29), 12)).isEqualTo(LocalDate.of(2029, 2, 28));
+        assertThat(ShelfLife.retainUntil(LocalDate.of(2027, 8, 31))).isEqualTo(LocalDate.of(2028, 2, 29));
+        // 有效期当天仍可用，剩余比例为 0；过期后也不会是负数
+        LocalDate exp = LocalDate.of(2028, 2, 29);
+        assertThat(ShelfLife.isExpired(exp, exp)).isFalse();
+        assertThat(ShelfLife.isExpired(exp, exp.plusDays(1))).isTrue();
+        assertThat(ShelfLife.remainingRatio(LocalDate.of(2026, 2, 28), exp, exp)).isZero();
+        assertThat(ShelfLife.remainingRatio(LocalDate.of(2026, 2, 28), exp, exp.plusDays(30))).isZero();
+    }
+
+    @Test
     void restrictedIngredientConcentration() {
         FormulaCompliance.Check ok = FormulaCompliance.check("苯氧乙醇", true, false, new BigDecimal("1.0"),
                 new BigDecimal("0.0004"), "kg", new BigDecimal("50"));
