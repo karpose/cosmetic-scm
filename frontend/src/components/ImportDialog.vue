@@ -10,7 +10,7 @@
       <div>
         <b>{{ fileName || '还没有选择文件' }}</b>
         <p v-if="spec.hint" class="muted small">{{ spec.hint }}</p>
-        <p v-else class="muted small">编码已存在的行按“修改”处理（文件里没有的列保留原值，有列但留空则清空），不存在的新增。任何一行有问题都不会写入，改好后重新上传即可。Excel 请“另存为 → CSV UTF-8（逗号分隔）”；普通 CSV（GBK）也能识别。</p>
+        <p v-else class="muted small">编码已存在的行按“修改”处理：留空的格和文件里没有的列都保留原值，要清空请到主数据页面改；不存在的新增。预检会列出每一处修改。任何一行有问题都不会写入，改好后重新上传即可。Excel 请“另存为 → CSV UTF-8（逗号分隔）”；普通 CSV（GBK）也能识别。</p>
       </div>
       <div class="toolbar">
         <el-button @click="downloadTemplate">下载模板</el-button>
@@ -30,6 +30,8 @@
         <el-tag v-else-if="parseErrors.length" type="danger" disable-transitions>{{ parseErrors.length }} 处格式问题</el-tag>
       </div>
 
+      <p v-if="ignoredHeaders.length" class="ignored small">这些列系统不认识，不会导入：{{ ignoredHeaders.join('、') }}。如果是要导入的列，请改成模板里的名字。</p>
+
       <el-table v-if="issues.length" :data="issues" size="small" max-height="240" class="issues">
         <el-table-column label="Excel 行" width="80"><template #default="{ row }"><span class="mono">{{ row.line }}</span></template></el-table-column>
         <el-table-column label="编码" width="140"><template #default="{ row }"><span class="mono">{{ row.code || '—' }}</span></template></el-table-column>
@@ -42,6 +44,18 @@
         </el-table-column>
       </el-table>
       <p v-if="!issues.length && rows.length > 50" class="muted small">仅预览前 50 行。</p>
+
+      <!-- 修改已有数据时只给一个行数，看不出禁用、合格名录这类字段有没有被改 -->
+      <template v-if="!issues.length && changes.length">
+        <p class="change-head"><b>会修改已有数据 {{ changes.length }} 处</b>，确认导入前请核对：</p>
+        <el-table :data="changes.slice(0, 200)" size="small" max-height="220" class="changes">
+          <el-table-column label="编码" min-width="130"><template #default="{ row }"><span class="mono">{{ row.code }}</span></template></el-table-column>
+          <el-table-column prop="field" label="字段" min-width="130" />
+          <el-table-column prop="from" label="原值" min-width="120" />
+          <el-table-column prop="to" label="改为" min-width="120" />
+        </el-table>
+        <p v-if="changes.length > 200" class="muted small">仅显示前 200 处。</p>
+      </template>
     </template>
 
     <template #footer>
@@ -64,8 +78,16 @@ const props = defineProps({ kind: { type: String, required: true } })
 const emit = defineEmits(['done'])
 
 // ---------- 两种模板的列定义：表头 → 字段，以及单元格到接口值的转换 ----------
-const yes = (v) => ['是', 'y', 'yes', 'true', '1', '√'].includes(String(v ?? '').trim().toLowerCase())
-const yesDefault = (d) => (v) => (String(v ?? '').trim() === '' ? d : yes(v))
+// 是否类的格：认不出的要报错。曾把“禁用”两个字当成“否”，禁用原料就成了可用
+const YES_WORDS = ['是', 'y', 'yes', 'true', '1', '√', '✓']
+const NO_WORDS = ['否', 'n', 'no', 'false', '0', '×', '✗']
+const flag = (label, blank) => (v) => {
+  const s = String(v ?? '').trim().toLowerCase()
+  if (s === '') return blank
+  if (YES_WORDS.includes(s)) return true
+  if (NO_WORDS.includes(s)) return false
+  throw new Error(`${label}“${v}”无法识别，请填 是 或 否`)
+}
 const text = (v) => (String(v ?? '').trim() === '' ? null : String(v).trim())
 const num = (label) => (v) => {
   const s = String(v ?? '').replace(/[,%\s]/g, '')
@@ -92,8 +114,13 @@ const enumOf = (label, map, required) => (v) => {
 const date = (label) => (v) => {
   const s = String(v ?? '').trim()
   if (!s) return null
-  const m = s.match(/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?$/)
+  // Excel 把日期设成日期时间格式时，会带上 0:00
+  const m = s.match(/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?$/)
   if (!m) throw new Error(`${label}“${s}”格式应为 2027-03-01`)
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const real = new Date(y, mo - 1, d)
+  // 2 月 30 日这种日期，Date 会顺延到 3 月，比较一下才知道不存在
+  if (real.getMonth() !== mo - 1 || real.getDate() !== d) throw new Error(`${label}“${s}”这一天不存在`)
   return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
 }
 const yn = (v) => (v ? '是' : '否')
@@ -108,11 +135,11 @@ const SPECS = {
       { header: '单位', key: 'unit', conv: text, example: 'kg' },
       { header: 'INCI 名称', key: 'inci', conv: text, example: 'Glycerin' },
       { header: '限用浓度上限（%）', key: 'limitPct', conv: num('限用浓度上限'), example: '' },
-      { header: '禁用', key: 'banned', conv: yes, show: yn, example: '否' },
+      { header: '禁用', key: 'banned', conv: flag('禁用', false), show: yn, example: '否' },
       { header: '保质期（月）', key: 'shelfMonths', conv: int('保质期'), example: '36' },
       { header: '备案编号', key: 'filingNo', conv: text, example: '' },
       { header: '净含量（g）', key: 'netG', conv: num('净含量'), example: '' },
-      { header: '启用', key: 'active', conv: yesDefault(true), show: yn, example: '是' },
+      { header: '启用', key: 'active', conv: flag('启用', true), show: yn, example: '是' },
       { header: '标准成本（元）', key: 'stdCost', conv: num('标准成本'), example: '12' },
       { header: '指导价（元）', key: 'listPrice', conv: num('指导价'), example: '' }
     ]
@@ -159,8 +186,8 @@ const SPECS = {
       { header: '最低剩余效期（%）', key: 'minShelfPct', conv: int('最低剩余效期'), example: '' },
       { header: '联系人', key: 'contact', conv: text, example: '张经理 139****0000' },
       { header: '地址', key: 'address', conv: text, example: '' },
-      { header: '合格名录', key: 'qualified', conv: yesDefault(true), show: yn, example: '是' },
-      { header: '关键供应商', key: 'criticalSupplier', conv: yes, show: yn, example: '否' }
+      { header: '合格名录', key: 'qualified', conv: flag('合格名录', true), show: yn, example: '是' },
+      { header: '关键供应商', key: 'criticalSupplier', conv: flag('关键供应商', false), show: yn, example: '否' }
     ]
   }
 }
@@ -171,17 +198,24 @@ const fileInput = ref(null)
 const fileName = ref('')
 const rows = ref([])
 const parseErrors = ref([])
+const ignoredHeaders = ref([])
+const changes = ref([])
 const result = ref(null)
 const busy = ref('')
 const password = ref('')
 const step = computed(() => (result.value && !issues.value.length ? 3 : rows.value.length ? 2 : 1))
-const issues = computed(() => [...parseErrors.value, ...(result.value?.errors || [])])
+// 后端按“第几条数据”报行号，换算成 Excel 行号（文件中间可能有空行）
+const lineOf = ref([])
+const issues = computed(() => [...parseErrors.value, ...(result.value?.errors || []).map((e) => ({ ...e, line: lineOf.value[e.line - 2] ?? e.line }))])
 const canApply = computed(() => result.value && !issues.value.length && !busy.value)
 
 function reset() {
   fileName.value = ''
   rows.value = []
   parseErrors.value = []
+  ignoredHeaders.value = []
+  changes.value = []
+  lineOf.value = []
   result.value = null
   password.value = ''
   if (fileInput.value) fileInput.value.value = ''
@@ -210,6 +244,14 @@ function delimiterOf(textIn) {
   return first.includes(';') ? ';' : ','
 }
 
+// 从网页、微信复制来的文字可能带零宽字符，看不见，却让编码对不上
+const clean = (v) => String(v ?? '').replace(/[\u200b-\u200d\u2060\ufeff]/g, '').trim()
+// 表头：全角半角括号、空格不同都算同一列。否则“保质期(月)”这一列会被当成没有，静默丢掉
+const normHeader = (h) => clean(h).replace(/（/g, '(').replace(/）/g, ')').replace(/\s+/g, '').toLowerCase()
+// Excel 保存的是屏幕上显示的文字：错误值和列太窄的 ###，以及长数字的科学计数，原值已经丢了
+const EXCEL_ERROR = /^(#+|#N\/A|#REF!|#VALUE!|#DIV\/0!|#NAME\?|#NUM!|#NULL!)$/i
+const SCIENTIFIC = /^\d(\.\d+)?E\+\d+$/i
+
 function parseCsv(textIn) {
   const delimiter = delimiterOf(textIn)
   const out = []
@@ -229,7 +271,9 @@ function parseCsv(textIn) {
     } else cell += ch
   }
   if (cell !== '' || row.length) { row.push(cell); out.push(row) }
-  return out.filter((r) => r.some((c) => String(c).trim() !== ''))
+  // 空行要过滤，但报错要按 Excel 行号：单元格里换行不算新行，所以按第几条记录数，不按物理行
+  out.forEach((r, i) => { r.line = i + 1 })
+  return out.filter((r) => r.some((c) => clean(c) !== ''))
 }
 
 async function decode(file) {
@@ -237,12 +281,26 @@ async function decode(file) {
   const head = new Uint8Array(buf.slice(0, 4))
   // xlsx 是 zip 包（PK 开头），当文本解析只会得到乱码
   if (head[0] === 0x50 && head[1] === 0x4b) throw new Error('这是 Excel 工作簿（.xlsx），请在 Excel 里“另存为”CSV 后再上传')
+  if (head[0] === 0xd0 && head[1] === 0xcf) throw new Error('这是旧版 Excel 工作簿（.xls），请在 Excel 里“另存为”CSV 后再上传')
   // Excel 的“Unicode 文本”
   if (head[0] === 0xff && head[1] === 0xfe) return new TextDecoder('utf-16le').decode(buf)
   if (head[0] === 0xfe && head[1] === 0xff) return new TextDecoder('utf-16be').decode(buf)
   const utf8 = new TextDecoder('utf-8').decode(buf)
   // 出现替换字符说明不是 UTF-8，按 Excel 中文版默认的 GBK 再解一次
   return utf8.includes('�') ? new TextDecoder('gbk').decode(buf) : utf8
+}
+
+const sameValue = (a, b) => {
+  const [x, y] = [a ?? '', b ?? '']
+  if (x === '' || y === '') return x === y
+  return typeof x === 'number' || typeof y === 'number' ? Number(x) === Number(y) : String(x) === String(y)
+}
+
+// 列出已存在的编码里，每个真正变了的字段
+function diffRows(found, cols) {
+  const display = (c, v) => (v === null || v === undefined || v === '' ? '（空）' : c.show ? c.show(v) : String(v))
+  return found.flatMap(([r, old]) => cols.filter((c) => !sameValue(old[c.key], r[c.key]))
+    .map((c) => ({ code: r.code, field: c.header, from: display(c, old[c.key]), to: display(c, r[c.key]) })))
 }
 
 async function onFile(e) {
@@ -261,9 +319,11 @@ async function onFile(e) {
     parseErrors.value = [{ line: 1, code: '', message: '文件里没有数据行（第 1 行应为表头）' }]
     return
   }
-  const header = table[0].map((h) => h.trim())
+  const header = table[0].map(normHeader)
   const cols = spec.value.columns
-  const index = Object.fromEntries(cols.map((c) => [c.key, header.indexOf(c.header)]))
+  const known = new Set(cols.map((c) => normHeader(c.header)))
+  ignoredHeaders.value = table[0].filter((h) => clean(h) && !known.has(normHeader(h))).map(clean)
+  const index = Object.fromEntries(cols.map((c) => [c.key, header.indexOf(normHeader(c.header))]))
   const requiredKeys = spec.value.required || ['code', 'name', 'itemType', 'unit', 'kind']
   const missing = cols.filter((c) => requiredKeys.includes(c.key) && index[c.key] < 0)
   if (missing.length) {
@@ -271,27 +331,46 @@ async function onFile(e) {
     return
   }
   const errs = []
-  rows.value = table.slice(1).map((cells, i) => {
+  const dataRows = table.slice(1)
+  lineOf.value = dataRows.map((r) => r.line)
+  // 每行留空的字段（文件里没有的列也算），已存在的编码要保留原值
+  const blanks = []
+  rows.value = dataRows.map((cells) => {
     const obj = {}
+    const blank = []
     for (const c of cols) {
-      const raw = index[c.key] >= 0 ? cells[index[c.key]] : ''
+      const raw = index[c.key] >= 0 ? clean(cells[index[c.key]]) : ''
+      if (raw === '') blank.push(c.key)
       try {
+        if (EXCEL_ERROR.test(raw)) throw new Error(`${c.header}“${raw}”是 Excel 的错误值或列太窄显示的，请在 Excel 里改好再保存`)
+        if (c.conv === text && SCIENTIFIC.test(raw)) throw new Error(`${c.header}“${raw}”被 Excel 显示成了科学计数，后面的数字已经丢了。请把这一列设成文本格式，重新填写`)
         obj[c.key] = c.conv(raw)
       } catch (err) {
-        errs.push({ line: i + 2, code: text(cells[index[spec.value.codeKey || 'code']]), message: err.message })
+        errs.push({ line: cells.line, code: text(clean(cells[index[spec.value.codeKey || 'code']])), message: err.message })
       }
     }
+    blanks.push(blank)
     return obj
   })
   parseErrors.value = errs
-  // 文件里没有的列：已存在的编码保留原值，避免只导部分列时把其它字段清空
-  const absent = cols.filter((c) => index[c.key] < 0).map((c) => c.key)
-  if (absent.length && spec.value.listUrl) {
-    const existing = new Map((await http.get(spec.value.listUrl)).map((r) => [r.code, r]))
-    for (const r of rows.value) {
-      const old = existing.get(r.code)
-      if (old) absent.forEach((k) => { r[k] = old[k] ?? null })
+  if (spec.value.listUrl) {
+    let list
+    try {
+      list = await http.get(spec.value.listUrl)
+    } catch (err) {
+      // 不知道现有数据，就分不清留空的格要保留什么，不能往下走
+      parseErrors.value = [...errs, { line: 1, code: '', message: `读取现有数据失败，请重新选择文件：${err.message}` }]
+      return
     }
+    const existing = new Map(list.map((r) => [r.code, r]))
+    const found = []
+    rows.value.forEach((r, i) => {
+      const old = existing.get(r.code)
+      if (!old) return
+      blanks[i].forEach((k) => { r[k] = old[k] ?? null })
+      found.push([r, old])
+    })
+    changes.value = diffRows(found, cols)
   }
   if (!errs.length) send(true)
 }
@@ -317,6 +396,8 @@ async function send(dryRun) {
 </script>
 
 <style scoped>
+.ignored { margin: 0 0 8px; color: var(--el-color-warning); }
+.change-head { margin: 14px 0 6px; }
 .steps { display: flex; gap: 8px; list-style: none; padding: 0; margin: 0 0 14px; counter-reset: s; flex-wrap: wrap; }
 .steps li { counter-increment: s; flex: 1; min-width: 150px; padding: 8px 12px; border-radius: 12px; font-size: 12.5px; color: var(--el-text-color-secondary); background: var(--lg-fill); border: 1px solid var(--lg-stroke); }
 .steps li::before { content: counter(s) " · "; font-weight: 700; }

@@ -184,6 +184,19 @@ test('升级后旧页面：一直下载不了时给出提示，不会反复刷�
   await toast(page, '页面加载失败')
 })
 
+test('网络抖动：可退批次加载完之前，确认退货按钮不能点', async ({ page }) => {
+  await login(page, 'sales1')
+  await slowFirst(page, '**/api/sales-returns/returnable**')
+  await page.goto('/returns')
+  await page.getByRole('button', { name: '登记退货' }).click()
+  const d = dialog(page, '登记退货')
+  await d.locator('.el-form-item').filter({ hasText: '客户' }).first().locator('.el-select').click()
+  await page.locator('.el-select-dropdown__item:visible').first().click()
+  const confirm = d.getByRole('button', { name: '确认退货入库' })
+  await expect(confirm).toBeDisabled()
+  await expect(confirm).toBeEnabled()
+})
+
 test('基础数据加载慢时，弹窗的默认仓库在加载完后补上', async ({ page }) => {
   await login(page, 'sales1')
   // 网络慢或服务器忙时，用户可能比基础数据先点开弹窗
@@ -654,6 +667,148 @@ test('审计日志按日期查询，补货建议显示预测', async ({ page }) 
   await inputs.nth(1).fill('2020-01-31')
   await inputs.nth(1).press('Enter')
   await expect(page.getByText('没有记录')).toBeVisible()
+})
+
+test('浏览器时区和上海不同：默认日期仍按上海的今天', async ({ browser }) => {
+  // 挑一个此刻日期和上海不同的时区：上海 18 点以后比基里巴斯早一天，19 点以前比美属萨摩亚晚一天
+  const shanghai = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' })
+  const hour = Number(new Date().toLocaleString('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false }))
+  const timezoneId = hour >= 18 ? 'Pacific/Kiritimati' : 'Pacific/Pago_Pago'
+  expect(new Date().toLocaleDateString('sv-SE', { timeZone: timezoneId })).not.toBe(shanghai())
+
+  const context = await browser.newContext({ timezoneId, locale: 'zh-CN', baseURL: test.info().project.use.baseURL })
+  const page = await context.newPage()
+  await login(page, 'sales1')
+  await page.goto('/quality-events')
+  await page.getByRole('button', { name: '登记投诉' }).click()
+  const date = dialog(page, '登记投诉').locator('.el-form-item').filter({ hasText: '受理日期' }).locator('input')
+  await expect(date).toHaveValue(shanghai())
+  await context.close()
+})
+
+const ITEM_HEADER = '编码,名称,类型,单位,INCI 名称,限用浓度上限（%）,禁用,保质期（月）,备案编号,净含量（g）,启用,标准成本（元）,指导价（元）'
+const csvFile = (lines) => ({ name: 'items.csv', mimeType: 'text/csv', buffer: Buffer.from('﻿' + lines.join('\r\n') + '\r\n') })
+const openItemImport = async (page) => {
+  await page.goto('/master')
+  await page.getByRole('button', { name: '批量导入' }).click()
+  return dialog(page, '批量导入物料')
+}
+
+test('导入：已有物料留空的格保留原值，真正要改的列在预检里', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  await page.evaluate(async () => {
+    await fetch('/api/items', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('scm_token')}` },
+      body: JSON.stringify({ code: 'E2E-BAN', name: '禁用原料（测试）', itemType: 'RM', unit: 'kg', banned: true, active: true, shelfMonths: 36, stdCost: 12, limitPct: 0.5 })
+    })
+  })
+  const read = async () => (await api(page, '/items')).find((i) => i.code === 'E2E-BAN')
+  expect((await read()).banned).toBe(true)
+
+  // 只填必填列重新上传：曾经把禁用改成否，标准成本和保质期清空，预检只显示“修改 1”
+  let d = await openItemImport(page)
+  await d.locator('input[type=file]').setInputFiles(csvFile([ITEM_HEADER, 'E2E-BAN,禁用原料（测试）,原料,kg,,,,,,,,,']))
+  await expect(d.getByText('新增 0，修改 1')).toBeVisible()
+  await expect(d.getByText(/会修改已有数据/)).toHaveCount(0)
+  await d.getByRole('button', { name: /确认导入/ }).click()
+  await toast(page, '已导入')
+  const kept = await read()
+  expect(kept.banned).toBe(true)
+  expect(Number(kept.stdCost)).toBe(12)
+  expect(kept.shelfMonths).toBe(36)
+  expect(Number(kept.limitPct)).toBe(0.5)
+
+  // 明确写了“否”才解禁，确认前要看得见
+  d = await openItemImport(page)
+  await d.locator('input[type=file]').setInputFiles(csvFile([ITEM_HEADER, 'E2E-BAN,禁用原料（测试）,原料,kg,,,否,24,,,,,']))
+  await expect(d.getByText('会修改已有数据 2 处')).toBeVisible()
+  const row = d.locator('.changes .el-table__row').filter({ hasText: '禁用' })
+  await expect(row).toContainText('是')
+  await expect(row).toContainText('否')
+  await expect(d.locator('.changes .el-table__row').filter({ hasText: '保质期' })).toContainText('24')
+  await d.getByRole('button', { name: '取消' }).click()
+  expect((await read()).banned).toBe(true)
+})
+
+test('导入：不合格的供应商，合格名录留空不会变回合格', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  const header = '编码,名称,类别,资质编号,资质有效期,许可范围,批号前缀,渠道,最低剩余效期（%）,联系人,地址,合格名录,关键供应商'
+  const upload = async (line) => {
+    await page.goto('/master')
+    await page.getByRole('tab', { name: '往来单位' }).click()
+    await page.getByRole('button', { name: '批量导入' }).click()
+    const d = dialog(page, '批量导入往来单位')
+    await d.locator('input[type=file]').setInputFiles(csvFile([header, line]))
+    await d.getByRole('button', { name: /确认导入/ }).click()
+    await toast(page, '已导入')
+  }
+  await upload('E2E-SUP,不合格供应商,物料供应商,LIC-1,2030-01-01,,,,,张三,,否,是')
+  await upload('E2E-SUP,不合格供应商,物料供应商,,,,,,,,,,')
+  const p = (await api(page, '/partners')).find((x) => x.code === 'E2E-SUP')
+  expect(p.qualified).toBe(false)
+  expect(p.criticalSupplier).toBe(true)
+  expect(p.licenseNo).toBe('LIC-1')
+  expect(p.contact).toBe('张三')
+})
+
+test('导入：Excel 常见问题逐行报出来，行号和 Excel 对得上', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  const d = await openItemImport(page)
+  await d.locator('input[type=file]').setInputFiles(csvFile([
+    ITEM_HEADER,
+    'E2E-OK,正常,原料,kg,,,否,36,,,是,,',
+    ',,,,,,,,,,,,',
+    'E2E-A,填错是否,原料,kg,,,禁用,36,,,是,,', // Excel 第 4 行
+    'E2E-B,#N/A,原料,kg,,,否,36,,,是,,',
+    'E2E-C,科学计数,原料,kg,,,否,36,2.60901E+11,,是,,',
+    'E2E-D,太窄,原料,kg,,,否,#####,,,是,,'
+  ]))
+  const issue = (code) => d.locator('.issues .el-table__row').filter({ hasText: code })
+  await expect(issue('E2E-A')).toContainText('4')
+  await expect(issue('E2E-A')).toContainText('禁用“禁用”无法识别')
+  await expect(issue('E2E-B')).toContainText('Excel 的错误值')
+  await expect(issue('E2E-C')).toContainText('科学计数')
+  await expect(issue('E2E-D')).toContainText('列太窄')
+  await expect(d.getByRole('button', { name: /确认导入/ })).toBeDisabled()
+
+  // 后端报的错也要按 Excel 行号：第 3 行是空行，类型正确但单位缺失的行在第 4 行
+  await d.locator('input[type=file]').setInputFiles(csvFile([
+    ITEM_HEADER,
+    'E2E-OK,正常,原料,kg,,,否,36,,,是,,',
+    ',,,,,,,,,,,,',
+    'E2E-E,缺单位,原料,,,,否,36,,,是,,'
+  ]))
+  await expect(issue('E2E-E')).toContainText('4')
+})
+
+test('导入：半角括号的表头也认，不认识的列要说，零宽字符去掉', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  const header = ITEM_HEADER.replace('限用浓度上限（%）', '限用浓度上限(%)').replace('保质期（月）', '保质期 (月)') + ',备注'
+  const d = await openItemImport(page)
+  await d.locator('input[type=file]').setInputFiles(csvFile([header, 'E2E-HALF​,半角表头,原料,kg,,0.5,否,24,,,是,,,给同事看的']))
+  await expect(d.getByText('新增 1，修改 0')).toBeVisible()
+  await expect(d.getByText('这些列系统不认识，不会导入：备注')).toBeVisible()
+  await d.getByRole('button', { name: /确认导入/ }).click()
+  await toast(page, '已导入')
+  const it = (await api(page, '/items')).find((i) => i.code === 'E2E-HALF')
+  expect(it.shelfMonths).toBe(24)
+  expect(Number(it.limitPct)).toBe(0.5)
+})
+
+test('导入：不存在的日期在页面上按行报，不是整批“格式不正确”', async ({ page }) => {
+  await login(page, 'qso1')
+  await page.goto('/inventory-ops')
+  await page.getByRole('button', { name: '期初库存导入' }).click()
+  const d = dialog(page, '批量导入期初库存')
+  const header = '物料编码,批号,状态,仓库编码,数量,生产日期,有效期,外部批号,来源单位编码,检验报告编号,留样数量,留样地点'
+  await d.locator('input[type=file]').setInputFiles(csvFile([
+    header,
+    'RM-GLY-002,E2E-D1,待检,WH-MAIN,1,2026-02-30,,,,,,',
+    'RM-GLY-002,1.23457E+11,待检,WH-MAIN,1,2026-02-01,,,,,,'
+  ]))
+  await expect(d.locator('.issues .el-table__row').filter({ hasText: '这一天不存在' })).toContainText('2')
+  await expect(d.locator('.issues .el-table__row').filter({ hasText: '科学计数' })).toContainText('3')
 })
 
 test('期初库存导入：预检报错，改对后签批写入，能查到批次和留样', async ({ page }) => {

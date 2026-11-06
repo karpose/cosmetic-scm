@@ -129,7 +129,7 @@ import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import AttachmentList from '../components/AttachmentList.vue'
 import { useAuth } from '../stores/auth'
-import { OEM_STAGES, fmtQty, fmtTime, today } from '../utils/format'
+import { OEM_STAGES, fmtQty, fmtTime, startOfBusinessDay, today } from '../utils/format'
 import { useLoader } from '../utils/loader'
 
 const auth = useAuth()
@@ -144,7 +144,7 @@ const finished = computed(() => orders.value.filter(isClosed))
 const shown = computed(() => (tab.value === 'active' ? active.value : finished.value))
 const latestReport = (o) => o.reports[o.reports.length - 1] || null
 const canReport = (o) => o.status === 'ISSUED' && latestReport(o)?.status !== 'SUBMITTED'
-const startOfToday = new Date(new Date().setHours(0, 0, 0, 0))
+const startOfToday = startOfBusinessDay()
 
 // ---------- 回传进度 ----------
 const pg = reactive({ visible: false, saving: false, order: null, stage: 'CONFIRMED', promiseDate: null, note: '' })
