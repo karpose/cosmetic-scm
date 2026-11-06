@@ -9,7 +9,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0, // 用例之间依赖前面留下的数据，单独重试没有意义
-  timeout: 60_000,
+  timeout: 180_000, // 一个用例要切换几个岗位，每次登录都算一遍密码；CI 比开发机慢 3 倍左右
   expect: { timeout: 10_000 },
   reporter: process.env.CI ? [['list'], ['html', { open: 'never', outputFolder: 'playwright-report-empty' }]] : 'list',
   outputDir: 'test-results-empty',
