@@ -45,4 +45,19 @@ public class PurchaseOrder {
     private String closedBy;
 
     private LocalDateTime closedAt;
+
+    /** 采购期望到货日，选填。 */
+    private LocalDate expectedDate;
+
+    /** 供应商当前回复的交期，可以改。 */
+    private LocalDate promisedDate;
+
+    /** 第一次承诺的交期，不再变。准时率按它算，否则改一次交期就能把迟到变成准时。 */
+    private LocalDate firstPromisedDate;
+
+    private LocalDateTime supplierConfirmedAt;
+
+    private String supplierConfirmedBy;
+
+    private LocalDate lastReceivedOn;
 }

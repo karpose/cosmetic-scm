@@ -101,6 +101,7 @@ watch(() => route.path, () => { if (isMobile.value) collapsed.value = true })
 
 const groups = computed(() => {
   if (auth.hasAny('OEM_PORTAL')) return [{ title: '协同', items: [{ path: '/portal/oem', title: '委托生产协同', icon: OfficeBuilding }] }]
+  if (auth.hasAny('SUPPLIER_PORTAL')) return [{ title: '协同', items: [{ path: '/portal/supplier', title: '采购订单协同', icon: Van }] }]
   if (auth.hasAny('DEALER')) return [{ title: '订货', items: [{ path: '/portal/dealer', title: '订货与召回', icon: Shop }] }]
   const list = [
     {

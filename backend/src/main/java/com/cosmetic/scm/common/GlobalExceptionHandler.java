@@ -49,6 +49,8 @@ public class GlobalExceptionHandler {
     private static final java.util.regex.Pattern LINE_FIELD = java.util.regex.Pattern.compile("\\[(\\d+)]");
 
     private static final java.util.Map<String, String> FIELD_LABELS = java.util.Map.ofEntries(
+            java.util.Map.entry("promisedDate", "交期"), java.util.Map.entry("shipDate", "发货日期"), java.util.Map.entry("extBatchNo", "批号"),
+            java.util.Map.entry("mfgDate", "生产日期"), java.util.Map.entry("poLineId", "采购行"),
             java.util.Map.entry("code", "编码"), java.util.Map.entry("name", "名称"), java.util.Map.entry("username", "账号"),
             java.util.Map.entry("displayName", "姓名"), java.util.Map.entry("password", "密码"), java.util.Map.entry("unit", "单位"),
             java.util.Map.entry("inci", "INCI 名称"), java.util.Map.entry("qty", "数量"), java.util.Map.entry("itemId", "物料"),

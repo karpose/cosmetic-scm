@@ -13,11 +13,12 @@ export const ROLE_LABELS = {
   SALES: '销售',
   VIEWER: '只读',
   OEM_PORTAL: '代工厂门户',
-  DEALER: '经销商门户'
+  DEALER: '经销商门户',
+  SUPPLIER_PORTAL: '供应商门户'
 }
 
 // 外部门户角色：只能用对应门户，不能和内部角色同时分配
-export const PORTAL_ROLES = { OEM_PORTAL: { home: '/portal/oem', partnerKind: 'OEM' }, DEALER: { home: '/portal/dealer', partnerKind: 'CUSTOMER' } }
+export const PORTAL_ROLES = { OEM_PORTAL: { home: '/portal/oem', partnerKind: 'OEM' }, DEALER: { home: '/portal/dealer', partnerKind: 'CUSTOMER' }, SUPPLIER_PORTAL: { home: '/portal/supplier', partnerKind: 'SUPPLIER' } }
 export const PASSWORD_RULE = '至少 8 位，大写字母、小写字母、数字、符号中至少三类，且不能包含账号名'
 
 export const useAuth = defineStore('auth', {

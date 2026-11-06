@@ -6,6 +6,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -27,6 +29,7 @@ import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.PoStatus;
+import com.cosmetic.scm.domain.ShipmentStatus;
 import com.cosmetic.scm.domain.SourceType;
 import com.cosmetic.scm.domain.TxnType;
 import com.cosmetic.scm.domain.WarehouseKind;
@@ -58,11 +61,18 @@ public class PurchaseService {
     private final AuditService audit;
     private final TimeProvider time;
     private final CurrentUser currentUser;
+    private final PoShipmentRepository shipments;
+    private final PoShipmentLineRepository shipmentLines;
+    private final com.cosmetic.scm.security.UserRepository users;
 
     public record PoLineReq(@NotNull Long itemId, @NotNull @Positive @Qty BigDecimal qty) {
     }
 
-    public record CreatePoReq(@NotNull Long supplierId, @NotEmpty(message = "至少一行物料") @Valid List<PoLineReq> lines) {
+    public record CreatePoReq(@NotNull Long supplierId, @NotEmpty(message = "至少一行物料") @Valid List<PoLineReq> lines,
+                              LocalDate expectedDate) {
+        public CreatePoReq(Long supplierId, List<PoLineReq> lines) {
+            this(supplierId, lines, null);
+        }
     }
 
     public record ReceiveLineReq(@NotNull Long poLineId,
@@ -73,7 +83,11 @@ public class PurchaseService {
                                  @NotNull Long warehouseId) {
     }
 
-    public record ReceiveReq(@NotEmpty(message = "没有收货行") @Valid List<ReceiveLineReq> lines) {
+    /** shipmentId：按哪张送货通知收的货，选填。 */
+    public record ReceiveReq(@NotEmpty(message = "没有收货行") @Valid List<ReceiveLineReq> lines, Long shipmentId) {
+        public ReceiveReq(List<ReceiveLineReq> lines) {
+            this(lines, null);
+        }
     }
 
     public record CloseReq(@NotBlank(message = "请填写原因") @Size(max = 300) String reason) {
@@ -86,7 +100,17 @@ public class PurchaseService {
 
     public record PoView(Long id, String poNo, Long supplierId, String supplierName, LocalDate orderDate,
                          PoStatus status, String statusLabel, String createdBy, LocalDateTime createdAt,
-                         List<PoLineView> lines, String closeReason, String closedBy, LocalDateTime closedAt) {
+                         List<PoLineView> lines, String closeReason, String closedBy, LocalDateTime closedAt,
+                         LocalDate expectedDate, LocalDate promisedDate, LocalDateTime supplierConfirmedAt,
+                         LocalDate lastReceivedOn, List<ShipmentView> shipments, boolean supplierHasPortal) {
+    }
+
+    public record ShipmentLineView(Long poLineId, String itemCode, String itemName, String unit, BigDecimal qty,
+                                   String extBatchNo, LocalDate mfgDate, LocalDate expDate) {
+    }
+
+    public record ShipmentView(Long id, String shipmentNo, LocalDate shipDate, ShipmentStatus status, String statusLabel,
+                               String note, String createdBy, LocalDateTime createdAt, List<ShipmentLineView> lines) {
     }
 
     @Transactional(readOnly = true)
@@ -106,7 +130,10 @@ public class PurchaseService {
                 .collect(Collectors.groupingBy(PoLine::getPoId));
         Map<Long, Item> im = lookup.itemMap();
         Map<Long, Partner> pm = lookup.partnerMap();
-        return list.stream().map(po -> toView(po, byPo.getOrDefault(po.getId(), List.of()), im, pm)).toList();
+        Map<Long, PoLine> lineMap = byPo.values().stream().flatMap(List::stream).collect(Collectors.toMap(PoLine::getId, l -> l));
+        Map<Long, List<ShipmentView>> sm = shipmentViews(list.stream().map(PurchaseOrder::getId).toList(), lineMap, im);
+        Set<Long> withPortal = users.partnersWithAccounts();
+        return list.stream().map(po -> toView(po, byPo.getOrDefault(po.getId(), List.of()), im, pm, sm.getOrDefault(po.getId(), List.of()), withPortal)).toList();
     }
 
     @Transactional(readOnly = true)
@@ -121,6 +148,9 @@ public class PurchaseService {
         Partner supplier = lookup.partner(req.supplierId());
         if (supplier.getKind() != PartnerKind.SUPPLIER) {
             throw new BizException(supplier.getName() + " 不是物料供应商");
+        }
+        if (req.expectedDate() != null && req.expectedDate().isBefore(today)) {
+            throw new BizException("期望到货日不能早于今天");
         }
         if (!supplier.isQualified()) {
             throw new BizException(supplier.getName() + " 不在合格供应商名录内，不能下单");
@@ -152,6 +182,7 @@ public class PurchaseService {
         po.setStatus(PoStatus.OPEN);
         po.setCreatedBy(currentUser.usernameOrSystem());
         po.setCreatedAt(time.now());
+        po.setExpectedDate(req.expectedDate());
         orders.save(po);
         int no = 1;
         for (PoLineReq l : req.lines()) {
@@ -180,6 +211,8 @@ public class PurchaseService {
         po.setClosedBy(currentUser.usernameOrSystem());
         po.setClosedAt(time.now());
         orders.save(po);
+        // 单子结束了，没收的送货通知也作废，否则总览上一直显示待收货
+        settleShipments(poId, ShipmentStatus.CANCELLED);
         audit.log(partial ? "关闭采购单" : "取消采购单", po.getPoNo(), lookup.partner(po.getSupplierId()).getName(), po.getCloseReason());
         return toView(po, lines.findByPoIdOrderByLineNo(poId), lookup.itemMap(), lookup.partnerMap());
     }
@@ -230,12 +263,58 @@ public class PurchaseService {
         }
         boolean allDone = lineMap.values().stream().allMatch(l -> l.remaining().signum() == 0);
         po.setStatus(allDone ? PoStatus.RECEIVED : PoStatus.PARTIAL);
+        po.setLastReceivedOn(today);
         orders.save(po);
+        if (req.shipmentId() != null) {
+            PoShipment s = shipments.lockById(req.shipmentId()).filter(x -> x.getPoId().equals(poId))
+                    .orElseThrow(() -> new BizException("送货通知不属于采购单 " + po.getPoNo()));
+            if (s.getStatus() != ShipmentStatus.OPEN) {
+                throw new BizException("送货通知 " + s.getShipmentNo() + " 当前为" + s.getStatus().getLabel() + "，请刷新后重新收货");
+            }
+            s.setStatus(ShipmentStatus.RECEIVED);
+            shipments.save(s);
+        }
+        // 全部到齐后，没被选中的通知也算收了：货就是这些，留着总览上会一直待收货
+        if (allDone) {
+            settleShipments(poId, ShipmentStatus.RECEIVED);
+        }
         audit.log("采购收货", po.getPoNo(), "生成待检批次 " + String.join("、", made));
         return made;
     }
 
+    private void settleShipments(Long poId, ShipmentStatus to) {
+        for (PoShipment s : shipments.findByPoIdAndStatus(poId, ShipmentStatus.OPEN)) {
+            s.setStatus(to);
+            shipments.save(s);
+        }
+    }
+
+    /** 送货通知视图。poLines 是这些通知所属采购单的行。 */
+    public Map<Long, List<ShipmentView>> shipmentViews(Collection<Long> poIds, Map<Long, PoLine> poLines, Map<Long, Item> im) {
+        if (poIds.isEmpty()) {
+            return Map.of();
+        }
+        List<PoShipment> list = shipments.findByPoIdInOrderByIdDesc(poIds);
+        Map<Long, List<PoShipmentLine>> byShipment = shipmentLines.findByShipmentIdInOrderById(list.stream().map(PoShipment::getId).toList())
+                .stream().collect(Collectors.groupingBy(PoShipmentLine::getShipmentId));
+        Map<Long, List<ShipmentView>> out = new HashMap<>();
+        for (PoShipment s : list) {
+            List<ShipmentLineView> lv = byShipment.getOrDefault(s.getId(), List.of()).stream().map(l -> {
+                Item i = im.get(poLines.get(l.getPoLineId()).getItemId());
+                return new ShipmentLineView(l.getPoLineId(), i.getCode(), i.getName(), i.getUnit(), l.getQty(), l.getExtBatchNo(), l.getMfgDate(), l.getExpDate());
+            }).toList();
+            out.computeIfAbsent(s.getPoId(), k -> new ArrayList<>()).add(new ShipmentView(s.getId(), s.getShipmentNo(), s.getShipDate(),
+                    s.getStatus(), s.getStatus().getLabel(), s.getNote(), s.getCreatedBy(), s.getCreatedAt(), lv));
+        }
+        return out;
+    }
+
     private PoView toView(PurchaseOrder po, List<PoLine> poLines, Map<Long, Item> im, Map<Long, Partner> pm) {
+        Map<Long, PoLine> lineMap = poLines.stream().collect(Collectors.toMap(PoLine::getId, l -> l));
+        return toView(po, poLines, im, pm, shipmentViews(List.of(po.getId()), lineMap, im).getOrDefault(po.getId(), List.of()), users.partnersWithAccounts());
+    }
+
+    private PoView toView(PurchaseOrder po, List<PoLine> poLines, Map<Long, Item> im, Map<Long, Partner> pm, List<ShipmentView> sv, Set<Long> withPortal) {
         Partner s = pm.get(po.getSupplierId());
         List<PoLineView> lv = poLines.stream()
                 .sorted((a, b) -> Integer.compare(a.getLineNo(), b.getLineNo()))
@@ -246,7 +325,9 @@ public class PurchaseService {
                             l.remaining());
                 }).toList();
         return new PoView(po.getId(), po.getPoNo(), po.getSupplierId(), s == null ? null : s.getName(),
-                po.getOrderDate(), po.getStatus(), po.getStatus().getLabel(), po.getCreatedBy(), po.getCreatedAt(), lv, po.getCloseReason(), po.getClosedBy(), po.getClosedAt());
+                po.getOrderDate(), po.getStatus(), po.getStatus().getLabel(), po.getCreatedBy(), po.getCreatedAt(), lv, po.getCloseReason(), po.getClosedBy(), po.getClosedAt(),
+                po.getExpectedDate(), po.getPromisedDate(), po.getSupplierConfirmedAt(), po.getLastReceivedOn(),
+                sv, withPortal.contains(po.getSupplierId()));
     }
 
     private static String plain(BigDecimal v) {

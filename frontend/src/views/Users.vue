@@ -59,13 +59,13 @@
             <el-checkbox v-for="(v, k) in internalRoles" :key="k" :value="k">{{ v }}</el-checkbox>
           </el-checkbox-group>
         </el-form-item>
-        <el-form-item label="外部门户角色（二选一，不能和内部角色同时勾选）">
+        <el-form-item label="外部门户角色（只能选一个，不能和内部角色同时勾选）">
           <el-radio-group v-model="portalRole" @change="onPortal">
             <el-radio value="">不是门户账号</el-radio>
             <el-radio v-for="(cfg, k) in PORTAL_ROLES" :key="k" :value="k">{{ ROLE_LABELS[k] }}</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="portalRole" :label="portalRole === 'OEM_PORTAL' ? '所属受托生产企业' : '所属经销商（客户）'">
+        <el-form-item v-if="portalRole" :label="{ OEM_PORTAL: '所属受托生产企业', DEALER: '所属经销商（客户）', SUPPLIER_PORTAL: '所属物料供应商' }[portalRole]">
           <el-select v-model="form.partnerId" filterable placeholder="选择所属单位" style="width:100%">
             <el-option v-for="p in partnerOptions" :key="p.id" :value="p.id" :label="`${p.name}（${p.code}）`" />
           </el-select>

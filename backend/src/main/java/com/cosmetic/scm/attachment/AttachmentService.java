@@ -21,6 +21,8 @@ import com.cosmetic.scm.complaint.ComplaintRepository;
 import com.cosmetic.scm.domain.MoStatus;
 import com.cosmetic.scm.domain.MoType;
 import com.cosmetic.scm.domain.OwnerType;
+import com.cosmetic.scm.purchase.PurchaseOrder;
+import com.cosmetic.scm.domain.PoStatus;
 import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.master.PartnerRepository;
 import com.cosmetic.scm.mes.EquipmentRepository;
@@ -69,6 +71,7 @@ public class AttachmentService {
     private final AuditService audit;
     private final TimeProvider time;
     private final CurrentUser currentUser;
+    private final com.cosmetic.scm.security.UserRepository users;
 
     @Value("${scm.storage.max-file-mb:20}")
     private int maxFileMb;
@@ -121,6 +124,59 @@ public class AttachmentService {
                 .orElseThrow(() -> BizException.notFound("附件"));
         requireOwnMo(a.getOwnerId());
         return read(a);
+    }
+
+    // ---------- 供应商门户：只碰本单位的采购单和档案，只看本单位账号传的文件 ----------
+    // 内部传到采购单、单位上的文件（审核报告等）不给供应商看
+
+    @Transactional
+    public AttachmentView uploadForSupplierOrder(Long poId, MultipartFile file, String note) {
+        if (requireOwnPo(poId).getStatus() == PoStatus.CANCELLED) {
+            throw new BizException("这张采购单已取消，不能上传附件");
+        }
+        return store(OwnerType.PURCHASE_ORDER, poId, file, note);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AttachmentView> listForSupplierOrder(Long poId) {
+        requireOwnPo(poId);
+        return uploadedByMyPartner(list(OwnerType.PURCHASE_ORDER, poId));
+    }
+
+    @Transactional
+    public AttachmentView uploadForSupplierProfile(MultipartFile file, String note) {
+        return store(OwnerType.PARTNER, currentUser.portalPartnerId(), file, note);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AttachmentView> listForSupplierProfile() {
+        return uploadedByMyPartner(list(OwnerType.PARTNER, currentUser.portalPartnerId()));
+    }
+
+    @Transactional(readOnly = true)
+    public Download downloadForSupplier(Long id) {
+        Attachment a = attachments.findById(id).orElseThrow(() -> BizException.notFound("附件"));
+        Long mine = currentUser.portalPartnerId();
+        boolean ownerIsMine = switch (a.getOwnerType()) {
+            case PURCHASE_ORDER -> purchaseOrders.findById(a.getOwnerId()).filter(p -> mine.equals(p.getSupplierId())).isPresent();
+            case PARTNER -> mine.equals(a.getOwnerId());
+            default -> false;
+        };
+        if (!ownerIsMine || !users.usernamesOfPartner(mine).contains(a.getUploadedBy())) {
+            throw BizException.notFound("附件");
+        }
+        return read(a);
+    }
+
+    private List<AttachmentView> uploadedByMyPartner(List<AttachmentView> all) {
+        List<String> mine = users.usernamesOfPartner(currentUser.portalPartnerId());
+        return all.stream().filter(a -> mine.contains(a.uploadedBy())).toList();
+    }
+
+    private PurchaseOrder requireOwnPo(Long poId) {
+        Long mine = currentUser.portalPartnerId();
+        return purchaseOrders.findById(poId).filter(p -> mine.equals(p.getSupplierId()))
+                .orElseThrow(() -> BizException.notFound("采购单"));
     }
 
     // ---------- 内部 ----------

@@ -12,6 +12,8 @@ final class TodoRouting {
 
     private static final Map<String, Set<Role>> ROUTES = Map.ofEntries(
             Map.entry("QC", QUALITY),
+            Map.entry("SHIPMENT", Set.of(Role.WAREHOUSE, Role.PURCHASE)),
+            Map.entry("PO_LATE", Set.of(Role.PURCHASE)),
             Map.entry("RELEASE", Set.of(Role.QSO)),
             Map.entry("MO_ISSUE", Set.of(Role.PRODUCTION, Role.WAREHOUSE)),
             Map.entry("MO_COMPLETE", Set.of(Role.PRODUCTION, Role.WAREHOUSE)),

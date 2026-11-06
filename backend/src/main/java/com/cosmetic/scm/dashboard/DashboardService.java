@@ -56,6 +56,7 @@ public class DashboardService {
     private static final double NEAR_EXPIRY_RATIO = 0.5;
 
     private final PurchaseOrderRepository purchaseOrders;
+    private final com.cosmetic.scm.purchase.PoShipmentRepository poShipments;
     private final BatchRepository batches;
     private final MfgOrderRepository mfgOrders;
     private final SalesOrderRepository salesOrders;
@@ -162,6 +163,22 @@ public class DashboardService {
         if (dealerPending > 0) {
             todos.add(new Todo("DEALER_ORDER", "经销商订单待审核", "warn", dealerPending + " 张经销商订货单", "—",
                     "审核通过即按先到期先出生成出库单", "/dealer-orders"));
+        }
+        // 供应商已发货等收货；到了交期还没到齐的采购单（交期看供应商回复，没回复看采购期望）
+        List<com.cosmetic.scm.purchase.PoShipment> openShipments = poShipments.findByStatusOrderById(com.cosmetic.scm.domain.ShipmentStatus.OPEN);
+        if (!openShipments.isEmpty()) {
+            Map<Long, com.cosmetic.scm.purchase.PurchaseOrder> pos = purchaseOrders.findAllById(openShipments.stream()
+                    .map(com.cosmetic.scm.purchase.PoShipment::getPoId).toList()).stream()
+                    .collect(java.util.stream.Collectors.toMap(com.cosmetic.scm.purchase.PurchaseOrder::getId, p -> p));
+            for (com.cosmetic.scm.purchase.PoShipment s : openShipments) {
+                com.cosmetic.scm.purchase.PurchaseOrder po = pos.get(s.getPoId());
+                todos.add(new Todo("SHIPMENT", "供应商已发货", "info", lookup.partner(po.getSupplierId()).getName(), s.getShipmentNo(),
+                        "采购单 " + po.getPoNo() + "，发货日期 " + s.getShipDate(), "/purchase"));
+            }
+        }
+        for (com.cosmetic.scm.purchase.PurchaseOrder po : purchaseOrders.findOverdue(List.of(PoStatus.OPEN, PoStatus.PARTIAL), today)) {
+            todos.add(new Todo("PO_LATE", "采购单超交期", "warn", lookup.partner(po.getSupplierId()).getName(), po.getPoNo(),
+                    "交期 " + (po.getPromisedDate() != null ? po.getPromisedDate() : po.getExpectedDate()) + "，还没到齐", "/purchase"));
         }
         long channelFailed = integration.failedCount();
         if (channelFailed > 0) {

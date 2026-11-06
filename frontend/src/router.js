@@ -38,7 +38,8 @@ const routes = [
       { path: 'dealer-orders', name: 'dealer-orders', component: () => import('./views/DealerOrders.vue'), meta: { title: '经销商订单' } },
       { path: 'integration', name: 'integration', component: () => import('./views/Integration.vue'), meta: { title: '电商对接' } },
       { path: 'portal/oem', name: 'portal-oem', component: () => import('./views/PortalOem.vue'), meta: { title: '代工厂门户', portal: 'OEM_PORTAL' } },
-      { path: 'portal/dealer', name: 'portal-dealer', component: () => import('./views/PortalDealer.vue'), meta: { title: '经销商门户', portal: 'DEALER' } }
+      { path: 'portal/dealer', name: 'portal-dealer', component: () => import('./views/PortalDealer.vue'), meta: { title: '经销商门户', portal: 'DEALER' } },
+      { path: 'portal/supplier', name: 'portal-supplier', component: () => import('./views/PortalSupplier.vue'), meta: { title: '供应商门户', portal: 'SUPPLIER_PORTAL' } }
     ]
   },
   { path: '/:pathMatch(.*)*', redirect: '/' }

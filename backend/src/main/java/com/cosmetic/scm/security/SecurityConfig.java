@@ -82,6 +82,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/integration/**").hasRole("INTEGRATION")
                         .requestMatchers("/api/portal/oem/**").hasRole(Role.OEM_PORTAL.name())
                         .requestMatchers("/api/portal/dealer/**").hasRole(Role.DEALER.name())
+                        .requestMatchers("/api/portal/supplier/**").hasRole(Role.SUPPLIER_PORTAL.name())
                         .requestMatchers("/api/**").hasAnyRole(INTERNAL_ROLES)
                         .anyRequest().permitAll())
                 .exceptionHandling(e -> e.accessDeniedHandler((req, resp, ex) -> {

@@ -38,6 +38,9 @@ const props = defineProps({
   ownerId: { type: Number, required: true },
   canUpload: { type: Boolean, default: false },
   portal: { type: Boolean, default: false },
+  // 供应商门户的路径：列表和上传共用 listPath，下载用 downloadPrefix/{id}/download
+  listPath: { type: String, default: '' },
+  downloadPrefix: { type: String, default: '' },
   title: { type: String, default: '附件' },
   // 上传前要知道的事，比如谁能看到这些文件
   notice: { type: String, default: '' },
@@ -48,14 +51,15 @@ const list = ref([])
 const uploading = ref(false)
 const picker = ref(null)
 
-const listUrl = () => (props.portal ? `/portal/oem/orders/${props.ownerId}/attachments` : '/attachments')
-const downloadUrl = (id) => (props.portal ? `/portal/oem/attachments/${id}/download` : `/attachments/${id}/download`)
+const scoped = () => props.portal || !!props.listPath
+const listUrl = () => props.listPath || (props.portal ? `/portal/oem/orders/${props.ownerId}/attachments` : '/attachments')
+const downloadUrl = (id) => (props.downloadPrefix ? `${props.downloadPrefix}/${id}/download` : props.portal ? `/portal/oem/attachments/${id}/download` : `/attachments/${id}/download`)
 
 const listReq = latestOnly()
 
 async function load() {
   const current = listReq()
-  const res = props.portal
+  const res = scoped()
     ? await http.get(listUrl())
     : await http.get(listUrl(), { params: { ownerType: props.ownerType, ownerId: props.ownerId } })
   if (current()) list.value = res
@@ -73,7 +77,7 @@ async function upload(file) {
   if (file.size > 20 * 1024 * 1024) return ElMessage.warning('文件超过 20 MB，请压缩后再传')
   const form = new FormData()
   form.append('file', file)
-  if (!props.portal) {
+  if (!scoped()) {
     form.append('ownerType', props.ownerType)
     form.append('ownerId', props.ownerId)
   }
