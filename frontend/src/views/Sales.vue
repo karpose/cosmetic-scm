@@ -156,7 +156,8 @@ async function preview() {
   }
 }
 
-function openCreate() {
+async function openCreate() {
+  await rd.ready()
   const own = rd.ownWarehouses.value[0]
   Object.assign(form, { visible: true, customerId: null, warehouseId: own?.id || null, lines: [{ itemId: null, qty: null }] })
   plan.value = null

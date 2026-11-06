@@ -5,11 +5,23 @@ import http from '../api'
 export function useRefData() {
   const s = reactive({ items: [], partners: [], warehouses: [], loaded: false })
 
-  async function load() {
-    const [items, partners, warehouses] = await Promise.all([
-      http.get('/items'), http.get('/partners'), http.get('/warehouses')
-    ])
-    Object.assign(s, { items, partners, warehouses, loaded: true })
+  let pending = null
+
+  function load() {
+    pending = (async () => {
+      const [items, partners, warehouses] = await Promise.all([
+        http.get('/items'), http.get('/partners'), http.get('/warehouses')
+      ])
+      Object.assign(s, { items, partners, warehouses, loaded: true })
+    })()
+    return pending
+  }
+
+  // 等基础数据到位。弹窗要用它设默认值：网络慢时用户可能先点开弹窗，默认仓库就一直是空的。
+  // 加载失败时接口层已提示，这里照常往下走，让用户自己选
+  async function ready() {
+    if (s.loaded) return
+    await (pending || load()).catch(() => {})
   }
 
   const materials = computed(() => s.items.filter((i) => i.itemType !== 'FG' && i.active))
@@ -23,5 +35,5 @@ export function useRefData() {
   const returnWarehouses = computed(() => s.warehouses.filter((w) => w.kind === 'RETURN'))
   const item = (id) => s.items.find((i) => i.id === id)
 
-  return { s, load, materials, finished, suppliers, factories, customers, ownWarehouses, stockWarehouses, returnWarehouses, item }
+  return { s, load, ready, materials, finished, suppliers, factories, customers, ownWarehouses, stockWarehouses, returnWarehouses, item }
 }

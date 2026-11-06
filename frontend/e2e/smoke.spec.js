@@ -778,6 +778,22 @@ test('委托生产单的附件区提示受托厂能看到，自产单和批次�
   await expect(page.getByText(hint)).toHaveCount(0)
 })
 
+test('基础数据加载慢时，弹窗的默认仓库在加载完后补上', async ({ page }) => {
+  await login(page, 'sales1')
+  // 网络慢或服务器忙时，用户可能比基础数据先点开弹窗
+  await page.route('**/api/warehouses', async (route) => {
+    await new Promise((r) => setTimeout(r, 2500))
+    await route.continue()
+  })
+  await page.goto('/returns')
+  await page.getByRole('button', { name: '登记退货' }).click()
+  const wh = dialog(page, '登记退货').locator('.el-form-item').filter({ hasText: '入退货隔离区' }).locator('.el-select')
+  await expect(wh).toContainText('退货')
+  // 等基础数据到了也不能被冲掉，再确认一次
+  await page.waitForTimeout(500)
+  await expect(wh).toContainText('退货')
+})
+
 test('门户账号进不了内部页面', async ({ page }) => {
   await login(page, 'dealer1')
   await expect(page).toHaveURL(/\/portal\/dealer/)

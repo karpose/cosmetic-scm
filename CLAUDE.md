@@ -36,7 +36,7 @@ cp .env.example .env && docker compose up -d --build
 - `domain/rules/` 是纯 Java 业务规则（FefoAllocator、ShelfLife、FormulaCompliance、FormulaDiff、Replenishment、DemandForecast），不依赖框架，有单元测试。新的计算规则优先放这里。
 - 实体之间只用 Long 外键字段，不用 JPA 关联映射；列表视图通过 `MasterLookup` 一次载入主数据 Map 再组装 record 视图。
 - 表结构只由 Flyway 管理（`ddl-auto: none`）。改表新增 `V{n}__xxx.sql`，**绝不修改已有迁移脚本**。SQL 需同时兼容 MySQL 8 和 H2 MySQL 模式。
-- 前端 `frontend/src/`：Vue 3 `<script setup>` + Element Plus，JavaScript（非 TS）。接口统一走 `src/api.js`（自动带 JWT，错误统一 `ElMessage` 提示，`{ silent: true }` 可静默）。主数据下拉用 `utils/refdata.js` 的 `useRefData()`。列表筛选 + 分页统一用 `utils/table.js` 的 `usePaged()` 和 `components/ListPager.vue`，加载失败用 `LoadError.vue`。
+- 前端 `frontend/src/`：Vue 3 `<script setup>` + Element Plus，JavaScript（非 TS）。接口统一走 `src/api.js`（自动带 JWT，错误统一 `ElMessage` 提示，`{ silent: true }` 可静默）。主数据下拉用 `utils/refdata.js` 的 `useRefData()`；弹窗要用它设默认值时先 `await rd.ready()`，否则网络慢时默认值一直是空的。列表筛选 + 分页统一用 `utils/table.js` 的 `usePaged()` 和 `components/ListPager.vue`，加载失败用 `LoadError.vue`。
 - 样式是 Liquid Glass：设计变量和 Element Plus 换皮都在 `src/styles.css`（`--lg-*` 变量、`.glass` 原语）。新页面直接用 `el-card` / `.glass`，不要写死背景色；颜色用变量，深浅色都要能看。
 - 无障碍：冒烟测试用 axe 查 WCAG A/AA，新页面要能过。不在带 label 的 `el-form-item` 里的 `el-select`、`el-input-number`、`el-progress` 要写 `aria-label`（占位文字不算名称）；表格可能滚动又没有可聚焦内容时加 `scrollbar-tabindex="0"`。文字色用 `--el-text-color-*` 和 `--el-color-*`（浅色已调到 4.5:1），不要写死 Element 默认色。axe 判断不了半透明和渐变背景，改颜色时要另外算。侧栏是 `<nav>` + 真实链接，不是 `el-menu`。
 - 手机宽度（≤768px）：侧栏是抽屉，默认藏起来。弹窗宽度可以照常写，全局限制了不超出屏幕。放不下的表格列要想清楚：要填数据的列（订购数量、实盘）不能靠横向滚动才看到，把次要列并进第一列（`narrow` 判断，见 `PortalDealer.vue`、`InventoryOps.vue`）。同一个 `el-form-item` 里放多个控件时，只有第一个关联 label，其余要写 `aria-label`。不要用 `el-upload` 包按钮（嵌套交互控件），见 `AttachmentList.vue`。
@@ -89,7 +89,7 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-05）
 
-- 后端 `mvn clean test` 145 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 30 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 14 项全部通过；GitHub Actions 在 PR 上跑这四项。
+- 后端 `mvn clean test` 145 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 31 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 14 项全部通过；GitHub Actions 在 PR 上跑这四项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
   - `pom.xml` 把 Tomcat、Jackson、log4j 钉在修复了已知漏洞的版本，升 Spring Boot 时要删掉这几行。Spring MVC 6.2.19 还有两条 OSV 记录（SSE 片段渲染、XsltView），修复只在 7.x，系统没用到这两个功能。扫描脚本 `scripts/dep-scan.py`，判断过不影响的漏洞登记在 `scripts/dep-scan-allow.txt`，`dep-scan.yml` 每周跑一次（不是 PR 检查）。
