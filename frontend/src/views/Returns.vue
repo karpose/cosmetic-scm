@@ -180,7 +180,8 @@ const returnableOptions = computed(() => {
   return r ? returnable.value.filter((b) => b.batchId === r.batchId) : returnable.value
 })
 
-function openCreate(prefill = {}) {
+async function openCreate(prefill = {}) {
+  await rd.ready()
   Object.assign(c, {
     visible: true, saving: false, customerId: prefill.customerId || null, recallId: prefill.recallId || null,
     warehouseId: rd.returnWarehouses.value[0]?.id || null,
@@ -220,7 +221,8 @@ async function submitCreate() {
 const p = reactive({ visible: false, saving: false, ret: null, line: null, disposition: 'SCRAP', targetId: null, note: '', password: '' })
 const restockAllowed = computed(() => p.line && p.line.batchStatusLabel === '已放行' && !p.ret.recallId)
 
-function openDispose(ret, line) {
+async function openDispose(ret, line) {
+  await rd.ready()
   Object.assign(p, { visible: true, saving: false, ret, line, note: '', password: '', targetId: rd.ownWarehouses.value[0]?.id || null })
   p.disposition = restockAllowed.value ? 'RESTOCK' : 'SCRAP'
 }

@@ -17,6 +17,6 @@ public class DashboardController {
 
     @GetMapping
     public Summary summary() {
-        return dashboard.summary();
+        return DashboardService.forDisplay(dashboard.summary());
     }
 }

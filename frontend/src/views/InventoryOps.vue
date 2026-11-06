@@ -174,7 +174,8 @@ const countRows = computed(() => {
 const diffOf = (row) => Number(counted[row.batchId] ?? row.qty) - Number(row.qty)
 const countDiffs = computed(() => stock.value.filter((s) => diffOf(s) !== 0))
 
-function open(mode) {
+async function open(mode) {
+  await rd.ready()
   const main = rd.ownWarehouses.value[0]
   Object.assign(d, { visible: true, mode, saving: false, fromId: main?.id || null, toId: null, reason: '', password: '', countFilter: '', lines: [{ batchId: null, qty: null }] })
   loadStock()

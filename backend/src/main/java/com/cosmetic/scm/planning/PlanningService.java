@@ -82,6 +82,8 @@ public class PlanningService {
     private final PurchaseOrderRepository purchaseOrders;
     private final PoLineRepository poLines;
     private final MasterService master;
+    private final com.cosmetic.scm.salesreturn.SalesReturnRepository salesReturns;
+    private final com.cosmetic.scm.salesreturn.SalesReturnLineRepository returnLines;
     private final MasterLookup lookup;
     private final TimeProvider time;
 
@@ -143,6 +145,21 @@ public class PlanningService {
             }
         }
 
+        // 退货不算需求，否则退回的大单会抬高日均、多补货。召回回收的不扣：那批货确实卖掉了，是质量问题，不代表需求少了
+        List<com.cosmetic.scm.salesreturn.SalesReturn> rets = salesReturns.findByReturnDateGreaterThanEqual(from.isBefore(historyFrom) ? from : historyFrom)
+                .stream().filter(r -> r.getRecallId() == null).toList();
+        Map<Long, LocalDate> retDate = rets.stream().collect(Collectors.toMap(com.cosmetic.scm.salesreturn.SalesReturn::getId, com.cosmetic.scm.salesreturn.SalesReturn::getReturnDate));
+        Map<Long, BigDecimal> returned = new HashMap<>();
+        for (var l : rets.isEmpty() ? List.<com.cosmetic.scm.salesreturn.SalesReturnLine>of() : returnLines.findByReturnIdIn(retDate.keySet())) {
+            LocalDate d = retDate.get(l.getReturnId());
+            if (!d.isBefore(from)) {
+                returned.merge(l.getItemId(), l.getQty(), BigDecimal::add);
+            }
+            if (!d.isBefore(historyFrom)) {
+                monthly.computeIfAbsent(l.getItemId(), k -> new HashMap<>()).merge(YearMonth.from(d), l.getQty().negate(), BigDecimal::add);
+            }
+        }
+
         // 库存：自有仓已放行（另算临期部分）、待上市放行
         Map<Long, Warehouse> wm = lookup.warehouseMap();
         List<Stock> rows = stocks.findByQtyGreaterThan(BigDecimal.ZERO);
@@ -191,7 +208,7 @@ public class PlanningService {
             // 没有历史时没有预测可用，仍按观察期（结果就是不建议补货）
             Replenishment.Result r = params.useForecast() && fc.method() != DemandForecast.Method.NONE
                     ? Replenishment.calcFromDaily(fcDaily, available.getOrDefault(id, BigDecimal.ZERO), inPipe, p, FG_LOT)
-                    : Replenishment.calc(shipped.getOrDefault(id, BigDecimal.ZERO), available.getOrDefault(id, BigDecimal.ZERO), inPipe, p, FG_LOT);
+                    : Replenishment.calc(shipped.getOrDefault(id, BigDecimal.ZERO).subtract(returned.getOrDefault(id, BigDecimal.ZERO)).max(BigDecimal.ZERO), available.getOrDefault(id, BigDecimal.ZERO), inPipe, p, FG_LOT);
             List<MonthQty> forecast = new ArrayList<>();
             for (int i = 0; i < fc.next().size(); i++) {
                 forecast.add(new MonthQty(thisMonth.plusMonths(i).toString(), fc.next().get(i)));
@@ -199,7 +216,7 @@ public class PlanningService {
             List<MonthQty> months = new ArrayList<>();
             for (int i = 2; i >= 0; i--) {
                 YearMonth ym = thisMonth.minusMonths(i);
-                months.add(new MonthQty(ym.toString(), monthly.getOrDefault(id, Map.of()).getOrDefault(ym, BigDecimal.ZERO)));
+                months.add(new MonthQty(ym.toString(), monthly.getOrDefault(id, Map.of()).getOrDefault(ym, BigDecimal.ZERO).max(BigDecimal.ZERO)));
             }
             Partner f = pm.get(lastFactory.get(id));
             out.add(new FgRow(id, fg.getCode(), fg.getName(), fg.getUnit(), shipped.getOrDefault(id, BigDecimal.ZERO),
@@ -218,7 +235,8 @@ public class PlanningService {
         List<BigDecimal> out = new ArrayList<>();
         if (first != null) {
             for (YearMonth m = first; m.isBefore(thisMonth); m = m.plusMonths(1)) {
-                out.add(months.getOrDefault(m, BigDecimal.ZERO));
+                // 退货比当月出库多时算 0，不能是负的需求
+                out.add(months.getOrDefault(m, BigDecimal.ZERO).max(BigDecimal.ZERO));
             }
         }
         return out;

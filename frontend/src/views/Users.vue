@@ -130,6 +130,8 @@ async function load() {
 
 // 勾内部角色就清掉门户角色，反之亦然：两者互斥
 function onRoles() {
+  // “只读”是默认勾上的，选了具体岗位就不需要了，否则账号上会显示“采购、只读”
+  if (form.roles.length > 1 && form.roles.includes('VIEWER')) form.roles = form.roles.filter((r) => r !== 'VIEWER')
   if (form.roles.length) {
     portalRole.value = ''
     form.partnerId = null

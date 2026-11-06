@@ -33,6 +33,14 @@ public interface BatchRepository extends JpaRepository<Batch, Long> {
             """)
     List<Batch> findInStockByStatusAndItemType(@Param("status") BatchStatus status, @Param("type") ItemType type);
 
+    /** 已放行、还有库存、已过期的物料批次。条件放在数据库里：物料批次可能有几万个，不能全读出来再过滤。 */
+    @Query("""
+            select b from Batch b where b.status = :status and b.expDate < :today
+              and b.itemId in (select i.id from Item i where i.itemType <> com.cosmetic.scm.domain.ItemType.FG)
+              and b.id in (select s.batchId from Stock s where s.qty > 0)
+            """)
+    List<Batch> findExpiredMaterialsInStock(@Param("status") BatchStatus status, @Param("today") java.time.LocalDate today);
+
     /** 已放行、还有库存的物料批次数。 */
     @Query("""
             select count(b) from Batch b where b.status = :status

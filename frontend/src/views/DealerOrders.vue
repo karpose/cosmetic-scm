@@ -95,7 +95,8 @@ const t = usePaged(list, {
 
 const ap = reactive({ visible: false, saving: false, order: null, warehouseId: null, plan: null })
 
-function openApprove(row) {
+async function openApprove(row) {
+  await rd.ready()
   Object.assign(ap, { visible: true, saving: false, order: row, warehouseId: rd.ownWarehouses.value[0]?.id || null, plan: null })
   preview()
 }

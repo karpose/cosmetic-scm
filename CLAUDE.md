@@ -21,6 +21,7 @@ rm -rf backend/data                 # 重置本地数据
 cd frontend && npm install && npm run dev     # http://localhost:5173，/api 代理到 8080
 cd frontend && npm run build
 cd frontend && npm run e2e                     # Playwright 冒烟测试，自带内存库后端（8090）和前端（5174）
+cd frontend && npm run e2e:empty               # 空库走查：无示例数据、开启强制改密，只用页面走上线和业务（8091、5175）
 docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build   # 带 HTTPS 部署
 
 # 整体部署
@@ -35,7 +36,7 @@ cp .env.example .env && docker compose up -d --build
 - `domain/rules/` 是纯 Java 业务规则（FefoAllocator、ShelfLife、FormulaCompliance、FormulaDiff、Replenishment、DemandForecast），不依赖框架，有单元测试。新的计算规则优先放这里。
 - 实体之间只用 Long 外键字段，不用 JPA 关联映射；列表视图通过 `MasterLookup` 一次载入主数据 Map 再组装 record 视图。
 - 表结构只由 Flyway 管理（`ddl-auto: none`）。改表新增 `V{n}__xxx.sql`，**绝不修改已有迁移脚本**。SQL 需同时兼容 MySQL 8 和 H2 MySQL 模式。
-- 前端 `frontend/src/`：Vue 3 `<script setup>` + Element Plus，JavaScript（非 TS）。接口统一走 `src/api.js`（自动带 JWT，错误统一 `ElMessage` 提示，`{ silent: true }` 可静默）。主数据下拉用 `utils/refdata.js` 的 `useRefData()`。列表筛选 + 分页统一用 `utils/table.js` 的 `usePaged()` 和 `components/ListPager.vue`，加载失败用 `LoadError.vue`。
+- 前端 `frontend/src/`：Vue 3 `<script setup>` + Element Plus，JavaScript（非 TS）。接口统一走 `src/api.js`（自动带 JWT，错误统一 `ElMessage` 提示，`{ silent: true }` 可静默）。主数据下拉用 `utils/refdata.js` 的 `useRefData()`；弹窗要用它设默认值时先 `await rd.ready()`，否则网络慢时默认值一直是空的。列表筛选 + 分页统一用 `utils/table.js` 的 `usePaged()` 和 `components/ListPager.vue`，加载失败用 `LoadError.vue`。
 - 样式是 Liquid Glass：设计变量和 Element Plus 换皮都在 `src/styles.css`（`--lg-*` 变量、`.glass` 原语）。新页面直接用 `el-card` / `.glass`，不要写死背景色；颜色用变量，深浅色都要能看。
 - 无障碍：冒烟测试用 axe 查 WCAG A/AA，新页面要能过。不在带 label 的 `el-form-item` 里的 `el-select`、`el-input-number`、`el-progress` 要写 `aria-label`（占位文字不算名称）；表格可能滚动又没有可聚焦内容时加 `scrollbar-tabindex="0"`。文字色用 `--el-text-color-*` 和 `--el-color-*`（浅色已调到 4.5:1），不要写死 Element 默认色。axe 判断不了半透明和渐变背景，改颜色时要另外算。侧栏是 `<nav>` + 真实链接，不是 `el-menu`。
 - 手机宽度（≤768px）：侧栏是抽屉，默认藏起来。弹窗宽度可以照常写，全局限制了不超出屏幕。放不下的表格列要想清楚：要填数据的列（订购数量、实盘）不能靠横向滚动才看到，把次要列并进第一列（`narrow` 判断，见 `PortalDealer.vue`、`InventoryOps.vue`）。同一个 `el-form-item` 里放多个控件时，只有第一个关联 label，其余要写 `aria-label`。不要用 `el-upload` 包按钮（嵌套交互控件），见 `AttachmentList.vue`。
@@ -52,7 +53,7 @@ cp .env.example .env && docker compose up -d --build
 - “算出来才知道能不能做”的操作（退货可退量 = 已发 - 已退、同批次只能有一个进行中的召回）没有单据可锁，要锁它们依赖的行（客户、批次），而且必须是事务里第一条语句：MySQL 可重复读下，锁之前有过普通查询，之后读不到别人刚提交的数据。出库失败回滚后另开事务写“失败”时也要重新锁并判断状态，不能盖掉同时发生的取消。
 - MySQL 的 `DATETIME` 会把小数秒四舍五入（H2 不同）。要和令牌 iat 比较的时间（`passwordChangedAt`）必须先截断到整秒，曾因此让一半用户改密后被踢出。
 - 令牌只证明身份，角色每次从数据库读（`DbJwtAuthenticationConverter`），不要往令牌里加权限判断。改密后旧令牌失效，改密接口返回新令牌。
-- 列表和统计不能靠“最近 N 条”做判断（曾因此漏掉最老的临期批次、半年前没上报的不良反应，呆滞金额也只加了列表里的 10 个）。列表可以截断，合计要按全部算。可用库存不含已过期批次。期初导入写的放行记录不算放行周期。呆滞只看发料和出库，调拨不算。看板和补货的手算回归在 `NumbersGroundTruthTest`（关掉示例数据）。不要 `findAll` 全表：用分组或专门的查询。看板、补货建议的短时缓存在 Controller 层（`ShortCache`），测试和开发环境 ttl 为 0。
+- 列表和统计不能靠“最近 N 条”做判断（曾因此漏掉最老的临期批次、半年前没上报的不良反应，呆滞金额也只加了列表里的 10 个）。列表可以截断，合计要按全部算。可用库存不含已过期批次。补货日均和预测历史扣普通退货，召回回收的不扣（货确实卖掉了）。期初导入写的放行记录不算放行周期。呆滞只看发料和出库，调拨不算。看板和补货的手算回归在 `NumbersGroundTruthTest`（关掉示例数据）。不要 `findAll` 全表：用分组或专门的查询。看板、补货建议的短时缓存在 Controller 层（`ShortCache`），测试和开发环境 ttl 为 0。
 - 权限边界在 `SecurityConfig` 的 URL 层：`/api/portal/oem/**` 只给 OEM_PORTAL，`/api/portal/dealer/**` 只给 DEALER，`/api/integration/**` 只认 X-Api-Key，`/api/public/**` 和 `/api/health` 无需登录（只能放不含内部数据的接口，前端调用时加 `{ public: true }` 不带令牌），其余 `/api/**` 只给内部角色。门户服务里的每个查询都必须用 `CurrentUser.portalPartnerId()` 过滤，别人的数据一律当“不存在”。新增内部接口不需要额外处理，新增门户接口要放在对应前缀下。
 - 附件只增不删，存储用 `CREATE_NEW` 不覆盖；上传校验白名单扩展名和文件头，记录 SHA-256，下载时重新核对。文件在 `scm.storage.dir`（Docker 里是 `files-data` 卷），数据库只存元数据。受托厂上传走 `/api/portal/oem/orders/{moId}/attachments`，只能传本厂未完工的单子。受托厂能看到内部传到本单的附件，这是用户确认过的，不是漏洞。
 - `spring.servlet.multipart` 的上限必须高于 nginx 的 `client_max_body_size`（现在 30 MB 对 25 MB）。业务上限（20 MB）在 `AttachmentService` 判断。反过来配置会让后端没读完请求体就回错误，和 nginx 互相等待到超时。
@@ -63,7 +64,7 @@ cp .env.example .env && docker compose up -d --build
 - 批记录（`MesService`）只对自产且发料时有工艺路线的单子生效，在发料事务里固化。`ProductionService.complete` 先查 `mes.missing()`，并把这张单的偏差挂到产出批次。工序记录提交后不提供修改接口。过程检验超限不阻止生产，但必须自动生成偏差。
 - 签批、复核、验证类操作的执行人不能是操作人本身（CAPA 完成人、工序操作人、配方发起人），规则写在服务层，不靠界面隐藏。
 - 导出在服务端生成（`ReportService` + `common/XlsxWriter`），每次写审计。单元格文本只写内联字符串，不写公式。新增报表在 `registry()` 里加一项。预测规则在 `domain/rules/DemandForecast`，历史按首次出库到上个完整月。
-- 提醒内容直接取 `DashboardService.summary()` 的待办，不另算；新的到期规则加到总览待办就会进提醒，新的待办类型要在 `TodoRouting` 里指定岗位，否则不进个人邮件。错误信息写库前要去掉 webhook 地址（含密钥）。
+- 提醒内容直接取 `DashboardService.summary()` 的待办（全部），总览页面经 `forDisplay` 每类最多显示 30 条，`todoTotal` 是全部数量。总览没有缓存（放行后待办要立刻消失），新加的待办不要把整张表读出来再过滤。新的到期规则加到总览待办就会进提醒，新的待办类型要在 `TodoRouting` 里指定岗位，否则不进个人邮件。错误信息写库前要去掉 webhook 地址（含密钥）。
 - 生产单取消（`ProductionService.cancel`）：未发料直接取消；已发料未开工退料并删除 `mfg_issue`（否则追溯会显示批次流向这张单，流水和审计保留）；开工后（`mes.started`）或受托厂已回传生产中、已申报的不能取消。新增读生产单状态的代码要想到 CANCELLED。采购单：没收货 CANCELLED，部分收货 CLOSED。
 - 现有库存只能走期初导入（`OpeningStockService`，来源 `SourceType.OPEN`，流水 `OPENING`），不要造采购单或生产单。已放行的批次写放行记录，成品写留样，所以只给 QSO 并要签批。行上不加 `@Valid`，缺字段要按 Excel 行号报。
 - 工序勾了“须记录设备”时，`MesService.recordStep` 用 `EquipmentService.unusableReason` 校验；校准不合格的处理在 `EquipmentService.calibrate`，设备停用并生成偏差。
@@ -76,6 +77,7 @@ cp .env.example .env && docker compose up -d --build
 
 ## 代码约定
 
+- JSON 请求里的文字由 `common/JacksonConfig` 统一去掉控制字符（保留制表符和换行）。CSV 导入走 JSON，也会过滤。
 - 面向用户的错误用 `BizException`，消息写中文、说清怎么改；不要把异常堆栈返回前端。
 - 录入的数量加 `@Qty`（DECIMAL(18,4)，超出小数位数据库会悄悄四舍五入，0.00001 会存成 0），其它小数用 `@Digits` 对齐列定义。`@Size` 不能超过实际写入的列宽，一个字段写进多张表时按最短的算（备案编号曾因此报错）。校验默认提示靠 `GlobalExceptionHandler.FIELD_LABELS` 翻译字段名，新字段要加；注解写了中文 message 的直接显示。
 - 前端日期用 `utils/format.js` 的 `today()`、`daysFromToday()`，不要用 `toISOString`：它按 UTC 算，北京时间早上 8 点前会少一天。
@@ -87,16 +89,16 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-05）
 
-- 后端 `mvn clean test` 142 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 30 项全部通过（含 axe 无障碍和手机宽度检查）；GitHub Actions 在 PR 上跑这三项。
+- 后端 `mvn clean test` 145 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 31 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 14 项全部通过；GitHub Actions 在 PR 上跑这四项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
-  - `pom.xml` 把 Tomcat、Jackson、log4j 钉在修复了已知漏洞的版本，升 Spring Boot 时要删掉这几行。Spring MVC 6.2.19 还有两条 OSV 记录（SSE 片段渲染、XsltView），修复只在 7.x，系统没用到这两个功能。扫描方法：`mvn dependency:list` 后查 OSV，记录见 07。
+  - `pom.xml` 把 Tomcat、Jackson、log4j 钉在修复了已知漏洞的版本，升 Spring Boot 时要删掉这几行。Spring MVC 6.2.19 还有两条 OSV 记录（SSE 片段渲染、XsltView），修复只在 7.x，系统没用到这两个功能。扫描脚本 `scripts/dep-scan.py`，判断过不影响的漏洞登记在 `scripts/dep-scan-allow.txt`，`dep-scan.yml` 每周跑一次（不是 PR 检查）。
 - 已完成：一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。
 - Docker 部署已在本机 Colima（profile `cosmetic-scm`）上完整演练过：MySQL 8 上迁移和示例数据都正常，HTTPS、首次改密、备份恢复、数据库宕机时的健康检查都实测通过，记录见 `docs/csv/07-部署预验证记录-2026-11-03.md`（含历次升级、备份恢复、并发、容量测试和空库上线演练）。所有自动化测试都带示例数据，改动上线流程后要在空库上再走一遍。并发、死锁和 CSP 这类问题 H2 和开发服务器测不全，改到这些要到 MySQL 上跑。CSP、Permissions-Policy 和上传限制只有经过 nginx 才生效，开发服务器测不出来，改这些要走一遍 Docker。这台 Colima 没有共享宿主机目录，绑定挂载会是空目录；里面还有一套用 8088 端口的 `cosmetic-scm` 旧部署，不要动它。
 - 看板图表配色用 dataviz 参考调色板，已用校验脚本在浅色、深色下验过；图表是纯 HTML/CSS，没有引入图表库。
 - 示例数据含：精华液 V2 配方待签批且备案在途、面霜工艺路线、明瓶包装审核快到期、电子秤校准快到期、一条微小偏差和 CAPA；老批次精华液（效期门槛、呆滞）、退货隔离区 + 待处置退货、待上报的不良反应投诉、受托厂已排产的委托单、经销商待审核订单、一张缺货失败的电商订单、第一批精华液的 20 个防伪码。
 
-- `docs/操作手册.md` 是给使用者看的，改了按钮名称、流程或提示要同步。手册标了哪些章节没走查过。
+- `docs/操作手册.md` 是给使用者看的，改了按钮名称、流程或提示要同步。对应的走查在 `frontend/e2e-empty/go-live.spec.js`，用例之间依赖前面留下的数据，不要单独重试。
 
 ## 下一步（按优先级）
 

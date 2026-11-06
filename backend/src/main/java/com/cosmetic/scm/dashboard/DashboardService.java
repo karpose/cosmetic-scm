@@ -90,7 +90,26 @@ public class DashboardService {
     public record Todo(String kind, String label, String level, String title, String ref, String detail, String route) {
     }
 
-    public record Summary(Counts counts, List<Todo> todos, List<AuditLog> recent) {
+    public record Summary(Counts counts, List<Todo> todos, List<AuditLog> recent, int todoTotal) {
+    }
+
+    /** 总览每类待办最多显示这么多条。几千条放在一个页面上没人看得完，响应还会很大。 */
+    static final int MAX_TODOS_PER_KIND = 30;
+
+    /** 给页面显示：每类超出的部分合并成一行“还有 N 条”。todoTotal 仍是全部数量；每日提醒直接用 summary()，不受影响。 */
+    public static Summary forDisplay(Summary s) {
+        Map<String, Long> totals = s.todos().stream().collect(java.util.stream.Collectors.groupingBy(Todo::kind, java.util.stream.Collectors.counting()));
+        Map<String, Integer> shown = new java.util.HashMap<>();
+        List<Todo> out = new ArrayList<>();
+        for (Todo t : s.todos()) {
+            int n = shown.merge(t.kind(), 1, Integer::sum);
+            if (n <= MAX_TODOS_PER_KIND) {
+                out.add(t);
+            } else if (n == MAX_TODOS_PER_KIND + 1) {
+                out.add(new Todo("MORE", t.label(), "muted", "还有 " + (totals.get(t.kind()) - MAX_TODOS_PER_KIND) + " 条", "—", "到对应页面查看全部", t.route()));
+            }
+        }
+        return new Summary(s.counts(), out, s.recent(), s.todoTotal());
     }
 
     @Transactional(readOnly = true)
@@ -181,7 +200,13 @@ public class DashboardService {
             }
         }
         // 查全部在库的已放行成品，不是“最近 N 个批次”：最老的批次才最可能临期
-        for (BatchView b : inventory.toViews(batches.findInStockByStatusAndItemType(BatchStatus.RELEASED, ItemType.FG))) {
+        // 先按日期过滤再组装视图：组装要查库存，几千个批次全组装一遍很慢
+        List<com.cosmetic.scm.inventory.Batch> nearBatches = batches.findInStockByStatusAndItemType(BatchStatus.RELEASED, ItemType.FG).stream()
+                .filter(b -> {
+                    Double r = com.cosmetic.scm.domain.rules.ShelfLife.remainingRatio(b.getMfgDate(), b.getExpDate(), today);
+                    return r != null && r < NEAR_EXPIRY_RATIO;
+                }).toList();
+        for (BatchView b : inventory.toViews(nearBatches)) {
             if (b.shelfRatio() != null && b.shelfRatio() < NEAR_EXPIRY_RATIO) {
                 boolean expired = com.cosmetic.scm.domain.rules.ShelfLife.isExpired(b.expDate(), today);
                 todos.add(new Todo("NEAR_EXPIRY", expired ? "成品已过期" : "成品临期", "bad", b.itemName(), b.batchNo(),
@@ -189,15 +214,11 @@ public class DashboardService {
             }
         }
         // 过期物料不能发料，但也不会有人主动看到：到发料时才报缺货就晚了
-        for (ItemType type : List.of(ItemType.RM, ItemType.PK)) {
-            List<com.cosmetic.scm.inventory.Batch> expired = batches.findInStockByStatusAndItemType(BatchStatus.RELEASED, type).stream()
-                    .filter(b -> com.cosmetic.scm.domain.rules.ShelfLife.isExpired(b.getExpDate(), today)).toList();
-            for (BatchView b : inventory.toViews(expired)) {
-                todos.add(new Todo("EXPIRED_MATERIAL", "物料已过期", "bad", b.itemName(), b.batchNo(),
-                        "剩余 " + plain(b.onHand()) + " " + b.unit() + " · 效期至 " + b.expDate() + "，请报废或判定处理", "/stock"));
-            }
+        for (BatchView b : inventory.toViews(batches.findExpiredMaterialsInStock(BatchStatus.RELEASED, today))) {
+            todos.add(new Todo("EXPIRED_MATERIAL", "物料已过期", "bad", b.itemName(), b.batchNo(),
+                    "剩余 " + plain(b.onHand()) + " " + b.unit() + " · 效期至 " + b.expDate() + "，请报废或判定处理", "/stock"));
         }
-        return new Summary(counts, todos, audit.list(null, 8));
+        return new Summary(counts, todos, audit.list(null, 8), todos.size());
     }
 
     private void addQualitySystemTodos(List<Todo> todos) {

@@ -99,4 +99,17 @@ class InputBoundaryTest {
         assertThat(loginFrom(ip, "8.8.8.8", "qa1", "Demo@12345")).isEqualTo(429);
         assertThat(loginFrom("198.51.100.7", "8.8.8.8", "qa1", "Demo@12345")).isEqualTo(200);
     }
+
+    @Test
+    void controlCharactersAreRemovedFromInput() throws Exception {
+        String admin = login("admin", "Admin@123456");
+        var item = new java.util.HashMap<String, Object>(Map.of("code", "FG-CTRL", "itemType", "FG", "unit", "瓶", "banned", false, "shelfMonths", 36, "active", true));
+        item.put("name", "精华\u0000液\u0008 A\u000B");
+        item.put("inci", "第一行\n第二行\t带制表符");
+        var res = mvc.perform(post("/api/items").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(item))
+                .header("Authorization", "Bearer " + admin)).andExpect(status().isOk()).andReturn();
+        var body = json.readTree(res.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+        assertThat(body.get("name").asText()).isEqualTo("精华液 A");
+        assertThat(body.get("inci").asText()).isEqualTo("第一行\n第二行\t带制表符");
+    }
 }

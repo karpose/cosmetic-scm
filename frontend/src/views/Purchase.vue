@@ -180,7 +180,8 @@ async function submitCreate() {
   }
 }
 
-function openReceive(po) {
+async function openReceive(po) {
+  await rd.ready()
   const wh = rd.ownWarehouses.value[0]?.id || null
   recv.po = po
   recv.lines = po.lines.filter((l) => Number(l.remaining) > 0).map((l) => ({
