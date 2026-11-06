@@ -22,7 +22,7 @@
             <div class="bno">{{ c.batch.batchNo }}</div>
             <div class="dates">生产 {{ c.batch.mfgDate || '—' }}</div>
             <div class="dates">效期 {{ c.batch.expDate || '—' }}</div>
-            <div class="src">{{ c.batch.partnerName || '' }}<template v-if="c.batch.extBatchNo"> · {{ c.batch.extBatchNo }}</template></div>
+            <div class="src">{{ [c.batch.partnerName, c.batch.extBatchNo].filter(Boolean).join(' · ') }}</div>
           </div>
         </div>
       </template>
@@ -84,8 +84,8 @@ const print = () => window.print()
 .qr :deep(svg) { width: 22mm; height: 22mm; display: block; }
 .info { min-width: 0; line-height: 1.25; }
 .name { font-size: 9pt; font-weight: 700; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.code { font-size: 7pt; color: #444; }
-.bno { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 10.5pt; font-weight: 700; margin: 1mm 0; letter-spacing: 0.02em; }
+.code { font-size: 7pt; color: #444; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bno { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 10.5pt; font-weight: 700; margin: 1mm 0; letter-spacing: 0.02em; overflow-wrap: anywhere; }
 .dates, .src { font-size: 7pt; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 @media print {

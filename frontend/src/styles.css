@@ -359,6 +359,15 @@ html.dark .el-button--warning:not(.is-plain):not(.is-text):not(.is-link) {
   .main button { display: none !important; }
   /* 表格按纸宽收缩：Element 算好的列宽是按屏幕的，直接打印右边的列会被裁掉 */
   .el-table, .el-table__inner-wrapper, .el-table__header-wrapper, .el-table__body-wrapper, .el-scrollbar__wrap { overflow: visible !important; width: 100% !important; }
+  /* 分页时为了不切开一行，浏览器会在页尾留白，内容实际比算出来的高。外层只要有 overflow: hidden，
+     末尾的行就被裁掉了，没有任何提示：120 个客户的追溯报告曾只印出 98 个。flex、inline-block 也不能跨页 */
+  .page, .el-card, .el-card__body, .el-table, .el-table__inner-wrapper, .el-table__body-wrapper, .el-scrollbar, .el-scrollbar__view {
+    display: block !important; overflow: visible !important; height: auto !important; max-height: none !important;
+  }
+  /* 上面的 display: block 优先级和 .no-print 相同，这里要再写一次，否则不打印的卡片又显示出来 */
+  .no-print { display: none !important; }
+  .page > * { margin-bottom: 12px; }
+  .el-card__header { break-after: avoid; }
   .el-table table { width: 100% !important; table-layout: fixed !important; }
   .el-table col { width: auto !important; }
   .el-table .cell { white-space: normal; word-break: break-all; padding: 0 4px; }

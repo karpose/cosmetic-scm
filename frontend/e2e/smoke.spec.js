@@ -197,6 +197,57 @@ test('网络抖动：可退批次加载完之前，确认退货按钮不能点',
   await expect(confirm).toBeEnabled()
 })
 
+test('打印：追溯报告的容器不裁剪，客户多时不丢行；打印时间和提示正确', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  const no = (await api(page, '/sales-orders')).find((s) => (s.allocations || []).length).allocations[0].batchNo
+  await page.route(`**/api/trace/${no}`, async (route) => {
+    const j = await (await route.fetch()).json()
+    j.shipments = Array.from({ length: 120 }, (_, i) => ({ ...j.shipments[0], customerName: `客户${i + 1}`, soNo: `SO-${i + 1}` }))
+    await route.fulfill({ json: j })
+  })
+  await page.goto(`/trace?no=${no}`)
+  await expect(page.getByText('客户120', { exact: true })).toBeAttached()
+  await page.emulateMedia({ media: 'print' })
+  // PDF 里的文字这里读不出来，所以查原因：曾因外层 overflow: hidden，120 个客户只印出 98 个
+  const clipped = await page.evaluate(() => {
+    let el = [...document.querySelectorAll('.el-table__body tr')].find((r) => r.textContent.includes('客户1'))
+    const bad = []
+    while (el && el !== document.documentElement) {
+      const st = getComputedStyle(el)
+      if (st.overflowY === 'hidden' || st.overflowY === 'auto' || st.overflowY === 'scroll') bad.push(`${el.className} overflow=${st.overflowY}`)
+      if (st.display === 'flex' || st.display === 'inline-block' || st.display === 'grid') bad.push(`${el.className} display=${st.display}`)
+      el = el.parentElement
+    }
+    return bad
+  })
+  expect(clipped).toEqual([])
+  // 按 Ctrl+P 不经过打印按钮，打印时间也不能是空的
+  await expect(page.locator('.print-head')).toContainText(/打印时间 \d{4}-\d{2}-\d{2} \d{2}:\d{2}/)
+  await expect(page.getByText('单个不超过 20 MB')).toBeHidden()
+  await page.emulateMedia({ media: 'screen' })
+})
+
+test('打印：没有连字符的长批号在标签上完整换行，没有来源单位时不多一个点', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  const no = '20260901001234567'
+  await page.route(`**/api/scan/batches/${no}`, (route) => route.fulfill({ json: {
+    batch: { batchNo: no, itemName: '烟酰胺精华液', itemCode: 'FG-001', mfgDate: '2026-09-01', expDate: '2029-09-01', partnerName: null, extBatchNo: 'SUP-1' }, warnings: []
+  } }))
+  await page.goto(`/labels?batches=${no}`)
+  const bno = page.locator('.label .bno')
+  await expect(bno).toHaveText(no)
+  await page.emulateMedia({ media: 'print' })
+  const fits = await bno.evaluate((el) => {
+    const label = el.closest('.label').getBoundingClientRect()
+    const r = document.createRange()
+    r.selectNodeContents(el)
+    return r.getBoundingClientRect().right <= label.right
+  })
+  expect(fits).toBe(true)
+  await expect(page.locator('.label .src')).toHaveText('SUP-1')
+  await page.emulateMedia({ media: 'screen' })
+})
+
 test('基础数据加载慢时，弹窗的默认仓库在加载完后补上', async ({ page }) => {
   await login(page, 'sales1')
   // 网络慢或服务器忙时，用户可能比基础数据先点开弹窗

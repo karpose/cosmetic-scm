@@ -91,12 +91,13 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-06）
 
-- 后端 `mvn clean test` 146 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 46 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 14 项全部通过；GitHub Actions 在 PR 上跑这四项。
+- 后端 `mvn clean test` 146 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 48 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 14 项全部通过；GitHub Actions 在 PR 上跑这四项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
   - `pom.xml` 把 Tomcat、Jackson、log4j 钉在修复了已知漏洞的版本，升 Spring Boot 时要删掉这几行。Spring MVC 6.2.19 还有两条 OSV 记录（SSE 片段渲染、XsltView），修复只在 7.x，系统没用到这两个功能。扫描脚本 `scripts/dep-scan.py`，判断过不影响的漏洞登记在 `scripts/dep-scan-allow.txt`，`dep-scan.yml` 每周跑一次（不是 PR 检查）。
 - 已完成：一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。
 - Docker 部署已在本机 Colima（profile `cosmetic-scm`）上完整演练过：MySQL 8 上迁移和示例数据都正常，HTTPS、首次改密、备份恢复、数据库宕机时的健康检查都实测通过，记录见 `docs/csv/07-部署预验证记录-2026-11-03.md`（含历次升级、备份恢复、并发、容量测试和空库上线演练）。所有自动化测试都带示例数据，改动上线流程后要在空库上再走一遍。并发、死锁和 CSP 这类问题 H2 和开发服务器测不全，改到这些要到 MySQL 上跑。CSP、Permissions-Policy 和上传限制只有经过 nginx 才生效，开发服务器测不出来，改这些要走一遍 Docker。这台 Colima 没有共享宿主机目录，绑定挂载会是空目录；里面还有一套用 8088 端口的 `cosmetic-scm` 旧部署，不要动它。
+- 打印：`styles.css` 的 `@media print` 把卡片、表格的外层改成块级、不裁剪。外层只要有 `overflow: hidden` 或 flex，跨页时末尾的行会被裁掉且没有提示（120 个客户曾只印出 98 个）。Playwright 读不出 PDF 文字，改打印样式后用 PyMuPDF 数一遍行数。
 - 看板图表配色用 dataviz 参考调色板，已用校验脚本在浅色、深色下验过；图表是纯 HTML/CSS，没有引入图表库。
 - 示例数据含：精华液 V2 配方待签批且备案在途、面霜工艺路线、明瓶包装审核快到期、电子秤校准快到期、一条微小偏差和 CAPA；老批次精华液（效期门槛、呆滞）、退货隔离区 + 待处置退货、待上报的不良反应投诉、受托厂已排产的委托单、经销商待审核订单、一张缺货失败的电商订单、第一批精华液的 20 个防伪码。
 
