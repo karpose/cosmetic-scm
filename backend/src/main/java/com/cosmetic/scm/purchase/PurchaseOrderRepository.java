@@ -26,6 +26,8 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, Lo
 
     List<PurchaseOrder> findTop300BySupplierIdOrderByIdDesc(Long supplierId);
 
+    List<PurchaseOrder> findBySupplierIdAndStatusInOrderById(Long supplierId, Collection<PoStatus> statuses);
+
     /** 已超过交期（供应商回复的优先，否则看采购期望）还没到齐的单子。 */
     @Query("""
             select p from PurchaseOrder p where p.status in :open

@@ -3,6 +3,14 @@ package com.cosmetic.scm.notify;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.LocalDate;
+import com.cosmetic.scm.domain.PoStatus;
+import com.cosmetic.scm.domain.Role;
+import com.cosmetic.scm.master.MasterService;
+import com.cosmetic.scm.master.Partner;
+import com.cosmetic.scm.master.PartnerRepository;
+import com.cosmetic.scm.purchase.PurchaseOrder;
+import com.cosmetic.scm.purchase.PurchaseOrderRepository;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -46,6 +54,8 @@ public class NotifyService {
     /** 企业微信 markdown 消息的长度上限（字节），超出会被拒收。 */
     private static final int WECOM_MAX_BYTES = 4096;
     private static final Duration WECOM_TIMEOUT = Duration.ofSeconds(10);
+    /** 供应商提醒：交期还有几天内开始提醒。 */
+    private static final int SUPPLIER_DUE_WARN_DAYS = 3;
 
     private final DashboardService dashboard;
     private final NotificationLogRepository logs;
@@ -54,6 +64,8 @@ public class NotifyService {
     private final AuditService audit;
     private final TimeProvider time;
     private final CurrentUser currentUser;
+    private final PurchaseOrderRepository purchaseOrders;
+    private final PartnerRepository partners;
 
     @Value("${scm.notify.enabled:false}")
     private boolean enabled;
@@ -81,7 +93,7 @@ public class NotifyService {
 
     /** 不返回 webhook 地址和 SMTP 密码。 */
     public record Status(boolean enabled, String cron, boolean mailConfigured, List<String> mailTo, boolean wecomConfigured,
-                         Digest preview, List<PersonView> people, List<LogView> logs) {
+                         Digest preview, List<PersonView> people, List<PersonView> suppliers, List<LogView> logs) {
     }
 
     public record SendResult(int sent, int failed, int items) {
@@ -127,23 +139,75 @@ public class NotifyService {
         List<PersonView> people = personal(preview.items()).entrySet().stream()
                 .map(e -> new PersonView(e.getKey().getDisplayName(), e.getKey().getEmail(),
                         e.getKey().getRoles().stream().map(r -> r.getLabel()).sorted().toList(), e.getValue().size())).toList();
-        return new Status(enabled, cron, mailConfigured(), recipients(), !wecomWebhook.isBlank(), preview, people,
+        List<PersonView> suppliers = supplierDigests().entrySet().stream()
+                .map(e -> new PersonView(e.getKey().getDisplayName(), e.getKey().getEmail(), List.of(Role.SUPPLIER_PORTAL.getLabel()), e.getValue().items().size())).toList();
+        return new Status(enabled, cron, mailConfigured(), recipients(), !wecomWebhook.isBlank(), preview, people, suppliers,
                 logs.findTop50ByOrderByIdDesc().stream().map(l -> new LogView(l.getId(), l.getChannel(), l.getRecipient(), l.getSubject(),
                         l.getItemCount(), l.isSuccess(), l.getError(), l.getTriggered(), l.getSentAt())).toList());
     }
 
-    /** 定时任务：今天没事就不打扰。 */
+    /** 定时任务：今天没事就不打扰。供应商的提醒单独判断：内部没有待办时，供应商可能还有单子没确认。 */
     @Transactional
     public void sendScheduled() {
         Digest d = digest();
         if (d.items().isEmpty()) {
             log.info("今天没有需要提醒的事项，不发送");
-            return;
+        } else {
+            deliver(d, "schedule");
         }
-        deliver(d, "schedule");
+        for (Map.Entry<AppUser, Digest> e : supplierDigests().entrySet()) {
+            String to = e.getKey().getEmail();
+            attempt("MAIL", to, e.getValue(), "schedule", () -> sendMail(e.getValue(), List.of(to)));
+        }
     }
 
-    /** 管理员手工发送一次，用来验证配置。 */
+    /**
+     * 供应商账号各自要收的提醒，内容只有本单位的事。门户没有内部待办，这里单独算。
+     * 同一单位多个账号各收一份，所以按单位缓存。
+     */
+    private Map<AppUser, Digest> supplierDigests() {
+        if (smtpHost.isBlank()) {
+            return Map.of();
+        }
+        Map<Long, List<Todo>> byPartner = new java.util.HashMap<>();
+        Map<AppUser, Digest> out = new java.util.LinkedHashMap<>();
+        for (AppUser u : users.findAll()) {
+            if (!u.isEnabled() || u.getEmail() == null || u.getPartnerId() == null || !u.getRoles().contains(Role.SUPPLIER_PORTAL)) {
+                continue;
+            }
+            List<Todo> items = byPartner.computeIfAbsent(u.getPartnerId(), this::supplierItems);
+            if (!items.isEmpty()) {
+                long bad = items.stream().filter(t -> "bad".equals(t.level())).count();
+                out.put(u, new Digest("采购协同提醒 " + time.today() + "：" + items.size() + " 项" + (bad > 0 ? "（其中 " + bad + " 项紧急）" : "") + "，请登录供应商门户处理", items));
+            }
+        }
+        return out;
+    }
+
+    private List<Todo> supplierItems(Long partnerId) {
+        LocalDate today = time.today();
+        List<Todo> items = new ArrayList<>();
+        Partner p = partners.findById(partnerId).orElse(null);
+        if (p != null && p.getLicenseExpiry() != null && !p.getLicenseExpiry().isAfter(today.plusDays(MasterService.LICENSE_WARN_DAYS))) {
+            boolean expired = p.getLicenseExpiry().isBefore(today);
+            items.add(new Todo("SUP_LICENSE", expired ? "资质已过期" : "资质快到期", expired ? "bad" : "warn", p.getName(),
+                    p.getLicenseNo() == null ? "—" : p.getLicenseNo(), "有效期至 " + p.getLicenseExpiry() + "，请上传新证", "/portal/supplier"));
+        }
+        for (PurchaseOrder po : purchaseOrders.findBySupplierIdAndStatusInOrderById(partnerId, List.of(PoStatus.OPEN, PoStatus.PARTIAL))) {
+            if (po.getSupplierConfirmedAt() == null) {
+                items.add(new Todo("SUP_CONFIRM", "待确认采购单", "warn", "采购单", po.getPoNo(),
+                        (po.getExpectedDate() == null ? "" : "期望到货 " + po.getExpectedDate() + "，") + "请确认并回复交期", "/portal/supplier"));
+            } else if (po.getPromisedDate().isBefore(today)) {
+                items.add(new Todo("SUP_DUE", "交期已过", "bad", "采购单", po.getPoNo(), "交期 " + po.getPromisedDate() + "，还没到齐", "/portal/supplier"));
+            } else if (!po.getPromisedDate().isAfter(today.plusDays(SUPPLIER_DUE_WARN_DAYS))) {
+                items.add(new Todo("SUP_DUE", "交期临近", "warn", "采购单", po.getPoNo(), "交期 " + po.getPromisedDate(), "/portal/supplier"));
+            }
+        }
+        items.sort(Comparator.comparingInt(t -> "bad".equals(t.level()) ? 0 : 1));
+        return items;
+    }
+
+    /** 管理员手工发送一次，用来验证配置。不发给供应商：点一下测试不该打扰外部单位。 */
     @Transactional
     public SendResult sendNow() {
         if (!mailConfigured() && wecomWebhook.isBlank()) {

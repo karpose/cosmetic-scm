@@ -153,6 +153,12 @@ class SupplierPortalTest {
         call(admin, "/api/users", Map.of("username", "sup-bad", "displayName", "错绑", "password", "Strong@2026",
                 "roles", List.of("SUPPLIER_PORTAL"), "partnerId", customer.getId()))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("只能绑定")));
+        // 供应商账号的邮箱要保存下来，每日提醒发到这里
+        call(admin, "/api/users", Map.of("username", "sup-mail", "displayName", "有邮箱", "password", "Strong@2026",
+                "roles", List.of("SUPPLIER_PORTAL"), "partnerId", supplierId("sup1"), "email", "sales@supplier.invalid")).andExpect(status().isOk());
+        assertThat(users.findByUsername("sup-mail").orElseThrow().getEmail()).isEqualTo("sales@supplier.invalid");
+        // 这个类不回滚，留着它别的测试会收到提醒邮件
+        users.delete(users.findByUsername("sup-mail").orElseThrow());
         // 评分是内部的
         assertThat(body(read(sup1, "/api/portal/supplier/profile").andExpect(status().isOk())).has("score")).isFalse();
     }

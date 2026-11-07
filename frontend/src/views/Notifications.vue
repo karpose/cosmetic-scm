@@ -48,6 +48,14 @@
       </el-card>
 
       <el-card shadow="never" body-style="padding:0 0 8px">
+        <template #header><b>供应商提醒</b> <span class="muted small">定时任务按时发给这些供应商账号，内容只有本单位的待确认采购单、3 天内的交期和资质到期。“立即发送一次”不会发给供应商</span></template>
+        <el-table scrollbar-tabindex="0" :data="s.suppliers" empty-text="没有。供应商账号没填邮箱、没有相关事项，或邮件服务未配置">
+          <el-table-column prop="displayName" label="账号" min-width="180" />
+          <el-table-column prop="email" label="邮箱" min-width="220" />
+          <el-table-column prop="itemCount" label="事项" width="90" align="right" />
+        </el-table>
+      </el-card>
+<el-card shadow="never" body-style="padding:0 0 8px">
         <template #header><b>发送记录</b> <span class="muted small">最近 50 次</span></template>
         <el-table scrollbar-tabindex="0" :data="s.logs" empty-text="还没有发送过">
           <el-table-column label="时间" width="170"><template #default="{ row }"><span class="mono small">{{ fmtTime(row.sentAt) }}</span></template></el-table-column>
