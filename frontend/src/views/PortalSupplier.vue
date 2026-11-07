@@ -13,6 +13,7 @@
       <el-tab-pane :label="`已结束（${finished.length}）`" name="done" />
       <el-tab-pane :label="`询价（${openRfqs}）`" name="rfq" />
       <el-tab-pane :label="`对账（${pendingStatements}）`" name="statement" />
+      <el-tab-pane :label="`退货（${returns.length}）`" name="returns" />
       <el-tab-pane label="本单位资料" name="profile" />
     </el-tabs>
 
@@ -59,7 +60,7 @@
           <el-alert v-if="s.status === 'CANCELLED'" type="info" :closable="false" :title="`已作废：${s.cancelReason}`" />
           <div class="lines">
             <div v-for="l in s.lines" :key="l.batchNo" class="mat">
-              <span>{{ l.itemName }} <span class="muted small mono">批号 {{ l.extBatchNo }} · {{ l.poNo }} · 收货 {{ l.receivedOn }}</span></span>
+              <span>{{ l.itemName }} <span class="muted small mono">批号 {{ l.extBatchNo }} · {{ l.poNo }} · 收货 {{ l.receivedOn }}</span><span v-if="l.returnNo" class="small"> · 退货冲减 <span class="mono">{{ l.returnNo }}</span></span></span>
               <span class="small mono">{{ fmtQty(l.qty) }} {{ l.unit }} × ¥{{ fmtQty(l.unitPrice) }} = ¥{{ fmtMoney(l.amount) }}</span>
             </div>
             <div v-if="Number(s.adjustment) !== 0" class="mat"><span>调整：{{ s.adjustmentNote }}</span><span class="small mono">¥{{ fmtMoney(s.adjustment) }}</span></div>
@@ -74,6 +75,24 @@
             </template>
             <el-button v-else type="primary" @click="openInvoice(s)">登记发票</el-button>
           </footer>
+        </section>
+      </div>
+    </template>
+
+    <template v-else-if="tab === 'returns'">
+      <el-empty v-if="!returns.length && !loader.loading.value" description="没有退回给贵司的货" />
+      <div class="cards">
+        <section v-for="r in returns" :key="r.id" class="order glass return-card">
+          <header class="oh">
+            <div>
+              <h3 class="mono">{{ r.returnNo }}</h3>
+              <div class="muted small">{{ fmtTime(r.signedAt) }} 退回</div>
+            </div>
+            <StatusTag :status="r.status" :label="r.statusLabel" />
+          </header>
+          <div>{{ r.itemName }} × <span class="mono">{{ fmtQty(r.qty) }} {{ r.unit }}</span> · 贵司批号 <span class="mono">{{ r.extBatchNo }}</span></div>
+          <div class="small">原因：{{ r.reason }}</div>
+          <div class="muted small">结算前退的不计货款，已结算的在下一张对账单冲减。</div>
         </section>
       </div>
     </template>
@@ -244,9 +263,11 @@ const orders = ref([])
 const profile = ref(null)
 const rfqs = ref([])
 const statements = ref([])
+const returns = ref([])
 const tab = ref('active')
 const loader = useLoader(async () => {
-  const [o, p, r, s] = await Promise.all([http.get('/portal/supplier/orders'), http.get('/portal/supplier/profile'), http.get('/portal/supplier/rfqs'), http.get('/portal/supplier/statements')])
+  const [o, p, r, s, rt] = await Promise.all([http.get('/portal/supplier/orders'), http.get('/portal/supplier/profile'), http.get('/portal/supplier/rfqs'), http.get('/portal/supplier/statements'), http.get('/portal/supplier/returns')])
+  returns.value = rt
   orders.value = o
   profile.value = p
   rfqs.value = r

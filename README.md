@@ -202,6 +202,7 @@ backend/
     supplierportal/    供应商门户：确认订单、回复交期、送货通知
     sourcing/          询价比价：封标、开标、定标生成采购单
     settlement/        对账结算：三单匹配、发票、审批、付款登记
+    supplierreturn/    退货给供应商：质量签批后扣库存，影响对账
     dealer/            经销商门户订货、品牌方审核、召回通知确认
     integration/       电商 ERP 对接：订单推送、取消、可售库存、对接日志
     planning/          补货建议：需求预测、再订货点、BOM 展开的物料净需求

@@ -20,9 +20,16 @@ public interface SupplierStatementLineRepository extends JpaRepository<SupplierS
     /** 已进了有效对账单的批次：同一批次不能结算两次。 */
     @Query("""
             select l.batchId from SupplierStatementLine l, SupplierStatement s
-            where s.id = l.statementId and s.status <> :cancelled and l.batchId in :batchIds
+            where s.id = l.statementId and s.status <> :cancelled and l.batchId in :batchIds and l.returnId is null
             """)
     List<Long> billedBatchIds(@Param("batchIds") Collection<Long> batchIds, @Param("cancelled") StatementStatus cancelled);
+
+    /** 批次结算时的那一行：冲减按当时的单价和税率算。 */
+    @Query("""
+            select l from SupplierStatementLine l, SupplierStatement s
+            where s.id = l.statementId and s.status <> :cancelled and l.batchId in :batchIds and l.returnId is null
+            """)
+    List<SupplierStatementLine> billedLines(@Param("batchIds") Collection<Long> batchIds, @Param("cancelled") StatementStatus cancelled);
 
     /** 这些采购行是否已进了有效对账单：进了就不能再改单价。 */
     @Query("""

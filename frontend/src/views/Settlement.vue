@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h2>对账结算</h2>
-        <p>只结算检验放行的来料批次，按采购单单价算金额。供应商确认后登记发票，发票金额要和对账单一致，财务审批后登记付款。这里只做登记，不实际付款，也不代替财务账。</p>
+        <p>只结算检验放行的来料批次，按采购单单价算金额，已退回供应商的不算。供应商确认后登记发票，发票金额要和对账单一致，财务审批后登记付款。这里只做登记，不实际付款，也不代替财务账。</p>
       </div>
       <div class="toolbar">
         <ExportButton report="statements" />
@@ -55,7 +55,7 @@
                   :title="`${cr.preview.missingPrice.length} 个批次的采购单没有单价，不会进这张对账单。请先到采购入库录入单价：${missingText}`" />
         <el-table v-if="cr.preview" :data="cr.preview.lines" size="small" max-height="260" empty-text="这段时间没有可结算的批次（只结算检验放行的来料）" scrollbar-tabindex="0">
           <el-table-column label="批号" width="150"><template #default="{ row }"><span class="mono">{{ row.batchNo }}</span><div class="muted small mono">{{ row.poNo }}</div></template></el-table-column>
-          <el-table-column prop="itemName" label="物料" min-width="120" />
+          <el-table-column label="物料" min-width="120"><template #default="{ row }">{{ row.itemName }}<div v-if="row.returnNo" class="late small">退货冲减 {{ row.returnNo }}</div></template></el-table-column>
           <el-table-column label="收货" width="100"><template #default="{ row }"><span class="mono">{{ row.receivedOn }}</span></template></el-table-column>
           <el-table-column label="数量" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span></template></el-table-column>
           <el-table-column label="含税单价" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.unitPrice) }}</span></template></el-table-column>
@@ -90,7 +90,7 @@
         <el-table :data="dt.s.lines" size="small" max-height="240" style="margin-top:12px" scrollbar-tabindex="0">
           <el-table-column label="批号" width="150"><template #default="{ row }"><span class="mono">{{ row.batchNo }}</span><div class="muted small mono">{{ row.extBatchNo }}</div></template></el-table-column>
           <el-table-column prop="poNo" label="采购单" width="130" />
-          <el-table-column prop="itemName" label="物料" min-width="120" />
+          <el-table-column label="物料" min-width="120"><template #default="{ row }">{{ row.itemName }}<div v-if="row.returnNo" class="late small">退货冲减 {{ row.returnNo }}</div></template></el-table-column>
           <el-table-column label="数量" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span></template></el-table-column>
           <el-table-column label="单价" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.unitPrice) }}</span></template></el-table-column>
           <el-table-column label="金额" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.amount) }}</span></template></el-table-column>

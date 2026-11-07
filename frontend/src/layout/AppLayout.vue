@@ -116,6 +116,7 @@ const groups = computed(() => {
       items: [
         { path: '/planning', title: '补货建议', icon: TrendCharts },
         { path: '/purchase', title: '采购入库', icon: ShoppingCart },
+        { path: '/supplier-returns', title: '退供', icon: RefreshLeft },
         { path: '/production', title: '生产与委托', icon: Goods },
         { path: '/quality', title: '质量放行', icon: Stamp },
         { path: '/stock', title: '库存', icon: Box },
@@ -141,7 +142,7 @@ const groups = computed(() => {
   ]
   // 价格和金额只给采购和财务
   if (auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE')) {
-    list[1].items.splice(2, 0, { path: '/sourcing', title: '询价比价', icon: Tickets }, { path: '/settlement', title: '对账结算', icon: Coin })
+    list[1].items.splice(3, 0, { path: '/sourcing', title: '询价比价', icon: Tickets }, { path: '/settlement', title: '对账结算', icon: Coin })
   }
   if (auth.hasAny('ADMIN', 'MASTER_DATA', 'QA', 'QSO')) list[3].items.push({ path: '/golive', title: '上线检查', icon: Finished })
   if (auth.hasAny('ADMIN')) {

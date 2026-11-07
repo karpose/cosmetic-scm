@@ -12,7 +12,9 @@ public enum TxnType {
     RETURN_IN("退货入库"),
     RESTOCK("退货转可售"),
     ISSUE_BACK("发料退回"),
-    OPENING("期初入库");
+    OPENING("期初入库"),
+    /** 退货给供应商。列宽 12，名字不能再长 */
+    RETURN_OUT("退回供应商");
 
     private final String label;
 

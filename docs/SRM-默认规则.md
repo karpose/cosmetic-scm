@@ -51,11 +51,25 @@
 | 准时率 | 按第一次承诺的交期算，没承诺过看采购期望 | `PurchaseOrderRepository.deliveryStats` |
 | 交期提醒 | 还有 3 天以内 | `NotifyService.SUPPLIER_DUE_WARN_DAYS` |
 
+## 退货给供应商
+
+| 规则 | 现在的做法 | 要改时看 |
+| --- | --- | --- |
+| 能退什么 | 采购来的批次，任何状态（待检、放行、不合格、冻结）。期初导入和生产的批次不能退 | `SupplierReturnService.create` |
+| 谁发起 | 管理员、采购、仓库 | `SupplierReturnController` |
+| 谁签批 | QA 或 QSO，不能是发起人，要输入密码。**签批时才扣库存** | `SupplierReturnService.approve` |
+| 待签批的额度 | 占用可退数量，但库存没扣，这期间可能被发料用掉，那时签批会报库存不足 | `SupplierReturnService.create` |
+| 结算前退的 | 结算数量 = 入库 - 已退回 | `SettlementService.unbilled` |
+| 结算后退的 | 下一张对账单生成负数行，按当时的单价和税率 | `SettlementService.unbilled` |
+| 冲减超过货款 | 不能生成对账单，等有新货款一起算；不处理退款 | `SettlementService.create` |
+| 供应商能看到什么 | 只看已退回的，待签批的看不到 | `SupplierReturnService.mine` |
+
 ## 没有做的
 
 要做的话，这些都不是改一个参数能解决的，需要先确定业务规则：
 
-- **退货给供应商**：系统没有退供流程。不合格批次不结算；已放行、已付款后才发现问题的，只能用调整金额扣款。
+- **退款**：退货冲减超过货款时，系统不处理退款，也没有预付款和应付余额。
+- **退货物流**：没有运单、签收，也不需要供应商确认收到。
 - **账期和付款计划**：没有账期，也不提醒什么时候该付。
 - **多币种、多税率拆分**：只支持人民币；同一发票多税率时只看总额。
 - **红字发票、一票多单、多票一单**：不支持。

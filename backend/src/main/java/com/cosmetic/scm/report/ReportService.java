@@ -50,6 +50,7 @@ public class ReportService {
     private final RetainService retains;
     private final PurchaseService purchases;
     private final com.cosmetic.scm.settlement.SettlementService settlement;
+    private final com.cosmetic.scm.supplierreturn.SupplierReturnService supplierReturns;
     private final EquipmentService equipment;
     private final AuditService audit;
     private final TimeProvider time;
@@ -75,6 +76,7 @@ public class ReportService {
         m.put("equipment", this::equipmentList);
         m.put("audit", () -> auditLogs(from, to));
         m.put("statements", this::statements);
+        m.put("supplier-returns", this::supplierReturns);
         return m;
     }
 
@@ -94,6 +96,12 @@ public class ReportService {
         }
         audit.log("导出报表", t.title(), t.rows().size() + " 行" + (from == null && to == null ? "" : "，范围 " + (from == null ? "不限" : from) + " 至 " + (to == null ? "不限" : to)));
         return new Export(t.title() + "-" + time.today() + ".xlsx", XlsxWriter.write(t.title(), t.headers(), t.rows()));
+    }
+
+    private Table supplierReturns() {
+        List<List<Object>> rows = new ArrayList<>();
+        supplierReturns.listAll().forEach(r -> rows.add(row(r.returnNo(), r.supplierName(), r.batchNo(), r.extBatchNo(), r.itemName(), r.qty(), r.unit(), r.warehouseName(), r.reason(), r.statusLabel(), r.createdBy(), r.signedBy(), r.signedAt())));
+        return new Table("退供记录", List.of("退供单", "供应商", "批号", "供应商批号", "物料", "数量", "单位", "仓库", "原因", "状态", "发起人", "签批人", "签批时间"), rows);
     }
 
     private Table statements() {
