@@ -33,7 +33,7 @@ public class AttachmentController {
 
     @GetMapping
     public List<AttachmentView> list(@RequestParam OwnerType ownerType, @RequestParam Long ownerId) {
-        return attachments.list(ownerType, ownerId);
+        return attachments.listInternal(ownerType, ownerId);
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

@@ -166,6 +166,7 @@ public class DashboardService {
             todos.add(new Todo("DEALER_ORDER", "经销商订单待审核", "warn", dealerPending + " 张经销商订货单", "—",
                     "审核通过即按先到期先出生成出库单", "/dealer-orders"));
         }
+        // 总览所有内部岗位都能看，这里的文字不能带价格和金额（SourcingSettlementTest 会扫）
         // 供应商已发货等收货；到了交期还没到齐的采购单（交期看供应商回复，没回复看采购期望）
         List<com.cosmetic.scm.purchase.PoShipment> openShipments = poShipments.findByStatusOrderById(com.cosmetic.scm.domain.ShipmentStatus.OPEN);
         if (!openShipments.isEmpty()) {
@@ -189,8 +190,8 @@ public class DashboardService {
             String name = lookup.partner(s.getSupplierId()).getName();
             switch (s.getStatus()) {
                 case DISPUTED -> todos.add(new Todo("STATEMENT_DISPUTE", "对账单有异议", "warn", name, s.getStatementNo(), s.getDisputeNote(), "/settlement"));
-                case INVOICED -> todos.add(new Todo("STATEMENT_APPROVE", "对账单待审批", "warn", name, s.getStatementNo(), "发票 " + s.getInvoiceNo() + "，合计 " + s.getTotalAmount().toPlainString(), "/settlement"));
-                default -> todos.add(new Todo("STATEMENT_PAY", "对账单待付款", "info", name, s.getStatementNo(), "未付 " + s.getTotalAmount().subtract(s.getPaidAmount()).toPlainString(), "/settlement"));
+                case INVOICED -> todos.add(new Todo("STATEMENT_APPROVE", "对账单待审批", "warn", name, s.getStatementNo(), "发票 " + s.getInvoiceNo() + "，请财务审批", "/settlement"));
+                default -> todos.add(new Todo("STATEMENT_PAY", "对账单待付款", "info", name, s.getStatementNo(), "已审批，等登记付款", "/settlement"));
             }
         }
         long channelFailed = integration.failedCount();

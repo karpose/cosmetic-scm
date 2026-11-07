@@ -197,7 +197,7 @@ public class SettlementService {
             l.setTaxAmount(p.tax());
             statementLines.save(l);
         }
-        audit.log("生成对账单", st.getStatementNo(), s.getName() + "，" + u.priced().size() + " 批，合计 " + total.toPlainString());
+        audit.logMoney("生成对账单", st.getStatementNo(), s.getName() + "，" + u.priced().size() + " 批，合计 " + total.toPlainString());
         return views(List.of(st)).get(0);
     }
 
@@ -210,7 +210,7 @@ public class SettlementService {
         st.setStatus(StatementStatus.CANCELLED);
         st.setCancelReason(req.reason().trim());
         statements.save(st);
-        audit.log("作废对账单", st.getStatementNo(), name(st), req.reason().trim());
+        audit.logMoney("作废对账单", st.getStatementNo(), name(st), req.reason().trim());
         return views(List.of(st)).get(0);
     }
 
@@ -225,6 +225,7 @@ public class SettlementService {
     public StatementView approve(Long id, ApproveReq req) {
         SupplierStatement st = locked(id);
         require(st, StatementStatus.INVOICED, "审批");
+        requireStillReleased(st);
         AppUser signer = signature.verify(req.password());
         if (signer.getUsername().equals(st.getCreatedBy())) {
             throw new BizException("审批人不能是制单人，请由另一位财务签批");
@@ -233,7 +234,7 @@ public class SettlementService {
         st.setApprovedBy(signer.getUsername());
         st.setApprovedAt(time.now());
         statements.save(st);
-        audit.log("审批对账单", st.getStatementNo(), name(st) + "，合计 " + st.getTotalAmount().toPlainString());
+        audit.logMoney("审批对账单", st.getStatementNo(), name(st) + "，合计 " + st.getTotalAmount().toPlainString());
         return views(List.of(st)).get(0);
     }
 
@@ -241,6 +242,7 @@ public class SettlementService {
     public StatementView pay(Long id, PayReq req) {
         SupplierStatement st = locked(id);
         require(st, StatementStatus.APPROVED, "付款");
+        requireStillReleased(st);
         if (req.payDate().isAfter(time.today())) {
             throw new BizException("付款日期不能晚于今天");
         }
@@ -261,7 +263,7 @@ public class SettlementService {
             st.setStatus(StatementStatus.PAID);
         }
         statements.save(st);
-        audit.log("登记付款", st.getStatementNo(), name(st) + "，" + req.amount().toPlainString() + "，累计 " + st.getPaidAmount().toPlainString());
+        audit.logMoney("登记付款", st.getStatementNo(), name(st) + "，" + req.amount().toPlainString() + "，累计 " + st.getPaidAmount().toPlainString());
         return views(List.of(st)).get(0);
     }
 
@@ -280,7 +282,7 @@ public class SettlementService {
         st.setConfirmedBy(currentUser.usernameOrSystem());
         st.setConfirmedAt(time.now());
         statements.save(st);
-        audit.log("供应商确认对账单", st.getStatementNo(), name(st) + "，合计 " + st.getTotalAmount().toPlainString());
+        audit.logMoney("供应商确认对账单", st.getStatementNo(), name(st) + "，合计 " + st.getTotalAmount().toPlainString());
         return views(List.of(st)).get(0);
     }
 
@@ -291,7 +293,7 @@ public class SettlementService {
         st.setStatus(StatementStatus.DISPUTED);
         st.setDisputeNote(req.note().trim());
         statements.save(st);
-        audit.log("供应商对账有异议", st.getStatementNo(), name(st), req.note().trim());
+        audit.logMoney("供应商对账有异议", st.getStatementNo(), name(st), req.note().trim());
         return views(List.of(st)).get(0);
     }
 
@@ -320,8 +322,18 @@ public class SettlementService {
         st.setInvoiceAmount(req.amount());
         st.setStatus(StatementStatus.INVOICED);
         statements.save(st);
-        audit.log("登记发票", st.getStatementNo(), name(st) + "，发票 " + no + "，" + req.amount().toPlainString());
+        audit.logMoney("登记发票", st.getStatementNo(), name(st) + "，发票 " + no + "，" + req.amount().toPlainString());
         return views(List.of(st)).get(0);
+    }
+
+    /** 生成对账单之后批次被冻结或判不合格，不能接着审批和付款：问题还没有结论，钱付出去就要不回来了。 */
+    private void requireStillReleased(SupplierStatement st) {
+        List<Long> ids = statementLines.findByStatementIdInOrderById(List.of(st.getId())).stream().map(SupplierStatementLine::getBatchId).toList();
+        List<String> bad = batches.findAllById(ids).stream().filter(b -> b.getStatus() != BatchStatus.RELEASED)
+                .map(b -> b.getBatchNo() + "（" + b.getStatus().getLabel() + "）").toList();
+        if (!bad.isEmpty()) {
+            throw new BizException("批次 " + String.join("、", bad) + " 已不是放行状态。请等质量结论，或作废对账单后调整金额重新生成");
+        }
     }
 
     private SupplierStatement locked(Long id) {

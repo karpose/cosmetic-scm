@@ -38,4 +38,7 @@ public class AuditLog {
     private String detail;
 
     private String reason;
+
+    /** 内容里有价格或金额：读取时只有采购、财务、管理员能看到原文。 */
+    private boolean moneyRelated;
 }

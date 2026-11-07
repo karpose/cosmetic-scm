@@ -88,7 +88,7 @@ public class RfqService {
     public record AwardLineReq(@NotNull Long rfqLineId, @NotNull Long supplierId) {
     }
 
-    public record AwardReq(@NotEmpty(message = "请为每一行选择供应商") @Valid List<AwardLineReq> lines,
+    public record AwardReq(@NotEmpty(message = "至少定标一行") @Valid List<AwardLineReq> lines,
                            @Size(max = 300) String reason,
                            @NotBlank(message = "请输入签批密码") String password) {
     }
@@ -258,8 +258,9 @@ public class RfqService {
                 throw new BizException("同一行只能选一家供应商");
             }
         }
-        if (choice.size() != ls.size() || !ls.stream().map(RfqLine::getId).collect(Collectors.toSet()).equals(choice.keySet())) {
-            throw new BizException("请为每一行选择供应商");
+        // 可以只定一部分：某行没人报价，或价格都不合适。这些行不生成采购单
+        if (!ls.stream().map(RfqLine::getId).collect(Collectors.toSet()).containsAll(choice.keySet())) {
+            throw new BizException("定标行不属于询价单 " + r.getRfqNo());
         }
         List<RfqQuote> all = quotes.findByRfqIdIn(List.of(id));
         Map<Long, List<RfqQuote>> byLine = all.stream().collect(Collectors.groupingBy(RfqQuote::getRfqLineId));
@@ -270,6 +271,12 @@ public class RfqService {
         for (RfqLine l : ls) {
             Long supplier = choice.get(l.getId());
             List<RfqQuote> qs = byLine.getOrDefault(l.getId(), List.of());
+            if (supplier == null) {
+                detail.add(items.get(l.getItemId()).getName() + " 未定标");
+                // 有报价却不定，要说明为什么
+                needReason = needReason || !qs.isEmpty();
+                continue;
+            }
             RfqQuote q = qs.stream().filter(x -> x.getSupplierId().equals(supplier)).findFirst()
                     .orElseThrow(() -> new BizException("所选供应商没有报 " + items.get(l.getItemId()).getName()));
             if (q.getValidUntil().isBefore(today)) {
@@ -284,7 +291,7 @@ public class RfqService {
         }
         String reason = req.reason() == null || req.reason().isBlank() ? null : req.reason().trim();
         if (needReason && reason == null) {
-            throw new BizException("有物料不足 " + MIN_QUOTES + " 家报价，或没有选最低价，请写明定标原因");
+            throw new BizException("有物料不足 " + MIN_QUOTES + " 家报价、没有选最低价，或有报价却不定标，请写明定标原因");
         }
         Map<Long, RfqLine> lineMap = ls.stream().collect(Collectors.toMap(RfqLine::getId, l -> l));
         List<String> poNos = new ArrayList<>();
@@ -307,7 +314,7 @@ public class RfqService {
         r.setAwardedBy(signer.getUsername());
         r.setAwardedAt(time.now());
         rfqs.save(r);
-        audit.log("询价定标", r.getRfqNo(), String.join("，", detail) + "；生成采购单 " + String.join("、", poNos), reason);
+        audit.logMoney("询价定标", r.getRfqNo(), String.join("，", detail) + "；生成采购单 " + String.join("、", poNos), reason);
         return views(List.of(r)).get(0);
     }
 

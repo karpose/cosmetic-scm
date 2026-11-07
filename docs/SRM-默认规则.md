@@ -19,7 +19,7 @@
 | 报价修改 | 截止前可以改，不留历史价格 | `RfqService.submitQuote` |
 | 报价有效期 | 不能早于截止日期；过期的报价不能定标 | `RfqService.submitQuote`、`award` |
 | 供应商看到的结果 | 只看到“已中标”或“未中标”，看不到别家价格和定标原因 | `RfqService.portalViews` |
-| 按行定标 | 每行可以定不同的供应商，一家一张采购单 | `RfqService.award` |
+| 按行定标 | 每行可以定不同的供应商，一家一张采购单；可以只定一部分，有报价却不定要写原因 | `RfqService.award` |
 | 采购单期望到货日 | 今天 + 该供应商最长的交货天数 | `RfqService.award` |
 
 ## 对账结算
@@ -38,7 +38,8 @@
 | 付款 | 可以分多次，不能超付，只做登记 | `SettlementService.pay` |
 | 作废 | 审批前可以作废，批次放回去重新结算；审批后不能作废 | `SettlementService.cancel` |
 | 改单价 | 进了有效对账单的不能改；改已有单价要写原因 | `PurchaseService.setPrices` |
-| 谁能看价格 | 采购、财务、管理员。其它岗位的接口不返回单价；供应商只看自己的 | `PurchaseService.canSeePrice`、`ReportService.hasMoneyRole` |
+| 批次后来出问题 | 生成对账单后批次被冻结或判不合格，不能审批和付款，要等质量结论或作废重来 | `SettlementService.requireStillReleased` |
+| 谁能看价格 | 采购、财务、管理员。其它岗位：接口不返回单价；审计记录遮盖成“含金额”，也搜不到；对账单附件看不了；总览不带金额。供应商只看自己的 | `PriceAccess`、`AuditService.visible` |
 
 ## 供应商评分和提醒
 

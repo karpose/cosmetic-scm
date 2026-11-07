@@ -74,7 +74,9 @@
       <template v-if="aw.rfq">
         <div v-for="l in aw.rfq.lines" :key="l.id" class="award-line">
           <b>{{ l.itemName }}</b> <span class="muted small mono">× {{ fmtQty(l.qty) }} {{ l.unit }}</span>
-          <el-empty v-if="!l.quotes.length" description="没有供应商报价" :image-size="40" />
+          <el-button v-if="!aw.readonly && l.quotes.length" size="small" text @click="aw.picks[l.id] = null">本行不定标</el-button>
+          <span v-if="!aw.readonly && l.quotes.length && !aw.picks[l.id]" class="late small">本行不定标，不生成采购单</span>
+          <el-empty v-if="!l.quotes.length" description="没有供应商报价，这一行不定标" :image-size="40" />
           <el-table v-else :data="l.quotes" size="small" scrollbar-tabindex="0">
             <el-table-column v-if="!aw.readonly" label="" width="70">
               <template #default="{ row }"><el-radio v-model="aw.picks[l.id]" :value="row.supplierId" :aria-label="`定 ${row.supplierName}`">选</el-radio></template>
@@ -93,7 +95,7 @@
           <p class="small muted">生成采购单：{{ awardedPos.join('、') }}</p>
         </template>
         <el-form v-else label-position="top" @submit.prevent>
-          <el-alert v-if="needReason" type="warning" :closable="false" show-icon title="有物料不足 3 家报价，或没有选最低价，要写明定标原因" />
+          <el-alert v-if="needReason" type="warning" :closable="false" show-icon title="有物料不足 3 家报价、没有选最低价，或有报价却不定标，要写明定标原因" />
           <el-form-item label="定标原因"><el-input id="aw-reason" v-model="aw.reason" type="textarea" :rows="2" maxlength="300" show-word-limit /></el-form-item>
           <el-form-item label="签批密码"><el-input id="aw-password" v-model="aw.password" type="password" show-password autocomplete="current-password" /></el-form-item>
           <p v-if="aw.rfq.createdBy === auth.user?.username" class="late small">这张询价是您发起的，定标要由另一位有权限的同事签批。</p>
@@ -187,11 +189,12 @@ function openAward(r) {
   for (const l of r.lines) picks[l.id] = (l.quotes.find((q) => q.lowest && q.validUntil >= todayStr) || l.quotes.find((q) => q.validUntil >= todayStr))?.supplierId ?? null
   Object.assign(aw, { visible: true, saving: false, readonly: r.status === 'AWARDED', rfq: r, picks, reason: '', password: '' })
 }
-const needReason = computed(() => (aw.rfq?.lines || []).some((l) => l.quotes.length < 3 || !l.quotes.find((q) => q.supplierId === aw.picks[l.id])?.lowest))
+// 和后端一致：没人报价的行不算；有报价的行不足 3 家、不是最低价或不定标都要写原因
+const needReason = computed(() => (aw.rfq?.lines || []).some((l) => l.quotes.length > 0 && (l.quotes.length < 3 || !l.quotes.find((q) => q.supplierId === aw.picks[l.id])?.lowest)))
 const awardedPos = computed(() => [...new Set((aw.rfq?.lines || []).flatMap((l) => l.quotes.filter((q) => q.awarded).map((q) => q.poNo)))])
 async function submitAward() {
-  const lines = aw.rfq.lines.map((l) => ({ rfqLineId: l.id, supplierId: aw.picks[l.id] }))
-  if (lines.some((l) => !l.supplierId)) return ElMessage.warning('请为每一行选择供应商')
+  const lines = aw.rfq.lines.filter((l) => aw.picks[l.id]).map((l) => ({ rfqLineId: l.id, supplierId: aw.picks[l.id] }))
+  if (!lines.length) return ElMessage.warning('至少定标一行。都不要的话请取消询价')
   if (needReason.value && !aw.reason.trim()) return ElMessage.warning('请写明定标原因')
   if (!aw.password) return ElMessage.warning('请输入签批密码')
   aw.saving = true

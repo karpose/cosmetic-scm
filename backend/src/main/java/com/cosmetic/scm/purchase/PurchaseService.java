@@ -248,15 +248,9 @@ public class PurchaseService {
             lines.save(line);
         }
         if (!detail.isEmpty()) {
-            audit.log("修改采购单价", po.getPoNo(), String.join("，", detail), reason);
+            audit.logMoney("修改采购单价", po.getPoNo(), String.join("，", detail), reason);
         }
         return get(poId);
-    }
-
-    /** 单价只给采购和财务看。仓库收货、车间领料不需要知道价格。 */
-    private static boolean canSeePrice() {
-        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-        return auth != null && auth.getAuthorities().stream().anyMatch(a -> Set.of("ROLE_ADMIN", "ROLE_PURCHASE", "ROLE_FINANCE").contains(a.getAuthority()));
     }
 
     /** 结束采购单：没收过货的取消，收过一部分的关闭（余量不再收，也不再算在途）。 */
@@ -377,7 +371,8 @@ public class PurchaseService {
 
     private PoView toView(PurchaseOrder po, List<PoLine> poLines, Map<Long, Item> im, Map<Long, Partner> pm, List<ShipmentView> sv, Set<Long> withPortal) {
         Partner s = pm.get(po.getSupplierId());
-        boolean showPrice = canSeePrice();
+        // 单价只给采购和财务看。仓库收货、车间领料不需要知道价格
+        boolean showPrice = com.cosmetic.scm.security.PriceAccess.allowed();
         List<PoLineView> lv = poLines.stream()
                 .sorted((a, b) -> Integer.compare(a.getLineNo(), b.getLineNo()))
                 .map(l -> {

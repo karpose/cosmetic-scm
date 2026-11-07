@@ -81,7 +81,7 @@ public class ReportService {
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to) {
         // 金额只给采购和财务看，其它报表所有内部岗位都能导
-        if ("statements".equals(key) && !hasMoneyRole()) {
+        if ("statements".equals(key) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出对账单");
         }
         Supplier<Table> source = registry(from, to).get(key);
@@ -94,11 +94,6 @@ public class ReportService {
         }
         audit.log("导出报表", t.title(), t.rows().size() + " 行" + (from == null && to == null ? "" : "，范围 " + (from == null ? "不限" : from) + " 至 " + (to == null ? "不限" : to)));
         return new Export(t.title() + "-" + time.today() + ".xlsx", XlsxWriter.write(t.title(), t.headers(), t.rows()));
-    }
-
-    private static boolean hasMoneyRole() {
-        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-        return auth != null && auth.getAuthorities().stream().anyMatch(x -> java.util.Set.of("ROLE_ADMIN", "ROLE_PURCHASE", "ROLE_FINANCE").contains(x.getAuthority()));
     }
 
     private Table statements() {

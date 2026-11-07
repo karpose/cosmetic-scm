@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.security.AppUser;
 import com.cosmetic.scm.security.CurrentUser;
+import com.cosmetic.scm.security.PriceAccess;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -17,6 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class AuditService {
+
+    private static final String MASKED = "（含金额，采购和财务可见）";
 
     private final AuditRepository repository;
     private final CurrentUser currentUser;
@@ -29,7 +32,23 @@ public class AuditService {
 
     @Transactional
     public void log(String action, String target, String detail, String reason) {
+        write(action, target, detail, reason, false);
+    }
+
+    /** 内容里有价格或金额时用它：照常完整记录，读取时只有采购、财务、管理员能看到原文。 */
+    @Transactional
+    public void logMoney(String action, String target, String detail) {
+        write(action, target, detail, null, true);
+    }
+
+    @Transactional
+    public void logMoney(String action, String target, String detail, String reason) {
+        write(action, target, detail, reason, true);
+    }
+
+    private void write(String action, String target, String detail, String reason, boolean money) {
         AuditLog a = new AuditLog();
+        a.setMoneyRelated(money);
         a.setCreatedAt(time.now());
         Optional<AppUser> user = currentUser.find();
         a.setUserId(user.map(AppUser::getId).orElse(null));
@@ -61,9 +80,9 @@ public class AuditService {
     public List<AuditLog> list(String q, int limit) {
         PageRequest page = PageRequest.of(0, Math.max(1, Math.min(limit, 1000)));
         if (q == null || q.isBlank()) {
-            return repository.findAllByOrderByIdDesc(page);
+            return visible(repository.findAllByOrderByIdDesc(page));
         }
-        return repository.search(q.trim(), page);
+        return visible(repository.search(q.trim(), PriceAccess.allowed(), page));
     }
 
     /** 按日期范围（含首尾两天）查询，任何一端为空表示不限。limit 由调用方决定，不做 1000 条的截断。 */
@@ -71,7 +90,34 @@ public class AuditService {
     public List<AuditLog> search(java.time.LocalDate from, java.time.LocalDate to, String q, int limit) {
         java.time.LocalDateTime start = from == null ? java.time.LocalDate.of(2000, 1, 1).atStartOfDay() : from.atStartOfDay();
         java.time.LocalDateTime end = to == null ? java.time.LocalDate.of(2999, 1, 1).atStartOfDay() : to.plusDays(1).atStartOfDay();
-        return repository.searchRange(start, end, q == null ? "" : q.trim(), PageRequest.of(0, Math.max(1, limit)));
+        return visible(repository.searchRange(start, end, q == null ? "" : q.trim(), PriceAccess.allowed(), PageRequest.of(0, Math.max(1, limit))));
+    }
+
+    /**
+     * 没权限的人看到遮盖后的内容。返回副本，不能改查出来的实体：审计只增不改，改了可能被写回数据库。
+     * 搜索也不匹配被遮盖的内容，否则能靠搜数字反推金额。
+     */
+    private static List<AuditLog> visible(List<AuditLog> rows) {
+        if (PriceAccess.allowed()) {
+            return rows;
+        }
+        return rows.stream().map(a -> {
+            if (!a.isMoneyRelated()) {
+                return a;
+            }
+            AuditLog c = new AuditLog();
+            c.setId(a.getId());
+            c.setCreatedAt(a.getCreatedAt());
+            c.setUserId(a.getUserId());
+            c.setUsername(a.getUsername());
+            c.setDisplayName(a.getDisplayName());
+            c.setAction(a.getAction());
+            c.setTarget(a.getTarget());
+            c.setDetail(MASKED);
+            c.setReason(a.getReason() == null ? null : MASKED);
+            c.setMoneyRelated(true);
+            return c;
+        }).toList();
     }
 
     private static String truncate(String s, int max) {

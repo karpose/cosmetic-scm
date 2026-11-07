@@ -1049,6 +1049,113 @@ test('询价比价到对账付款：询价、报价、开标、定标、收货�
   await expect(page.getByRole('heading', { name: '对账结算' })).toHaveCount(0)
 })
 
+test('多家比价：各报各的互相看不到，每行定最低价，一家一张采购单', async ({ page }) => {
+  // 要切换很多次账号，每次登录都算一遍密码。CI 比开发机慢 3 倍左右，默认的 45 秒不够
+  test.setTimeout(240_000)
+  const title = `E2E 多家比价 ${Date.now()}`
+  await login(page, 'admin', 'Admin@123456')
+  const parts = await api(page, '/partners')
+  const mp = parts.find((p) => p.code === 'SUP-MP')
+  // 给第二家开账号
+  await page.evaluate(async (id) => {
+    await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('scm_token')}` },
+      body: JSON.stringify({ username: 'sup_mp', displayName: '明瓶销售', password: 'Strong@2026', roles: ['SUPPLIER_PORTAL'], partnerId: id })
+    })
+  }, mp.id)
+
+  await login(page, 'purchase1')
+  await page.goto('/sourcing')
+  await page.getByRole('button', { name: '发起询价' }).click()
+  const cr = dialog(page, '发起询价')
+  await cr.locator('#rq-title').fill(title)
+  await cr.locator('#rq-deadline').fill(new Date(Date.now() + 5 * 86400000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' }))
+  await cr.locator('#rq-deadline').press('Enter')
+  await cr.locator('.el-select:has(#rq-suppliers)').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: '华澄' }).click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: '明瓶' }).click()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.el-select-dropdown__item:visible')).toHaveCount(0)
+  await cr.getByRole('button', { name: '添加一行' }).click()
+  for (const [i, code] of [[0, 'RM-SQU-005'], [1, 'RM-NIA-001']]) {
+    await cr.locator(`.el-select:has(#rq-item-${i})`).click()
+    await page.locator('.el-select-dropdown__item:visible').filter({ hasText: code }).click()
+    // 等下拉收起，否则下一个下拉会点到这个还在消失的选项
+    await expect(page.locator('.el-select-dropdown__item:visible')).toHaveCount(0)
+    await cr.locator(`#rq-qty-${i}`).fill('4')
+  }
+  await cr.getByRole('button', { name: '发起询价' }).click()
+  await toast(page, '已发起')
+
+  const quote = async (username, password, a, b) => {
+    await login(page, username, password)
+    await page.getByRole('tab', { name: /询价/ }).click()
+    await page.locator('.rfq').filter({ hasText: title }).getByRole('button', { name: '填写报价' }).click()
+    const q = dialog(page, `报价：${title}`)
+    for (const [i, price] of [[0, a], [1, b]]) {
+      await q.locator('[id^=qt-price-]').nth(i).fill(price)
+      await q.locator('[id^=qt-lead-]').nth(i).fill('3')
+    }
+    await q.getByRole('button', { name: '提交报价' }).click()
+    await toast(page, '报价已提交')
+    // 只能看到自己的报价，别家的名字和价格都不在页面上
+    await expect(page.locator('.rfq').filter({ hasText: title })).toContainText(`¥${a}`)
+  }
+  await quote('sup1', DEMO, '20', '31')
+  await expect(page.locator('main')).not.toContainText('明瓶')
+  await quote('sup_mp', 'Strong@2026', '25', '30')
+  await expect(page.locator('.rfq').filter({ hasText: title })).not.toContainText('¥20')
+  await expect(page.locator('main')).not.toContainText('华澄')
+
+  await login(page, 'purchase1')
+  await page.goto('/sourcing')
+  const row = page.locator('.el-table__row').filter({ hasText: title })
+  await row.getByRole('button', { name: '提前开标' }).click()
+  await page.locator('.el-message-box').getByRole('button', { name: '提前开标' }).click()
+  await toast(page, '已开标')
+
+  await login(page, 'admin', 'Admin@123456')
+  await page.goto('/sourcing')
+  await row.getByRole('button', { name: '比价定标' }).click()
+  const ad = dialog(page, '比价定标')
+  const lines = ad.locator('.award-line')
+  // 默认选了每行最低价：第一行华澄，第二行明瓶
+  await expect(lines.nth(0).locator('.el-table__row').first()).toContainText('华澄')
+  await expect(lines.nth(0).locator('.el-table__row').first()).toContainText('最低')
+  await expect(lines.nth(1).locator('.el-table__row').first()).toContainText('明瓶')
+  await expect(lines.nth(0).locator('.el-radio.is-checked')).toHaveCount(1)
+  // 不足 3 家要写原因；可以先把一行标为不定标，再选回来
+  await expect(ad.getByText('要写明定标原因')).toBeVisible()
+  await lines.nth(1).getByRole('button', { name: '本行不定标' }).click()
+  await expect(lines.nth(1).getByText('本行不定标，不生成采购单')).toBeVisible()
+  await lines.nth(1).locator('.el-radio').first().click()
+  await expect(lines.nth(1).getByText('本行不定标，不生成采购单')).toHaveCount(0)
+  await ad.locator('#aw-reason').fill('只有两家')
+  await ad.locator('#aw-password').fill('Admin@123456')
+  await ad.getByRole('button', { name: '签批定标' }).click()
+  await toast(page, '采购单已生成')
+
+  await row.getByRole('button', { name: '比价记录' }).click()
+  const record = dialog(page, '比价记录')
+  const pos = (await record.getByText(/生成采购单：/).innerText()).replace('生成采购单：', '').split('、')
+  expect(pos).toHaveLength(2)
+  await expect(record.locator('.el-tag').filter({ hasText: '中标' })).toHaveCount(2)
+  await record.getByRole('button', { name: '关闭', exact: true }).click()
+
+  const orders = await api(page, '/purchase-orders')
+  const byNo = (no) => orders.find((o) => o.poNo === no)
+  const got = pos.map((no) => [byNo(no).supplierName, Number(byNo(no).lines[0].unitPrice)]).sort()
+  expect(got[0][0]).toContain('华澄')
+  expect(got[0][1]).toBe(20)
+  expect(got[1][0]).toContain('明瓶')
+  expect(got[1][1]).toBe(30)
+
+  await login(page, 'sup1')
+  await page.getByRole('tab', { name: /询价/ }).click()
+  await expect(page.locator('.rfq').filter({ hasText: title })).toContainText('已中标')
+})
+
 test('供应商账号可以填邮箱接收提醒，提醒页列出会发给谁', async ({ page }) => {
   await login(page, 'admin', 'Admin@123456')
   await page.goto('/users')

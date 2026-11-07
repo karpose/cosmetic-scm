@@ -86,6 +86,7 @@ public class AttachmentService {
 
     @Transactional
     public AttachmentView upload(OwnerType ownerType, Long ownerId, MultipartFile file, String note) {
+        requireAccess(ownerType);
         if (!ownerRepo(ownerType).existsById(ownerId)) {
             throw BizException.notFound(ownerType.getLabel());
         }
@@ -99,7 +100,22 @@ public class AttachmentService {
 
     @Transactional(readOnly = true)
     public Download download(Long id) {
-        return read(attachments.findById(id).orElseThrow(() -> BizException.notFound("附件")));
+        Attachment a = attachments.findById(id).orElseThrow(() -> BizException.notFound("附件"));
+        requireAccess(a.getOwnerType());
+        return read(a);
+    }
+
+    /** 内部接口查附件列表：对账单的发票只给采购和财务。 */
+    @Transactional(readOnly = true)
+    public List<AttachmentView> listInternal(OwnerType ownerType, Long ownerId) {
+        requireAccess(ownerType);
+        return list(ownerType, ownerId);
+    }
+
+    private static void requireAccess(OwnerType ownerType) {
+        if (ownerType == OwnerType.SUPPLIER_STATEMENT && !com.cosmetic.scm.security.PriceAccess.allowed()) {
+            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限查看对账单的附件");
+        }
     }
 
     // ---------- 代工厂门户：只能碰委托给本厂的单子 ----------
@@ -238,8 +254,14 @@ public class AttachmentService {
         a.setUploadedBy(currentUser.usernameOrSystem());
         a.setUploadedAt(now);
         attachments.save(a);
-        audit.log("上传附件", ownerType.getLabel() + " #" + ownerId, name + "（" + (bytes.length / 1024) + " KB，SHA-256 "
-                + a.getSha256().substring(0, 12) + "…）", a.getNote());
+        String auditDetail = name + "（" + (bytes.length / 1024) + " KB，SHA-256 "
+                + a.getSha256().substring(0, 12) + "…）";
+        // 对账单的发票文件名可能带金额，审计里按角色遮盖
+        if (ownerType == OwnerType.SUPPLIER_STATEMENT) {
+            audit.logMoney("上传附件", ownerType.getLabel() + " #" + ownerId, auditDetail, a.getNote());
+        } else {
+            audit.log("上传附件", ownerType.getLabel() + " #" + ownerId, auditDetail, a.getNote());
+        }
         return view(a);
     }
 

@@ -197,6 +197,171 @@ class SourcingSettlementTest {
         assertThat(text(read(sa, "/api/portal/supplier/rfqs"))).doesNotContain(poNo).doesNotContain("只有两家");
     }
 
+    @Autowired
+    org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping mappings;
+
+    /** xlsx 是压缩包，要解开才能搜内容。 */
+    private static String readable(byte[] body) throws java.io.IOException {
+        if (body.length > 4 && body[0] == 'P' && body[1] == 'K') {
+            StringBuilder out = new StringBuilder();
+            try (java.util.zip.ZipInputStream z = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(body))) {
+                while (z.getNextEntry() != null) {
+                    out.append(new String(z.readAllBytes(), StandardCharsets.UTF_8));
+                }
+            }
+            return out.toString();
+        }
+        return new String(body, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * 价格和金额只给采购、财务、管理员。这里不靠记性列接口：把所有没有路径参数的 GET 都扫一遍，
+     * 用不会重复的数字当记号，只读和质量账号哪里都不能看到。新加的接口自动被扫到。
+     */
+    @Test
+    void pricesAndAmountsDoNotLeakToOtherInternalRoles() throws Exception {
+        Long s = supplier("SUP-LEAK", "leak_s");
+        String buyer = login("purchase1");
+        // 价格 7391.2377，税 13%：3 × = 22173.71（四舍五入），税额 2550.91
+        List<Batch> b = buyAndReceive(buyer, s, "RM-GLY-002", "3", "7391.2377", "13");
+        setStatus(b.get(0), BatchStatus.RELEASED);
+        long poId = poByNo(buyer, b.get(0).getSourceNo()).get("id").asLong();
+        long poLine = poByNo(buyer, b.get(0).getSourceNo()).get("lines").get(0).get("id").asLong();
+        // 改一次价，审计里会有前后值
+        call(buyer, "/api/purchase-orders/" + poId + "/prices", Map.of("reason", "议价", "lines", List.of(Map.of("poLineId", poLine, "unitPrice", new BigDecimal("7391.2388"), "taxRate", 13)))).andExpect(status().isOk());
+        call(buyer, "/api/purchase-orders/" + poId + "/prices", Map.of("reason", "议价", "lines", List.of(Map.of("poLineId", poLine, "unitPrice", new BigDecimal("7391.2377"), "taxRate", 13)))).andExpect(status().isOk());
+        JsonNode st = body(call(buyer, "/api/statements", Map.of("supplierId", s, "periodTo", d(0).toString())).andExpect(status().isOk()));
+        long sid = st.get("id").asLong();
+        assertThat(st.get("totalAmount").decimalValue()).isEqualByComparingTo("22173.71");
+        String sup = login("leak_s");
+        call(sup, "/api/portal/supplier/statements/" + sid + "/confirm", Map.of()).andExpect(status().isOk());
+        call(sup, "/api/portal/supplier/statements/" + sid + "/invoice", Map.of("invoiceNo", "LEAK-1", "invoiceDate", d(0).toString(), "amount", new BigDecimal("22173.71"))).andExpect(status().isOk());
+        // 财务上传的发票扫描件
+        String fin = login("finance1");
+        long att = body(mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/attachments")
+                .file(new org.springframework.mock.web.MockMultipartFile("file", "发票扫描件-7391.pdf", "application/pdf", "%PDF-1.4 x".getBytes(StandardCharsets.ISO_8859_1)))
+                .param("ownerType", "SUPPLIER_STATEMENT").param("ownerId", String.valueOf(sid)).header("Authorization", "Bearer " + fin)).andExpect(status().isOk())).get("id").asLong();
+
+        List<String> markers = List.of("7391.2377", "7391.2388", "22173.71", "2550.91", "发票扫描件-7391");
+        List<String> urls = new ArrayList<>();
+        mappings.getHandlerMethods().forEach((info, h) -> {
+            boolean isGet = info.getMethodsCondition().getMethods().contains(org.springframework.web.bind.annotation.RequestMethod.GET);
+            info.getPatternValues().forEach(p -> {
+                if (isGet && p.startsWith("/api/") && !p.contains("{") && !p.startsWith("/api/portal") && !p.startsWith("/api/integration") && !p.startsWith("/api/public")) {
+                    urls.add(p);
+                }
+            });
+        });
+        registryReports(urls);
+        urls.add("/api/purchase-orders/" + poId);
+        urls.add("/api/attachments?ownerType=SUPPLIER_STATEMENT&ownerId=" + sid);
+        urls.add("/api/attachments/" + att + "/download");
+        urls.add("/api/audit?limit=300");
+        urls.add("/api/trace/" + b.get(0).getBatchNo());
+        assertThat(urls.size()).isGreaterThan(30);
+
+        List<String> leaks = new ArrayList<>();
+        int scanned = 0;
+        for (String u : List.of("viewer1", "qa1", "prod1", "sales1")) {
+            String token = login(u);
+            for (String url : urls) {
+                var r = mvc.perform(get(url).header("Authorization", "Bearer " + token)).andReturn().getResponse();
+                if (r.getStatus() != 200) {
+                    continue;
+                }
+                scanned++;
+                String text = readable(r.getContentAsByteArray());
+                for (String m : markers) {
+                    if (text.contains(m)) {
+                        leaks.add(u + " " + url + " 含 " + m);
+                    }
+                }
+            }
+        }
+        assertThat(scanned).isGreaterThan(100);
+        assertThat(leaks).isEmpty();
+        // 文件内容里没有记号，要单独查：发票文件下载不了，也传不上去
+        String viewer = login("viewer1");
+        read(viewer, "/api/attachments/" + att + "/download").andExpect(status().isForbidden());
+        read(login("qa1"), "/api/attachments?ownerType=SUPPLIER_STATEMENT&ownerId=" + sid).andExpect(status().isForbidden());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/attachments")
+                .file(new org.springframework.mock.web.MockMultipartFile("file", "x.pdf", "application/pdf", "%PDF-1.4 x".getBytes(StandardCharsets.ISO_8859_1)))
+                .param("ownerType", "SUPPLIER_STATEMENT").param("ownerId", String.valueOf(sid)).header("Authorization", "Bearer " + login("qa1"))).andExpect(status().isForbidden());
+        // 搜索不能反推金额：没权限的人搜数字搜不到，有权限的搜得到
+        assertThat(body(read(viewer, "/api/audit?q=7391.2377")).size()).isEqualTo(0);
+        assertThat(body(read(viewer, "/api/audit?q=22173.71")).size()).isEqualTo(0);
+        assertThat(body(read(fin, "/api/audit?q=7391.2377")).size()).isGreaterThan(0);
+        // 遮盖只影响读取：操作本身还查得到，审计原文没有被改
+        String masked = text(read(viewer, "/api/audit?q=" + st.get("statementNo").asText()));
+        assertThat(masked).contains("生成对账单").contains("含金额").doesNotContain("22173.71");
+        assertThat(text(read(fin, "/api/audit?q=" + st.get("statementNo").asText()))).contains("22173.71");
+        // 有权限的人确实看得到，上面不是因为数据没进去才通过的
+        assertThat(text(read(buyer, "/api/purchase-orders/" + poId))).contains("7391.2377");
+    }
+
+    private void registryReports(List<String> urls) {
+        for (String key : List.of("stock", "batches", "purchases", "production", "shipments", "complaints", "deviations", "capas", "supplier-audits", "retains", "equipment", "statements")) {
+            urls.add("/api/reports/" + key);
+        }
+        urls.add("/api/reports/audit?from=" + d(-1) + "&to=" + d(1));
+    }
+
+    @Autowired com.cosmetic.scm.sourcing.RfqRepository rfqRepo;
+
+    @Test
+    void lineWithoutQuotesDoesNotBlockTheRest() throws Exception {
+        Long a = supplier("SUP-RFQ-P", "rfq_p");
+        String buyer = login("purchase1");
+        JsonNode rfq = body(call(buyer, "/api/rfqs", Map.of("title", "两行询价", "deadline", d(3).toString(), "supplierIds", List.of(a),
+                "lines", List.of(Map.of("itemId", item("RM-GLY-002"), "qty", 10), Map.of("itemId", item("RM-PHE-004"), "qty", 5)))).andExpect(status().isOk()));
+        long id = rfq.get("id").asLong();
+        long l1 = rfq.get("lines").get(0).get("id").asLong();
+        // 只报了第一行：没报完不能提前开标，到了截止日期才能开
+        call(login("rfq_p"), "/api/portal/supplier/rfqs/" + id + "/quote", Map.of("lines", List.of(quote(l1, "10")))).andExpect(status().isOk());
+        call(buyer, "/api/rfqs/" + id + "/open", Map.of()).andExpect(status().isBadRequest());
+        var r = rfqRepo.findById(id).orElseThrow();
+        r.setDeadline(d(-1));
+        rfqRepo.save(r);
+        String admin = login("admin", "Admin@123456");
+        // 只定第一行，第二行没人报。曾经要求每行都选，这种单子就卡死了，只能整张取消
+        JsonNode done = body(call(admin, "/api/rfqs/" + id + "/award", Map.of("lines", List.of(Map.of("rfqLineId", l1, "supplierId", a)), "password", "Admin@123456", "reason", "只有一家")).andExpect(status().isOk()));
+        assertThat(done.get("status").asText()).isEqualTo("AWARDED");
+        assertThat(poByNo(buyer, done.get("lines").get(0).get("quotes").get(0).get("poNo").asText()).get("lines").size()).isEqualTo(1);
+        // 一行都不定不行；不属于这张单的行不行
+        JsonNode other = body(call(buyer, "/api/rfqs", Map.of("title", "x", "deadline", d(3).toString(), "supplierIds", List.of(a), "lines", List.of(Map.of("itemId", item("RM-GLY-002"), "qty", 1)))).andExpect(status().isOk()));
+        long oid = other.get("id").asLong();
+        var o = rfqRepo.findById(oid).orElseThrow();
+        o.setDeadline(d(-1));
+        rfqRepo.save(o);
+        call(admin, "/api/rfqs/" + oid + "/award", Map.of("lines", List.of(), "password", "Admin@123456")).andExpect(status().isBadRequest());
+        call(admin, "/api/rfqs/" + oid + "/award", Map.of("lines", List.of(Map.of("rfqLineId", l1, "supplierId", a)), "password", "Admin@123456", "reason", "x")).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void cannotApproveOrPayWhenABatchIsNoLongerReleased() throws Exception {
+        Long s = supplier("SUP-SET-F", "set_f");
+        String buyer = login("purchase1");
+        List<Batch> b = buyAndReceive(buyer, s, "RM-GLY-002", "2", "50", "0");
+        setStatus(b.get(0), BatchStatus.RELEASED);
+        long id = body(call(buyer, "/api/statements", Map.of("supplierId", s, "periodTo", d(0).toString())).andExpect(status().isOk())).get("id").asLong();
+        String sup = login("set_f");
+        call(sup, "/api/portal/supplier/statements/" + id + "/confirm", Map.of()).andExpect(status().isOk());
+        call(sup, "/api/portal/supplier/statements/" + id + "/invoice", Map.of("invoiceNo", "INV-F", "invoiceDate", d(0).toString(), "amount", 100)).andExpect(status().isOk());
+        String fin = login("finance1");
+        // 生成之后才发现问题：批次被冻结
+        setStatus(b.get(0), BatchStatus.FROZEN);
+        call(fin, "/api/statements/" + id + "/approve", Map.of("password", PWD)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString(b.get(0).getBatchNo())));
+        // 解冻后可以审批；付款前又判不合格，也不能付
+        setStatus(b.get(0), BatchStatus.RELEASED);
+        call(fin, "/api/statements/" + id + "/approve", Map.of("password", PWD)).andExpect(status().isOk());
+        setStatus(b.get(0), BatchStatus.REJECTED);
+        call(fin, "/api/statements/" + id + "/pay", Map.of("payDate", d(0).toString(), "amount", 100)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("不合格")));
+        setStatus(b.get(0), BatchStatus.RELEASED);
+        call(fin, "/api/statements/" + id + "/pay", Map.of("payDate", d(0).toString(), "amount", 100)).andExpect(status().isOk());
+    }
+
     private JsonNode poByNo(String token, String poNo) throws Exception {
         for (JsonNode p : body(read(token, "/api/purchase-orders").andExpect(status().isOk()))) {
             if (poNo.equals(p.get("poNo").asText())) {
