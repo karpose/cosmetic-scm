@@ -54,6 +54,8 @@ class SupplierNotifyTest {
     @Autowired PurchaseOrderRepository orders;
     @Autowired NotificationLogRepository logs;
     @Autowired TimeProvider time;
+    @Autowired com.cosmetic.scm.sourcing.RfqRepository rfqs;
+    @Autowired com.cosmetic.scm.sourcing.RfqSupplierRepository invited;
     @MockBean JavaMailSender mail;
 
     private Partner other;
@@ -128,6 +130,28 @@ class SupplierNotifyTest {
         assertThat(body.indexOf("交期已过")).isLessThan(body.indexOf("交期临近"));
         // 别家的单子和内部待办都不能出现
         assertThat(body).doesNotContain("PO-OTHER-SUPPLIER").doesNotContain("物料待检").doesNotContain("投诉").doesNotContain("待上市放行");
+    }
+
+    @Test
+    void waitingQuotesAreIncludedButQuotedOnesAreNot() {
+        AppUser u = sup1();
+        u.setEmail(SUP_MAIL);
+        com.cosmetic.scm.sourcing.Rfq r = new com.cosmetic.scm.sourcing.Rfq();
+        r.setRfqNo("RFQ-NOTIFY-1");
+        r.setTitle("待报价测试");
+        r.setDeadline(time.today().plusDays(3));
+        r.setStatus(com.cosmetic.scm.domain.RfqStatus.OPEN);
+        r.setCreatedBy("test");
+        r.setCreatedAt(LocalDateTime.now());
+        rfqs.save(r);
+        com.cosmetic.scm.sourcing.RfqSupplier inv = new com.cosmetic.scm.sourcing.RfqSupplier();
+        inv.setRfqId(r.getId());
+        inv.setSupplierId(u.getPartnerId());
+        invited.save(inv);
+        notify.sendScheduled();
+        assertThat(to(SUP_MAIL).getText()).contains("待报价询价").contains("RFQ-NOTIFY-1");
+        // 示例数据里华澄已经报过的询价不再提醒
+        assertThat(to(SUP_MAIL).getText()).doesNotContain("透明质酸钠年度询价");
     }
 
     @Test

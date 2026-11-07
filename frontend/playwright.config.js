@@ -8,8 +8,8 @@ export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
   workers: 1,
-  retries: process.env.CI ? 1 : 0,
-  timeout: 45_000,
+  retries: 0, // 用例串行、依赖前面留下的数据，重试时库不干净，只会多出一个看似独立的失败
+  timeout: 90_000, // 有的用例要切换几个岗位，每次登录都算一遍密码；CI 比开发机慢 3 倍左右，45 秒曾被顶满
   expect: { timeout: 10_000 },
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {

@@ -12,6 +12,7 @@ export const ROLE_LABELS = {
   QSO: '质量安全负责人',
   SALES: '销售',
   VIEWER: '只读',
+  FINANCE: '财务',
   OEM_PORTAL: '代工厂门户',
   DEALER: '经销商门户',
   SUPPLIER_PORTAL: '供应商门户'
@@ -35,7 +36,7 @@ export const useAuth = defineStore('auth', {
     },
     // 能上传附件：除只读外的内部岗位（与后端 AttachmentController 一致）
     canAttach() {
-      return this.hasAny('ADMIN', 'MASTER_DATA', 'PURCHASE', 'WAREHOUSE', 'PRODUCTION', 'QA', 'QSO', 'SALES')
+      return this.hasAny('ADMIN', 'MASTER_DATA', 'PURCHASE', 'WAREHOUSE', 'PRODUCTION', 'QA', 'QSO', 'SALES', 'FINANCE')
     },
     async login(username, password) {
       const resp = await http.post('/auth/login', { username, password })

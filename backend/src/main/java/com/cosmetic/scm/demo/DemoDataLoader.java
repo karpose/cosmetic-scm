@@ -104,6 +104,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final MasterService master;
     private final PurchaseService purchase;
     private final SupplierPortalService supplierPortal;
+    private final com.cosmetic.scm.sourcing.RfqService rfqService;
     private final QualityService quality;
     private final ProductionService production;
     private final SalesService sales;
@@ -265,6 +266,14 @@ public class DemoDataLoader implements ApplicationRunner {
         if (!users.existsByUsername("sup1")) {
             userService.newUser("sup1", "华澄化工 · 销售（示例）", DEMO_PASSWORD, EnumSet.of(Role.SUPPLIER_PORTAL), hc.id(), false);
         }
+        if (!users.existsByUsername("finance1")) {
+            userService.newUser("finance1", "财务 · 示例", DEMO_PASSWORD, EnumSet.of(Role.FINANCE), null, false);
+        }
+        // 询价：邀请两家，华澄已报价。截止前内部看不到价格
+        var rfq = as("purchase1", () -> rfqService.create(new com.cosmetic.scm.sourcing.RfqService.CreateRfqReq("透明质酸钠年度询价（示例）", t.plusDays(7), List.of(hc.id(), mp.id()),
+                List.of(new com.cosmetic.scm.sourcing.RfqService.RfqLineReq(ha.getId(), new BigDecimal("20"))))));
+        as("sup1", () -> rfqService.submitQuote(rfq.id(), new com.cosmetic.scm.sourcing.RfqService.QuoteReq(List.of(new com.cosmetic.scm.sourcing.RfqService.QuoteLineReq(
+                rfq.lines().get(0).id(), new BigDecimal("880"), new BigDecimal("13"), 7, t.plusDays(30), "（示例）")))));
         // 供应商门户：一张待回复的采购单，一张已确认并发了送货通知的
         as("purchase1", () -> purchase.create(new CreatePoReq(hc.id(), List.of(line(ha, "2")), t.plusDays(10))));
         PoView shippedPo = as("purchase1", () -> purchase.create(new CreatePoReq(hc.id(), List.of(line(gly, "10")), t.plusDays(5))));

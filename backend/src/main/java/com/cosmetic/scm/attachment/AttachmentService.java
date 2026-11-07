@@ -72,6 +72,7 @@ public class AttachmentService {
     private final TimeProvider time;
     private final CurrentUser currentUser;
     private final com.cosmetic.scm.security.UserRepository users;
+    private final com.cosmetic.scm.settlement.SupplierStatementRepository statements;
 
     @Value("${scm.storage.max-file-mb:20}")
     private int maxFileMb;
@@ -85,6 +86,7 @@ public class AttachmentService {
 
     @Transactional
     public AttachmentView upload(OwnerType ownerType, Long ownerId, MultipartFile file, String note) {
+        requireAccess(ownerType);
         if (!ownerRepo(ownerType).existsById(ownerId)) {
             throw BizException.notFound(ownerType.getLabel());
         }
@@ -98,7 +100,22 @@ public class AttachmentService {
 
     @Transactional(readOnly = true)
     public Download download(Long id) {
-        return read(attachments.findById(id).orElseThrow(() -> BizException.notFound("附件")));
+        Attachment a = attachments.findById(id).orElseThrow(() -> BizException.notFound("附件"));
+        requireAccess(a.getOwnerType());
+        return read(a);
+    }
+
+    /** 内部接口查附件列表：对账单的发票只给采购和财务。 */
+    @Transactional(readOnly = true)
+    public List<AttachmentView> listInternal(OwnerType ownerType, Long ownerId) {
+        requireAccess(ownerType);
+        return list(ownerType, ownerId);
+    }
+
+    private static void requireAccess(OwnerType ownerType) {
+        if (ownerType == OwnerType.SUPPLIER_STATEMENT && !com.cosmetic.scm.security.PriceAccess.allowed()) {
+            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限查看对账单的附件");
+        }
     }
 
     // ---------- 代工厂门户：只能碰委托给本厂的单子 ----------
@@ -160,12 +177,30 @@ public class AttachmentService {
         boolean ownerIsMine = switch (a.getOwnerType()) {
             case PURCHASE_ORDER -> purchaseOrders.findById(a.getOwnerId()).filter(p -> mine.equals(p.getSupplierId())).isPresent();
             case PARTNER -> mine.equals(a.getOwnerId());
+            case SUPPLIER_STATEMENT -> statements.findById(a.getOwnerId()).filter(x -> mine.equals(x.getSupplierId())).isPresent();
             default -> false;
         };
         if (!ownerIsMine || !users.usernamesOfPartner(mine).contains(a.getUploadedBy())) {
             throw BizException.notFound("附件");
         }
         return read(a);
+    }
+
+    @Transactional
+    public AttachmentView uploadForSupplierStatement(Long id, MultipartFile file, String note) {
+        requireOwnStatement(id);
+        return store(OwnerType.SUPPLIER_STATEMENT, id, file, note);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AttachmentView> listForSupplierStatement(Long id) {
+        requireOwnStatement(id);
+        return uploadedByMyPartner(list(OwnerType.SUPPLIER_STATEMENT, id));
+    }
+
+    private void requireOwnStatement(Long id) {
+        Long mine = currentUser.portalPartnerId();
+        statements.findById(id).filter(x -> mine.equals(x.getSupplierId())).orElseThrow(() -> BizException.notFound("对账单"));
     }
 
     private List<AttachmentView> uploadedByMyPartner(List<AttachmentView> all) {
@@ -219,8 +254,14 @@ public class AttachmentService {
         a.setUploadedBy(currentUser.usernameOrSystem());
         a.setUploadedAt(now);
         attachments.save(a);
-        audit.log("上传附件", ownerType.getLabel() + " #" + ownerId, name + "（" + (bytes.length / 1024) + " KB，SHA-256 "
-                + a.getSha256().substring(0, 12) + "…）", a.getNote());
+        String auditDetail = name + "（" + (bytes.length / 1024) + " KB，SHA-256 "
+                + a.getSha256().substring(0, 12) + "…）";
+        // 对账单的发票文件名可能带金额，审计里按角色遮盖
+        if (ownerType == OwnerType.SUPPLIER_STATEMENT) {
+            audit.logMoney("上传附件", ownerType.getLabel() + " #" + ownerId, auditDetail, a.getNote());
+        } else {
+            audit.log("上传附件", ownerType.getLabel() + " #" + ownerId, auditDetail, a.getNote());
+        }
         return view(a);
     }
 
@@ -253,6 +294,7 @@ public class AttachmentService {
             case SALES_RETURN -> returns;
             case PARTNER -> partners;
             case EQUIPMENT -> equipment;
+            case SUPPLIER_STATEMENT -> statements;
         };
     }
 

@@ -49,6 +49,7 @@ public class ReportService {
     private final SupplierAuditService audits;
     private final RetainService retains;
     private final PurchaseService purchases;
+    private final com.cosmetic.scm.settlement.SettlementService settlement;
     private final EquipmentService equipment;
     private final AuditService audit;
     private final TimeProvider time;
@@ -73,11 +74,16 @@ public class ReportService {
         m.put("retains", this::retainSamples);
         m.put("equipment", this::equipmentList);
         m.put("audit", () -> auditLogs(from, to));
+        m.put("statements", this::statements);
         return m;
     }
 
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to) {
+        // 金额只给采购和财务看，其它报表所有内部岗位都能导
+        if ("statements".equals(key) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
+            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出对账单");
+        }
         Supplier<Table> source = registry(from, to).get(key);
         if (source == null) {
             throw BizException.notFound("报表");
@@ -88,6 +94,13 @@ public class ReportService {
         }
         audit.log("导出报表", t.title(), t.rows().size() + " 行" + (from == null && to == null ? "" : "，范围 " + (from == null ? "不限" : from) + " 至 " + (to == null ? "不限" : to)));
         return new Export(t.title() + "-" + time.today() + ".xlsx", XlsxWriter.write(t.title(), t.headers(), t.rows()));
+    }
+
+    private Table statements() {
+        List<List<Object>> rows = new ArrayList<>();
+        settlement.listAll().forEach(t -> rows.add(row(t.statementNo(), t.supplierName(), t.periodTo(), t.statusLabel(), t.goodsAmount(), t.taxAmount(), t.adjustment(), t.adjustmentNote(),
+                t.totalAmount(), t.invoiceNo(), t.invoiceDate(), t.paidAmount(), t.unpaid(), t.createdBy(), t.approvedBy())));
+        return new Table("对账单", List.of("对账单", "供应商", "对账截止", "状态", "含税货款", "其中税额", "调整", "调整原因", "合计", "发票号", "发票日期", "已付", "未付", "制单", "审批"), rows);
     }
 
     private Table stock() {

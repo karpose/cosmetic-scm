@@ -33,11 +33,11 @@ public class AttachmentController {
 
     @GetMapping
     public List<AttachmentView> list(@RequestParam OwnerType ownerType, @RequestParam Long ownerId) {
-        return attachments.list(ownerType, ownerId);
+        return attachments.listInternal(ownerType, ownerId);
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAnyRole('ADMIN','MASTER_DATA','PURCHASE','WAREHOUSE','PRODUCTION','QA','QSO','SALES')")
+    @PreAuthorize("hasAnyRole('ADMIN','MASTER_DATA','PURCHASE','WAREHOUSE','PRODUCTION','QA','QSO','SALES','FINANCE')")
     public AttachmentView upload(@RequestParam OwnerType ownerType, @RequestParam Long ownerId,
                                  @RequestParam(required = false) String note, @RequestPart("file") MultipartFile file) {
         return attachments.upload(ownerType, ownerId, file, note);

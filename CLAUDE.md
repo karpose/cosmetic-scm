@@ -28,11 +28,11 @@ docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build  
 cp .env.example .env && docker compose up -d --build
 ```
 
-示例账号（仅 dev）：admin / Admin@123456；purchase1、prod1、qa1、qso1、sales1、viewer1 / Demo@12345；门户账号 oem1（禾川生物）、dealer1（华东经销商）、sup1（华澄化工）/ Demo@12345。
+示例账号（仅 dev）：admin / Admin@123456；purchase1、prod1、qa1、qso1、sales1、viewer1 / Demo@12345；finance1 / Demo@12345；门户账号 oem1（禾川生物）、dealer1（华东经销商）、sup1（华澄化工）/ Demo@12345。
 
 ## 架构
 
-- 后端 `backend/src/main/java/com/cosmetic/scm/`，按业务模块分包：master、purchase、inventory（含库存作业 StockOps、扫码 ScanService）、production、quality、sales、salesreturn、complaint、recall、oemportal、supplierportal、dealer、integration、planning、serial、analytics、attachment、plm、qms、mes、report、notify、trace、dashboard、audit、security、demo。跨模块只通过 Repository 读写，服务之间不互相注入，避免循环依赖。
+- 后端 `backend/src/main/java/com/cosmetic/scm/`，按业务模块分包：master、purchase、inventory（含库存作业 StockOps、扫码 ScanService）、production、quality、sales、salesreturn、complaint、recall、oemportal、supplierportal、sourcing、settlement、dealer、integration、planning、serial、analytics、attachment、plm、qms、mes、report、notify、trace、dashboard、audit、security、demo。跨模块只通过 Repository 读写，服务之间不互相注入，避免循环依赖。
 - `domain/rules/` 是纯 Java 业务规则（FefoAllocator、ShelfLife、FormulaCompliance、FormulaDiff、Replenishment、DemandForecast），不依赖框架，有单元测试。新的计算规则优先放这里。
 - 实体之间只用 Long 外键字段，不用 JPA 关联映射；列表视图通过 `MasterLookup` 一次载入主数据 Map 再组装 record 视图。
 - 表结构只由 Flyway 管理（`ddl-auto: none`）。改表新增 `V{n}__xxx.sql`，**绝不修改已有迁移脚本**。SQL 需同时兼容 MySQL 8 和 H2 MySQL 模式。
@@ -57,6 +57,7 @@ cp .env.example .env && docker compose up -d --build
 - 列表和统计不能靠“最近 N 条”做判断（曾因此漏掉最老的临期批次、半年前没上报的不良反应，呆滞金额也只加了列表里的 10 个）。列表可以截断，合计要按全部算。可用库存不含已过期批次。补货日均和预测历史扣普通退货，召回回收的不扣（货确实卖掉了）。期初导入写的放行记录不算放行周期。呆滞只看发料和出库，调拨不算。看板和补货的手算回归在 `NumbersGroundTruthTest`（关掉示例数据）。不要 `findAll` 全表：用分组或专门的查询。看板、补货建议的短时缓存在 Controller 层（`ShortCache`），测试和开发环境 ttl 为 0。
 - 权限边界在 `SecurityConfig` 的 URL 层：`/api/portal/oem/**` 只给 OEM_PORTAL，`/api/portal/dealer/**` 只给 DEALER，`/api/portal/supplier/**` 只给 SUPPLIER_PORTAL，`/api/integration/**` 只认 X-Api-Key，`/api/public/**` 和 `/api/health` 无需登录（只能放不含内部数据的接口，前端调用时加 `{ public: true }` 不带令牌），其余 `/api/**` 只给内部角色。门户服务里的每个查询都必须用 `CurrentUser.portalPartnerId()` 过滤，别人的数据一律当“不存在”。新增内部接口不需要额外处理，新增门户接口要放在对应前缀下。
 - 供应商门户（`supplierportal`）：准时率按 `first_promised_date` 算，这个字段写入后不能再改，否则改一次交期就能把迟到变成准时。没承诺过的按采购期望日，都没有的不计。送货通知只是预告，库存和批次只由 `PurchaseService.receive` 生成。供应商只能看本单位账号上传的文件（内部传到单据和单位上的审核报告不开放）；新增这类接口时，锁必须是事务第一句，所以先 `lockById` 再判断归属。供应商提醒在 `NotifyService.supplierDigests`，内容只能有本单位的事，只走定时任务，`sendNow` 不发给供应商（管理员点测试不该打扰外部单位），也不受内部有没有待办影响。评分 `SupplierScore` 只作展示，不进下单判断，也不给供应商看；权重是默认值，要质量部确认。
+- 询价比价（`sourcing`）：开标前接口不能返回价格，审计也不能记价格（不是只在页面上藏）。定标人不能是询价人，要签批。对账结算（`settlement`）：只结算 `RELEASED` 的来料批次；可结算批次是算出来的，所以生成对账单先锁供应商行，且必须是事务第一句，否则同一批次会结算两次。发票金额要和合计完全一致，审批人不能是制单人。单价和金额只给 ADMIN、PURCHASE、FINANCE（`PriceAccess`）：`PoLineView` 按角色隐藏；审计里带金额的用 `AuditService.logMoney`，读取时遮盖、搜索也不匹配，遮盖返回副本，不能改实体；总览所有内部岗位都能看，待办文字不能带金额。`SourcingSettlementTest.pricesAndAmountsDoNotLeakToOtherInternalRoles` 会扫所有 GET 接口，曾查出 59 处泄露，新接口自动被扫到。生成对账单后批次不再是放行状态的，不能审批和付款。这些都是默认规则，清单在 `docs/SRM-默认规则.md`，改规则时同步更新。
 - 附件只增不删，存储用 `CREATE_NEW` 不覆盖；上传校验白名单扩展名和文件头，记录 SHA-256，下载时重新核对。文件在 `scm.storage.dir`（Docker 里是 `files-data` 卷），数据库只存元数据。受托厂上传走 `/api/portal/oem/orders/{moId}/attachments`，只能传本厂未完工的单子。受托厂能看到内部传到本单的附件，这是用户确认过的，不是漏洞。
 - `spring.servlet.multipart` 的上限必须高于 nginx 的 `client_max_body_size`（现在 30 MB 对 25 MB）。业务上限（20 MB）在 `AttachmentService` 判断。反过来配置会让后端没读完请求体就回错误，和 nginx 互相等待到超时。
 - 金额是标准成本估值：`MasterService.unitCosts()` 优先用标准成本，成品退回 BOM 物料成本；没成本的物料不计入，并显示数量提示。不要当账面成本用。
@@ -92,11 +93,11 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-06）
 
-- 后端 `mvn clean test` 159 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 52 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 15 项全部通过；GitHub Actions 在 PR 上跑这四项。
+- 后端 `mvn clean test` 168 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 54 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 15 项全部通过；GitHub Actions 在 PR 上跑这四项。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
   - `pom.xml` 把 Tomcat、Jackson、log4j 钉在修复了已知漏洞的版本，升 Spring Boot 时要删掉这几行。Spring MVC 6.2.19 还有两条 OSV 记录（SSE 片段渲染、XsltView），修复只在 7.x，系统没用到这两个功能。扫描脚本 `scripts/dep-scan.py`，判断过不影响的漏洞登记在 `scripts/dep-scan-allow.txt`，`dep-scan.yml` 每周跑一次（不是 PR 检查）。
-- 已完成：供应商门户、准时交货率和综合评分（V11 迁移）；一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。
+- 已完成：询价比价、对账结算、财务角色（V12、V13 迁移）；供应商门户、准时交货率和综合评分（V11 迁移）；一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。
 - Docker 部署已在本机 Colima（profile `cosmetic-scm`）上完整演练过：MySQL 8 上迁移和示例数据都正常，HTTPS、首次改密、备份恢复、数据库宕机时的健康检查都实测通过，记录见 `docs/csv/07-部署预验证记录-2026-11-03.md`（含历次升级、备份恢复、并发、容量测试和空库上线演练）。所有自动化测试都带示例数据，改动上线流程后要在空库上再走一遍。并发、死锁和 CSP 这类问题 H2 和开发服务器测不全，改到这些要到 MySQL 上跑。CSP、Permissions-Policy 和上传限制只有经过 nginx 才生效，开发服务器测不出来，改这些要走一遍 Docker。这台 Colima 没有共享宿主机目录，绑定挂载会是空目录；里面还有一套用 8088 端口的 `cosmetic-scm` 旧部署，不要动它。
 - 打印：`styles.css` 的 `@media print` 把卡片、表格的外层改成块级、不裁剪。外层只要有 `overflow: hidden` 或 flex，跨页时末尾的行会被裁掉且没有提示（120 个客户曾只印出 98 个）。Playwright 读不出 PDF 文字，改打印样式后用 PyMuPDF 数一遍行数。
 - 看板图表配色用 dataviz 参考调色板，已用校验脚本在浅色、深色下验过；图表是纯 HTML/CSS，没有引入图表库。
@@ -110,5 +111,5 @@ cp .env.example .env && docker compose up -d --build
 2. 用真实 SKU、供应商、代工厂、客户替换示例主数据（CSV 导入），给受托厂和经销商开门户账号；质量部按 `docs/csv/` 执行 OQ / PQ 并签字。
 3. 选定电商 ERP（聚水潭、旺店通、吉客云等）后，在 `integration` 包里写报文适配和回调 / 定时拉取。
 4. 用现场工艺替换示例工艺路线，用真实邮箱和企业微信群验证提醒。
-5. SRM 剩下的询价比价、对账结算，等用户决定（对账建议等财务系统定了再做）；评分权重要质量部确认。
+5. SRM 的默认规则（`docs/SRM-默认规则.md`）要采购、财务、质量部确认，用户说过后期再改；退供、账期、对接财务系统都还没做。
 6. 需要时：预测加促销等人工调整；实际成本核算对接财务系统；称量数据采集；即时提醒。

@@ -41,6 +41,12 @@ public class PurchaseController {
         return purchase.create(req);
     }
 
+    @PostMapping("/{id}/prices")
+    @PreAuthorize("hasAnyRole('ADMIN','PURCHASE')")
+    public PoView setPrices(@PathVariable Long id, @Valid @RequestBody PurchaseService.SetPriceReq req) {
+        return purchase.setPrices(id, req);
+    }
+
     @PostMapping("/{id}/close")
     @PreAuthorize("hasAnyRole('ADMIN','PURCHASE')")
     public PurchaseService.PoView close(@PathVariable Long id, @jakarta.validation.Valid @RequestBody PurchaseService.CloseReq req) {

@@ -64,8 +64,23 @@ public class PurchaseService {
     private final PoShipmentRepository shipments;
     private final PoShipmentLineRepository shipmentLines;
     private final com.cosmetic.scm.security.UserRepository users;
+    private final com.cosmetic.scm.settlement.SupplierStatementLineRepository statementLines;
 
-    public record PoLineReq(@NotNull Long itemId, @NotNull @Positive @Qty BigDecimal qty) {
+    public record PoLineReq(@NotNull Long itemId, @NotNull @Positive @Qty BigDecimal qty,
+                            @Positive(message = "单价要大于 0") @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "单价最多 14 位整数、4 位小数") BigDecimal unitPrice,
+                            @jakarta.validation.constraints.DecimalMin(value = "0", message = "税率不能为负") @jakarta.validation.constraints.DecimalMax(value = "100", message = "税率不能超过 100") @jakarta.validation.constraints.Digits(integer = 3, fraction = 2, message = "税率最多 2 位小数") BigDecimal taxRate) {
+        public PoLineReq(Long itemId, BigDecimal qty) {
+            this(itemId, qty, null, null);
+        }
+    }
+
+    public record LinePriceReq(@NotNull Long poLineId,
+                               @NotNull(message = "请填写单价") @Positive(message = "单价要大于 0") @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "单价最多 14 位整数、4 位小数") BigDecimal unitPrice,
+                               @NotNull(message = "请填写税率") @jakarta.validation.constraints.DecimalMin(value = "0", message = "税率不能为负") @jakarta.validation.constraints.DecimalMax(value = "100", message = "税率不能超过 100") @jakarta.validation.constraints.Digits(integer = 3, fraction = 2, message = "税率最多 2 位小数") BigDecimal taxRate) {
+    }
+
+    /** reason：改已有单价时必填。 */
+    public record SetPriceReq(@NotEmpty(message = "至少一行") @Valid List<LinePriceReq> lines, @Size(max = 300) String reason) {
     }
 
     public record CreatePoReq(@NotNull Long supplierId, @NotEmpty(message = "至少一行物料") @Valid List<PoLineReq> lines,
@@ -95,7 +110,7 @@ public class PurchaseService {
 
     public record PoLineView(Long id, int lineNo, Long itemId, String itemCode, String itemName, String itemType,
                              String unit, Integer shelfMonths, BigDecimal qty, BigDecimal receivedQty,
-                             BigDecimal remaining) {
+                             BigDecimal remaining, BigDecimal unitPrice, BigDecimal taxRate) {
     }
 
     public record PoView(Long id, String poNo, Long supplierId, String supplierName, LocalDate orderDate,
@@ -192,10 +207,50 @@ public class PurchaseService {
             line.setItemId(l.itemId());
             line.setQty(l.qty());
             line.setReceivedQty(BigDecimal.ZERO);
+            line.setUnitPrice(l.unitPrice());
+            line.setTaxRate(l.unitPrice() == null ? null : l.taxRate());
             lines.save(line);
         }
         audit.log("新建采购单", po.getPoNo(), supplier.getName() + "，" + req.lines().size() + " 行");
         return get(po.getId());
+    }
+
+    /** 录入或修改单价。进了有效对账单的不能改，否则对账单和采购单对不上。 */
+    @Transactional
+    public PoView setPrices(Long poId, SetPriceReq req) {
+        PurchaseOrder po = orders.lockById(poId).orElseThrow(() -> BizException.notFound("采购单"));
+        if (po.getStatus() == PoStatus.CANCELLED) {
+            throw new BizException("采购单 " + po.getPoNo() + " 已取消");
+        }
+        Map<Long, PoLine> lineMap = lines.findByPoIdOrderByLineNo(poId).stream().collect(Collectors.toMap(PoLine::getId, l -> l));
+        String reason = req.reason() == null || req.reason().isBlank() ? null : req.reason().trim();
+        List<String> detail = new ArrayList<>();
+        for (LinePriceReq r : req.lines()) {
+            PoLine line = lineMap.get(r.poLineId());
+            if (line == null) {
+                throw new BizException("这一行不属于采购单 " + po.getPoNo());
+            }
+            Item item = lookup.item(line.getItemId());
+            boolean same = line.getUnitPrice() != null && line.getUnitPrice().compareTo(r.unitPrice()) == 0
+                    && line.getTaxRate() != null && line.getTaxRate().compareTo(r.taxRate()) == 0;
+            if (same) {
+                continue;
+            }
+            if (statementLines.countBilled(line.getId(), com.cosmetic.scm.domain.StatementStatus.CANCELLED) > 0) {
+                throw new BizException(item.getName() + " 已进了对账单，不能改单价。要改请先作废对账单");
+            }
+            if (line.getUnitPrice() != null && reason == null) {
+                throw new BizException("修改已有单价要写明原因");
+            }
+            detail.add(item.getName() + " " + (line.getUnitPrice() == null ? "未录入" : plain(line.getUnitPrice()) + "（税率 " + plain(line.getTaxRate() == null ? BigDecimal.ZERO : line.getTaxRate()) + "%）") + " 改为 " + plain(r.unitPrice()) + "（税率 " + plain(r.taxRate()) + "%）");
+            line.setUnitPrice(r.unitPrice());
+            line.setTaxRate(r.taxRate());
+            lines.save(line);
+        }
+        if (!detail.isEmpty()) {
+            audit.logMoney("修改采购单价", po.getPoNo(), String.join("，", detail), reason);
+        }
+        return get(poId);
     }
 
     /** 结束采购单：没收过货的取消，收过一部分的关闭（余量不再收，也不再算在途）。 */
@@ -316,13 +371,15 @@ public class PurchaseService {
 
     private PoView toView(PurchaseOrder po, List<PoLine> poLines, Map<Long, Item> im, Map<Long, Partner> pm, List<ShipmentView> sv, Set<Long> withPortal) {
         Partner s = pm.get(po.getSupplierId());
+        // 单价只给采购和财务看。仓库收货、车间领料不需要知道价格
+        boolean showPrice = com.cosmetic.scm.security.PriceAccess.allowed();
         List<PoLineView> lv = poLines.stream()
                 .sorted((a, b) -> Integer.compare(a.getLineNo(), b.getLineNo()))
                 .map(l -> {
                     Item i = im.get(l.getItemId());
                     return new PoLineView(l.getId(), l.getLineNo(), i.getId(), i.getCode(), i.getName(),
                             i.getItemType().name(), i.getUnit(), i.getShelfMonths(), l.getQty(), l.getReceivedQty(),
-                            l.remaining());
+                            l.remaining(), showPrice ? l.getUnitPrice() : null, showPrice ? l.getTaxRate() : null);
                 }).toList();
         return new PoView(po.getId(), po.getPoNo(), po.getSupplierId(), s == null ? null : s.getName(),
                 po.getOrderDate(), po.getStatus(), po.getStatus().getLabel(), po.getCreatedBy(), po.getCreatedAt(), lv, po.getCloseReason(), po.getClosedBy(), po.getClosedAt(),

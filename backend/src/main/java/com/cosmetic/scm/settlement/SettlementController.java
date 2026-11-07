@@ -1,0 +1,80 @@
+package com.cosmetic.scm.settlement;
+
+import java.time.LocalDate;
+import java.util.List;
+
+import com.cosmetic.scm.settlement.SettlementService.ApproveReq;
+import com.cosmetic.scm.settlement.SettlementService.CancelReq;
+import com.cosmetic.scm.settlement.SettlementService.CreateReq;
+import com.cosmetic.scm.settlement.SettlementService.InvoiceReq;
+import com.cosmetic.scm.settlement.SettlementService.PayReq;
+import com.cosmetic.scm.settlement.SettlementService.PreviewView;
+import com.cosmetic.scm.settlement.SettlementService.StatementView;
+
+import jakarta.validation.Valid;
+
+import lombok.RequiredArgsConstructor;
+
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+/** 采购生成和作废，财务审批和付款。金额只给这两个岗位看。 */
+@RestController
+@RequestMapping("/api/statements")
+@RequiredArgsConstructor
+public class SettlementController {
+
+    private static final String READ = "hasAnyRole('ADMIN','PURCHASE','FINANCE')";
+    private static final String BUYER = "hasAnyRole('ADMIN','PURCHASE')";
+    private static final String FINANCE = "hasAnyRole('ADMIN','FINANCE')";
+
+    private final SettlementService settlement;
+
+    @GetMapping
+    @PreAuthorize(READ)
+    public List<StatementView> list() {
+        return settlement.list();
+    }
+
+    @GetMapping("/preview")
+    @PreAuthorize(BUYER)
+    public PreviewView preview(@RequestParam Long supplierId, @RequestParam LocalDate periodTo) {
+        return settlement.preview(supplierId, periodTo);
+    }
+
+    @PostMapping
+    @PreAuthorize(BUYER)
+    public StatementView create(@Valid @RequestBody CreateReq req) {
+        return settlement.create(req);
+    }
+
+    @PostMapping("/{id}/cancel")
+    @PreAuthorize(BUYER)
+    public StatementView cancel(@PathVariable Long id, @Valid @RequestBody CancelReq req) {
+        return settlement.cancel(id, req);
+    }
+
+    @PostMapping("/{id}/invoice")
+    @PreAuthorize(BUYER)
+    public StatementView invoice(@PathVariable Long id, @Valid @RequestBody InvoiceReq req) {
+        return settlement.registerInvoice(id, req);
+    }
+
+    @PostMapping("/{id}/approve")
+    @PreAuthorize(FINANCE)
+    public StatementView approve(@PathVariable Long id, @Valid @RequestBody ApproveReq req) {
+        return settlement.approve(id, req);
+    }
+
+    @PostMapping("/{id}/pay")
+    @PreAuthorize(FINANCE)
+    public StatementView pay(@PathVariable Long id, @Valid @RequestBody PayReq req) {
+        return settlement.pay(id, req);
+    }
+}
