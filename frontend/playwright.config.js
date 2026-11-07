@@ -26,7 +26,8 @@ export default defineConfig({
       url: `${API}/api/auth/roles`,
       timeout: 240_000,
       reuseExistingServer: false,
-      stdout: 'ignore',
+      // CI 上把后端输出打到任务日志里：Maven 用了 -q，报错只在标准输出，丢掉的话启动失败时什么都看不到
+      stdout: process.env.CI ? 'pipe' : 'ignore',
       stderr: 'pipe'
     },
     {
