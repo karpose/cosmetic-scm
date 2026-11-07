@@ -863,6 +863,8 @@ test('导入：不存在的日期在页面上按行报，不是整批“格式�
 })
 
 test('供应商门户：确认订单、回复交期、发送货通知、传 COA，采购按通知收货', async ({ page }) => {
+  // 要切换很多次账号，每次登录都算一遍密码。CI 比开发机慢 3 倍左右，默认的 45 秒不够
+  test.setTimeout(240_000)
   await login(page, 'sup1')
   await expect(page).toHaveURL(/\/portal\/supplier/)
   await expect(page.getByRole('heading', { name: '采购订单协同' })).toBeVisible()
@@ -914,6 +916,8 @@ test('供应商门户：确认订单、回复交期、发送货通知、传 COA�
 })
 
 test('询价比价到对账付款：询价、报价、开标、定标、收货、放行、对账、发票、审批、付款', async ({ page }) => {
+  // 要切换很多次账号，每次登录都算一遍密码。CI 比开发机慢 3 倍左右，默认的 45 秒不够
+  test.setTimeout(240_000)
   const title = `E2E 询价 ${Date.now()}`
   await login(page, 'purchase1')
   await page.goto('/sourcing')
