@@ -80,6 +80,11 @@ public class DocChangeController {
         return changes.list();
     }
 
+    @GetMapping("/changes/formula-options")
+    public ChangeService.FormulaOptions formulaOptions() {
+        return changes.formulaOptions();
+    }
+
     @GetMapping("/changes/{id}")
     public ChangeService.ChangeDetail change(@PathVariable Long id) {
         return changes.detail(id);

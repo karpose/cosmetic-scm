@@ -70,6 +70,9 @@ scm:
   compliance:
     # 打开后，安全评估和标签没签批的不能上市放行。默认关闭：一上线就拦，所有现存产品都放不了行。资料补齐后再打开
     require-docs-for-release: ${SCM_COMPLIANCE_REQUIRE_DOCS:false}
+  change:
+    # 打开后，发起配方变更要先关联一项已批准的变更（变更控制）
+    require-for-formula: ${SCM_REQUIRE_CHANGE_FOR_FORMULA:false}
   notify:
     # 每日待办摘要。enabled=false 时不启动定时任务，管理员仍可在“消息提醒”页手工发送
     enabled: ${SCM_NOTIFY_ENABLED:false}

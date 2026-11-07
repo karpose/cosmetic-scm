@@ -27,7 +27,7 @@
               <div class="vh">
                 <span class="vno mono">V{{ v.versionNo }}</span>
                 <el-tag :type="STATUS[v.status]" size="small" disable-transitions>{{ v.statusLabel }}</el-tag>
-                <span class="grow">{{ v.changeNote }}</span>
+                <span class="grow">{{ v.changeNote }}<router-link v-if="v.changeNo" to="/changes" class="mono small"> · 变更 {{ v.changeNo }}</router-link></span>
                 <span class="muted small">{{ v.createdBy }} · {{ fmtTime(v.createdAt) }}</span>
               </div>
               <el-alert v-if="v.rejectNote" type="warning" :closable="false" :title="`被退回：${v.rejectNote}`" style="margin:6px 0" />
@@ -142,6 +142,12 @@
     <!-- 配方草稿 -->
     <el-dialog v-model="dr.visible" :title="dr.id ? `修改配方变更：${dr.fgName}` : `发起配方变更：${dr.fgName}`" width="780px">
       <el-form label-position="top" @submit.prevent>
+        <el-form-item v-if="!dr.id" :label="dr.changeRequired ? '关联的变更（必选）' : '关联的变更（选填）'">
+          <el-select id="dr-change" v-model="dr.changeId" clearable :placeholder="dr.options ? (dr.options.length ? '选择实施中的配方或原料变更' : '没有实施中的配方或原料变更') : '正在读取…'" style="width:100%">
+            <el-option v-for="o in dr.options || []" :key="o.id" :value="o.id" :label="`${o.changeNo} ${o.title}（${o.changeTypeLabel}）`" />
+          </el-select>
+          <p v-if="dr.changeRequired && dr.options && !dr.options.length" class="small bad" style="margin:4px 0 0">要先到“变更控制”提出配方变更并批准。</p>
+        </el-form-item>
         <el-form-item label="变更内容和原因"><el-input id="dr-note" v-model="dr.changeNote" type="textarea" :rows="2" maxlength="500" show-word-limit /></el-form-item>
         <div v-for="(l, i) in dr.lines" :key="i" class="bom-row">
           <el-select aria-label="物料" v-model="l.itemId" placeholder="选择物料" filterable @change="check">
@@ -158,7 +164,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dr.visible = false">取消</el-button>
-        <el-button type="primary" :loading="dr.saving" :disabled="dr.problems.length > 0" @click="saveDraft">保存草稿</el-button>
+        <el-button type="primary" :loading="dr.saving" :disabled="dr.problems.length > 0 || (!dr.id && !dr.options)" @click="saveDraft">保存草稿</el-button>
       </template>
     </el-dialog>
 
@@ -271,14 +277,24 @@ const loader = useLoader(async () => {
 const load = () => loader.run()
 
 // ---------- 配方草稿 ----------
-const dr = reactive({ visible: false, saving: false, id: null, fgItemId: null, fgName: '', changeNote: '', lines: [], problems: [] })
+const dr = reactive({ visible: false, saving: false, id: null, fgItemId: null, fgName: '', changeNote: '', lines: [], problems: [], changeId: null, options: null, changeRequired: false })
+const optionsReq = latestOnly()
 function openDraft(p, v) {
   const source = v || p.versions.find((x) => x.status === 'EFFECTIVE')
   Object.assign(dr, {
-    visible: true, id: v?.id ?? null, fgItemId: p.fgItemId, fgName: p.fgName, changeNote: v?.changeNote ?? '', problems: [],
+    visible: true, id: v?.id ?? null, fgItemId: p.fgItemId, fgName: p.fgName, changeNote: v?.changeNote ?? '', problems: [], changeId: null, options: null, changeRequired: false,
     lines: (source?.lines || []).map((l) => ({ itemId: l.itemId, qtyPer: Number(l.qtyPer), supplyMode: l.supplyMode }))
   })
   check()
+  // 新草稿才能关联变更；可选的变更读完之前不能保存，否则开关打开时一定报错
+  if (!dr.id) loadChangeOptions()
+}
+async function loadChangeOptions() {
+  const current = optionsReq()
+  const o = await http.get('/changes/formula-options')
+  if (!current()) return
+  dr.options = o.changes
+  dr.changeRequired = o.required
 }
 const draftLines = () => dr.lines.filter((l) => l.itemId && l.qtyPer > 0)
 let seq = 0
@@ -297,8 +313,9 @@ async function check() {
   }
 }
 async function saveDraft() {
-  const body = { changeNote: dr.changeNote, lines: draftLines() }
+  const body = { changeNote: dr.changeNote, lines: draftLines(), changeId: dr.id ? undefined : dr.changeId }
   if (!body.lines.length) return ElMessage.warning('至少填写一行物料')
+  if (!dr.id && dr.changeRequired && !dr.changeId) return ElMessage.warning('请选择关联的变更')
   dr.saving = true
   try {
     if (dr.id) await http.put(`/plm/versions/${dr.id}`, body)
