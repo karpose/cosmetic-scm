@@ -72,6 +72,7 @@ public class RfqService {
     private final AuditService audit;
     private final TimeProvider time;
     private final CurrentUser currentUser;
+    private final com.cosmetic.scm.master.RegulatoryService regulatory;
 
     public record RfqLineReq(@NotNull Long itemId, @NotNull @Positive @Qty BigDecimal qty) {
     }
@@ -168,7 +169,7 @@ public class RfqService {
             if (item.getItemType() == ItemType.FG) {
                 throw new BizException("只能询原料和包材，" + item.getName() + " 是成品");
             }
-            if (item.isBanned()) {
+            if (regulatory.isBanned(item)) {
                 throw new BizException(item.getName() + " 为禁用原料，不能询价");
             }
             if (!item.isActive()) {

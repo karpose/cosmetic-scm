@@ -172,6 +172,19 @@ const SPECS = {
       { header: '供料方式', key: 'supplyMode', conv: enumOf('供料方式', { BRAND: '品牌供料', OEM: '工厂代采' }, true), show: (v) => ({ BRAND: '品牌供料', OEM: '工厂代采' }[v]), example: '品牌供料' }
     ]
   },
+  regulated: {
+    title: '法规目录', url: '/regulatory/import', file: '法规目录导入模板.csv', codeKey: 'inciName', required: ['catalog', 'inciName', 'source'], unit: '条法规目录',
+    hint: '请按官方发布的版本填写，来源必填。全成或全不成；INCI 已存在的按修改处理。只有类别、上限和来源会影响校验。下面的示例不是法规内容。',
+    columns: [
+      { header: '类别', key: 'catalog', conv: enumOf('类别', { BANNED: '禁用', RESTRICTED: '限用' }, true), show: (v) => ({ BANNED: '禁用', RESTRICTED: '限用' }[v]), example: '限用' },
+      { header: 'INCI 名称', key: 'inciName', conv: text, example: 'Example Substance' },
+      { header: '中文名', key: 'cnName', conv: text, example: '示例物质' },
+      { header: 'CAS 号', key: 'casNo', conv: text, example: '' },
+      { header: '浓度上限（%）', key: 'maxPct', conv: num('浓度上限'), example: '1' },
+      { header: '使用条件', key: 'conditions', conv: text, example: '' },
+      { header: '来源文件和版本', key: 'source', conv: text, example: '请填文件名和版本' }
+    ]
+  },
   partners: {
     title: '往来单位', url: '/import/partners', listUrl: '/partners', file: '往来单位导入模板.csv',
     columns: [
@@ -384,6 +397,8 @@ async function send(dryRun) {
     }
     const res = await http.post(spec.value.url, { rows: rows.value, dryRun, ...(spec.value.sign ? { password: password.value } : {}) }, { timeout: LONG_TIMEOUT })
     result.value = res
+    // 法规目录的变化由后端算：留空的上限是“无上限”，不是保留原值，放宽了也要让人看到
+    if (dryRun && Array.isArray(res.changes)) changes.value = res.changes
     if (!dryRun && res.applied) {
       ElMessage.success(spec.value.unit ? `已导入 ${res.created} ${spec.value.unit}` : spec.value.sign ? `已导入 ${res.created} 个批次` : `已导入：新增 ${res.created}，修改 ${res.updated}`)
       emit('done')

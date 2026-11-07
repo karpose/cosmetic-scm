@@ -58,6 +58,8 @@ public class DashboardService {
     private final PurchaseOrderRepository purchaseOrders;
     private final com.cosmetic.scm.purchase.PoShipmentRepository poShipments;
     private final com.cosmetic.scm.sourcing.RfqRepository rfqRepo;
+    private final com.cosmetic.scm.master.RegulatoryService regulatory;
+    private final com.cosmetic.scm.plm.ComplianceService compliance;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnRepository supplierReturns;
     private final com.cosmetic.scm.settlement.SupplierStatementRepository statementRepo;
     private final BatchRepository batches;
@@ -183,6 +185,22 @@ public class DashboardService {
         for (com.cosmetic.scm.purchase.PurchaseOrder po : purchaseOrders.findOverdue(List.of(PoStatus.OPEN, PoStatus.PARTIAL), today)) {
             todos.add(new Todo("PO_LATE", "采购单超交期", "warn", lookup.partner(po.getSupplierId()).getName(), po.getPoNo(),
                     "交期 " + (po.getPromisedDate() != null ? po.getPromisedDate() : po.getExpectedDate()) + "，还没到齐", "/purchase"));
+        }
+        // 法规目录变了，生效配方可能已经不合规
+        for (com.cosmetic.scm.master.RegulatoryService.Violation v : regulatory.violations()) {
+            todos.add(new Todo("REG_VIOLATION", "配方不符合法规目录", "bad", v.fgName(), v.fgCode(), v.message(), "/compliance?tab=regulatory"));
+        }
+        // 配方变了，旧版本的合规资料要重新评估。从没登记过的只算一条总数，上线初期不要刷屏
+        long complianceMissing = 0;
+        for (com.cosmetic.scm.plm.ComplianceService.ProductStatus p : compliance.statuses()) {
+            if ("STALE".equals(p.safety()) || "STALE".equals(p.label())) {
+                todos.add(new Todo("COMPLIANCE_STALE", "合规资料要重新评估", "warn", p.fgName(), p.fgCode(), "配方已变为 V" + p.versionNo() + "，安全评估或标签还是旧版本的", "/compliance"));
+            } else if (p.versionId() != null && !p.complete()) {
+                complianceMissing++;
+            }
+        }
+        if (complianceMissing > 0) {
+            todos.add(new Todo("COMPLIANCE_MISSING", "合规资料不全", "info", complianceMissing + " 个成品", "—", "缺已签批的安全评估或标签", "/compliance"));
         }
         for (com.cosmetic.scm.supplierreturn.SupplierReturn r : supplierReturns.findByStatusOrderById(com.cosmetic.scm.domain.SupplierReturnStatus.PENDING)) {
             todos.add(new Todo("SUPPLIER_RETURN", "退供待签批", "warn", lookup.partner(r.getSupplierId()).getName(), r.getReturnNo(), r.getReason(), "/supplier-returns"));

@@ -134,6 +134,7 @@ const groups = computed(() => {
         { path: '/trace', title: '批次追溯', icon: Guide },
         { path: '/quality-events', title: '投诉与召回', icon: WarningFilled },
         { path: '/qms', title: '质量体系', icon: Memo },
+        { path: '/compliance', title: '合规资料', icon: Stamp },
         { path: '/serials', title: '一物一码', icon: Postcard },
         { path: '/audit', title: '审计日志', icon: Document }
       ]

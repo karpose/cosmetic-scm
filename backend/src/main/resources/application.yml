@@ -67,6 +67,9 @@ scm:
     # 附件文件目录；Docker 部署时是一个卷（见 docker-compose.yml），备份容器会一起打包
     dir: ${SCM_STORAGE_DIR:./data/files}
     max-file-mb: 20
+  compliance:
+    # 打开后，安全评估和标签没签批的不能上市放行。默认关闭：一上线就拦，所有现存产品都放不了行。资料补齐后再打开
+    require-docs-for-release: ${SCM_COMPLIANCE_REQUIRE_DOCS:false}
   notify:
     # 每日待办摘要。enabled=false 时不启动定时任务，管理员仍可在“消息提醒”页手工发送
     enabled: ${SCM_NOTIFY_ENABLED:false}
