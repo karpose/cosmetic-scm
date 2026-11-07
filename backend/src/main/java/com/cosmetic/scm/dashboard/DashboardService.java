@@ -61,6 +61,8 @@ public class DashboardService {
     private final com.cosmetic.scm.master.RegulatoryService regulatory;
     private final com.cosmetic.scm.plm.ComplianceService compliance;
     private final com.cosmetic.scm.plm.StabilityService stability;
+    private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
+    private final com.cosmetic.scm.plm.NpdService npd;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnRepository supplierReturns;
     private final com.cosmetic.scm.settlement.SupplierStatementRepository statementRepo;
     private final BatchRepository batches;
@@ -202,6 +204,18 @@ public class DashboardService {
         }
         if (complianceMissing > 0) {
             todos.add(new Todo("COMPLIANCE_MISSING", "合规资料不全", "info", complianceMissing + " 个成品", "—", "缺已签批的安全评估或标签", "/compliance"));
+        }
+        for (com.cosmetic.scm.plm.NpdService.ProjectRow p : npd.byStatus(com.cosmetic.scm.domain.NpdStatus.PROPOSED)) {
+            todos.add(new Todo("NPD_PROPOSED", "新品立项待批准", "info", p.name(), p.projectNo(), p.category() + "，计划 " + p.targetLaunch() + " 上市", "/npd"));
+        }
+        for (com.cosmetic.scm.plm.NpdService.ProjectRow p : npd.byStatus(com.cosmetic.scm.domain.NpdStatus.LAUNCH_REVIEW)) {
+            todos.add(new Todo("NPD_LAUNCH", "新品上市待批准", "warn", p.name(), p.projectNo(), "上市检查已通过，请质量安全负责人批准", "/npd"));
+        }
+        for (com.cosmetic.scm.plm.NpdService.ProjectRow p : npd.late(today)) {
+            todos.add(new Todo("NPD_LATE", "新品超过计划上市日期", "info", p.name(), p.projectNo(), "计划 " + p.targetLaunch() + "，现在" + p.statusLabel(), "/npd"));
+        }
+        for (com.cosmetic.scm.quality.QualitySpecService.SpecView s : qualitySpecs.waitingSignature()) {
+            todos.add(new Todo("SPEC_REVIEW", "质量标准待签批", "warn", s.itemName(), s.specNo(), "V" + s.versionNo() + "：" + s.changeNote(), "/specs"));
         }
         // 稳定性：错过取样时间这个点就补不回来了，提前 7 天提醒
         for (com.cosmetic.scm.plm.StabilityService.DuePull p : stability.due(today.plusDays(7))) {

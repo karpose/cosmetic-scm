@@ -58,6 +58,7 @@ public class GoLiveService {
     private final com.cosmetic.scm.master.RegulatoryService regulatory;
     private final ComplianceService complianceDocs;
     private final com.cosmetic.scm.plm.StabilityService stability;
+    private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
 
     @Value("${scm.demo-data:false}")
     private boolean demoData;
@@ -173,6 +174,9 @@ public class GoLiveService {
         long incomplete = products.stream().filter(p -> !p.complete()).count();
         c.add(incomplete == 0 ? new Check(g, "产品合规资料", "OK", products.isEmpty() ? "还没有配方，导入后再检查" : "安全评估和标签都已签批", "/compliance")
                 : new Check(g, "产品合规资料", "WARN", incomplete + " 个成品缺已签批的安全评估或标签", "/compliance"));
+        java.util.Set<Long> withSpec = qualitySpecs.itemsWithSpec();
+        c.add(withSpec.isEmpty() ? new Check(g, "质量标准", "WARN", "还没有生效的质量标准，现在放行只看检验报告编号。录入标准后，有标准的物料放行前要逐项录检验结果", "/specs")
+                : new Check(g, "质量标准", "OK", withSpec.size() + " 个物料有生效标准，放行前要逐项录检验结果；其余按检验报告编号放行", "/specs"));
         List<com.cosmetic.scm.plm.StabilityService.ProductCoverage> coverage = stability.coverage();
         long noBasis = coverage.stream().filter(p -> !"OK".equals(p.state())).count();
         c.add(noBasis == 0 ? new Check(g, "稳定性依据", "OK", coverage.isEmpty() ? "还没有配方，导入后再检查" : "保质期都有已签批的结论", "/stability?tab=products")

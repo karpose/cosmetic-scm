@@ -156,6 +156,16 @@ public class DeviationService {
         return d;
     }
 
+    /** 批次检验不合格时自动生成，挂在批次上：偏差关闭前这批放不了行。 */
+    @Transactional
+    public Deviation createForInspection(String inspectionNo, Long batchId, LocalDate occurred, String title, String description) {
+        Deviation d = newDeviation(occurred, DeviationArea.QC, DeviationLevel.MAJOR, title, description, time.today().plusDays(15));
+        d.setBatchId(batchId);
+        deviations.save(d);
+        audit.log("登记偏差", d.getDeviationNo(), "检验不合格自动生成，" + inspectionNo + "：" + title, description);
+        return d;
+    }
+
     private Deviation newDeviation(LocalDate occurred, DeviationArea area, DeviationLevel level, String title, String description, LocalDate due) {
         Deviation d = new Deviation();
         d.setDeviationNo(docNo.next("DV", time.today()));

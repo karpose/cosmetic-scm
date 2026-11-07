@@ -12,7 +12,9 @@ public enum OwnerType {
     EQUIPMENT("设备"),
     SUPPLIER_STATEMENT("对账单"),
     COMPLIANCE_DOC("合规资料"),
-    STABILITY_STUDY("稳定性试验");
+    STABILITY_STUDY("稳定性试验"),
+    QUALITY_SPEC("质量标准"),
+    NPD_PROJECT("新品项目");
 
     private final String label;
 

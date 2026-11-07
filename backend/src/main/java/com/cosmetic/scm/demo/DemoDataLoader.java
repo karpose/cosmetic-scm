@@ -108,6 +108,8 @@ public class DemoDataLoader implements ApplicationRunner {
     private final com.cosmetic.scm.master.RegulatoryService regulatoryService;
     private final com.cosmetic.scm.plm.ComplianceService complianceService;
     private final com.cosmetic.scm.plm.StabilityService stabilityService;
+    private final com.cosmetic.scm.quality.QualitySpecService qualitySpecService;
+    private final com.cosmetic.scm.plm.NpdService npdService;
     private final QualityService quality;
     private final ProductionService production;
     private final SalesService sales;
@@ -296,6 +298,23 @@ public class DemoDataLoader implements ApplicationRunner {
         }
         as("qa1", () -> stabilityService.create(new com.cosmetic.scm.plm.StabilityService.CreateReq(cream.getId(), com.cosmetic.scm.domain.StabilityType.ACCELERATED, null, null, "小试样品（示例）", "高温（示例）", t.minusMonths(1).plusDays(5),
                 List.of(new com.cosmetic.scm.plm.StabilityService.TimepointReq(1, 0), new com.cosmetic.scm.plm.StabilityService.TimepointReq(3, 0)), stabilityTests, null)));
+        // 质量标准：角鲨烷已生效，面霜的待签批。项目和限度是示例，不是真实标准
+        var squSpec = as("qa1", () -> qualitySpecService.create(new com.cosmetic.scm.quality.QualitySpecService.CreateReq(squ.getId(), "首版（示例）", List.of(
+                new com.cosmetic.scm.quality.QualitySpecService.LineReq("外观", "目测（示例）", null, null, null, "无色透明液体（示例）"),
+                new com.cosmetic.scm.quality.QualitySpecService.LineReq("含量", "（示例）", "%", new BigDecimal("98"), null, null)))));
+        as("qso1", () -> qualitySpecService.approve(squSpec.id(), new com.cosmetic.scm.quality.QualitySpecService.ApproveReq(DEMO_PASSWORD)));
+        as("qa1", () -> qualitySpecService.create(new com.cosmetic.scm.quality.QualitySpecService.CreateReq(cream.getId(), "首版（示例）", List.of(
+                new com.cosmetic.scm.quality.QualitySpecService.LineReq("外观", "目测（示例）", null, null, null, "膏体细腻（示例）"),
+                new com.cosmetic.scm.quality.QualitySpecService.LineReq("pH", "（示例）", null, new BigDecimal("5"), new BigDecimal("7"), null)))));
+        // 新品立项：面膜待管理员批准；面霜在开发中，做过一次小试，上市检查还差资料、稳定性和中试
+        as("qa1", () -> npdService.create(new com.cosmetic.scm.plm.NpdService.CreateReq("舒缓修护面膜（示例）", "面膜", com.cosmetic.scm.domain.FilingType.GENERAL,
+                "保湿（示例）", t.plusMonths(6), null)));
+        var npdCream = as("qa1", () -> npdService.create(new com.cosmetic.scm.plm.NpdService.CreateReq("角鲨烷修护面霜（示例）", "面霜", com.cosmetic.scm.domain.FilingType.GENERAL,
+                "保湿、修护（示例）", t.plusMonths(2), null)));
+        as("admin", () -> npdService.approve(npdCream.project().id()));
+        as("qa1", () -> npdService.link(npdCream.project().id(), new com.cosmetic.scm.plm.NpdService.LinkReq(cream.getId())));
+        as("prod1", () -> npdService.addTrial(npdCream.project().id(), new com.cosmetic.scm.plm.NpdService.TrialReq(com.cosmetic.scm.domain.TrialKind.LAB, t.minusDays(20),
+                null, "2 kg", com.cosmetic.scm.domain.TrialResult.PASS, "肤感和稳定性初步观察正常（示例）")));
         // 询价：邀请两家，华澄已报价。截止前内部看不到价格
         var rfq = as("purchase1", () -> rfqService.create(new com.cosmetic.scm.sourcing.RfqService.CreateRfqReq("透明质酸钠年度询价（示例）", t.plusDays(7), List.of(hc.id(), mp.id()),
                 List.of(new com.cosmetic.scm.sourcing.RfqService.RfqLineReq(ha.getId(), new BigDecimal("20"))))));
