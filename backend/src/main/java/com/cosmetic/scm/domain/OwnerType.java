@@ -11,7 +11,8 @@ public enum OwnerType {
     PARTNER("往来单位"),
     EQUIPMENT("设备"),
     SUPPLIER_STATEMENT("对账单"),
-    COMPLIANCE_DOC("合规资料");
+    COMPLIANCE_DOC("合规资料"),
+    STABILITY_STUDY("稳定性试验");
 
     private final String label;
 

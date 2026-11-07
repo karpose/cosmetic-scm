@@ -1,0 +1,96 @@
+package com.cosmetic.scm.plm;
+
+import java.util.List;
+
+import com.cosmetic.scm.plm.StabilityService.ApproveReq;
+import com.cosmetic.scm.plm.StabilityService.ConcludeReq;
+import com.cosmetic.scm.plm.StabilityService.CreateReq;
+import com.cosmetic.scm.plm.StabilityService.NoteReq;
+import com.cosmetic.scm.plm.StabilityService.ProductCoverage;
+import com.cosmetic.scm.plm.StabilityService.RecordReq;
+import com.cosmetic.scm.plm.StabilityService.StudyDetail;
+import com.cosmetic.scm.plm.StabilityService.StudyRow;
+
+import jakarta.validation.Valid;
+
+import lombok.RequiredArgsConstructor;
+
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/** 内部岗位都能看。登记方案给主数据和质量，录结果和写结论给质量，签批、退回、作废只给 QSO。 */
+@RestController
+@RequestMapping("/api/stability")
+@RequiredArgsConstructor
+public class StabilityController {
+
+    private final StabilityService stability;
+
+    @GetMapping("/studies")
+    public List<StudyRow> list() {
+        return stability.list();
+    }
+
+    @GetMapping("/studies/{id}")
+    public StudyDetail detail(@PathVariable Long id) {
+        return stability.detail(id);
+    }
+
+    @GetMapping("/products")
+    public List<ProductCoverage> products() {
+        return stability.coverage();
+    }
+
+    @PostMapping("/studies")
+    @PreAuthorize("hasAnyRole('MASTER_DATA','QA','QSO')")
+    public StudyDetail create(@Valid @RequestBody CreateReq req) {
+        return stability.create(req);
+    }
+
+    @PostMapping("/studies/{id}/pulls/{pullId}/record")
+    @PreAuthorize("hasAnyRole('QA','QSO')")
+    public StudyDetail record(@PathVariable Long id, @PathVariable Long pullId, @Valid @RequestBody RecordReq req) {
+        return stability.record(id, pullId, req);
+    }
+
+    @PostMapping("/studies/{id}/pulls/{pullId}/skip")
+    @PreAuthorize("hasAnyRole('QA','QSO')")
+    public StudyDetail skip(@PathVariable Long id, @PathVariable Long pullId, @Valid @RequestBody NoteReq req) {
+        return stability.skip(id, pullId, req);
+    }
+
+    @PostMapping("/studies/{id}/conclude")
+    @PreAuthorize("hasAnyRole('QA','QSO')")
+    public StudyDetail conclude(@PathVariable Long id, @Valid @RequestBody ConcludeReq req) {
+        return stability.conclude(id, req);
+    }
+
+    @PostMapping("/studies/{id}/cancel")
+    @PreAuthorize("hasAnyRole('QA','QSO')")
+    public StudyDetail cancel(@PathVariable Long id, @Valid @RequestBody NoteReq req) {
+        return stability.cancel(id, req);
+    }
+
+    @PostMapping("/studies/{id}/approve")
+    @PreAuthorize("hasRole('QSO')")
+    public StudyDetail approve(@PathVariable Long id, @Valid @RequestBody ApproveReq req) {
+        return stability.approve(id, req);
+    }
+
+    @PostMapping("/studies/{id}/reject")
+    @PreAuthorize("hasRole('QSO')")
+    public StudyDetail reject(@PathVariable Long id, @Valid @RequestBody NoteReq req) {
+        return stability.reject(id, req);
+    }
+
+    @PostMapping("/studies/{id}/void")
+    @PreAuthorize("hasRole('QSO')")
+    public StudyDetail voidStudy(@PathVariable Long id, @Valid @RequestBody NoteReq req) {
+        return stability.voidStudy(id, req);
+    }
+}

@@ -44,16 +44,20 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 启动时示例数据会通过真实服务走完一遍主线；这里校验结果和权限边界。
  * 会改数据的用例加 @Transactional，结束后回滚，不影响其它用例看到的示例数据。
+ * 用单独的库：断言的是示例数据刚写完的状态（如待检正好 1 批），和别的测试类共用库时，
+ * 结果取决于测试类的执行顺序。CI 上曾因 SupplierPortalTest 先跑多收了一批而失败。
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@TestPropertySource(properties = "spring.datasource.url=jdbc:h2:mem:scm-mainline;MODE=MySQL;DB_CLOSE_DELAY=-1")
 class MainLineIntegrationTest {
 
     @Autowired

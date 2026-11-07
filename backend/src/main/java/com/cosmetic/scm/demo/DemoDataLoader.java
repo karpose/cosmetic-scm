@@ -107,6 +107,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final com.cosmetic.scm.sourcing.RfqService rfqService;
     private final com.cosmetic.scm.master.RegulatoryService regulatoryService;
     private final com.cosmetic.scm.plm.ComplianceService complianceService;
+    private final com.cosmetic.scm.plm.StabilityService stabilityService;
     private final QualityService quality;
     private final ProductionService production;
     private final SalesService sales;
@@ -281,6 +282,20 @@ public class DemoDataLoader implements ApplicationRunner {
             var doc = as("qa1", () -> complianceService.create(new com.cosmetic.scm.plm.ComplianceService.CreateReq(serum.getId(), type, null, "精华液" + type.getLabel() + "（示例）", null, "质量部（示例）", t.minusDays(30), null)));
             as("qso1", () -> complianceService.approve(doc.id(), new com.cosmetic.scm.plm.ComplianceService.ApproveReq(DEMO_PASSWORD)));
         }
+        // 稳定性：精华液长期试验进行到 3 个月，6 个月的还没到；面霜加速试验 1 个月的快到期了。样品是示例，不是真实结果
+        var stabilityTests = List.of(new com.cosmetic.scm.plm.StabilityService.TestReq("外观", null, null, null, "无分层、无变色（示例）"),
+                new com.cosmetic.scm.plm.StabilityService.TestReq("pH", null, new BigDecimal("5"), new BigDecimal("7"), "（示例）"));
+        var longTerm = as("qa1", () -> stabilityService.create(new com.cosmetic.scm.plm.StabilityService.CreateReq(serum.getId(), com.cosmetic.scm.domain.StabilityType.LONG_TERM, null, null, "小试样品（示例）", "室温（示例）", t.minusMonths(3),
+                List.of(new com.cosmetic.scm.plm.StabilityService.TimepointReq(0, 0), new com.cosmetic.scm.plm.StabilityService.TimepointReq(3, 0), new com.cosmetic.scm.plm.StabilityService.TimepointReq(6, 0)), stabilityTests, null)));
+        for (int i = 0; i < 2; i++) {
+            var pull = longTerm.pulls().get(i);
+            var ph = i == 0 ? "6.1" : "6.0";
+            as("qa1", () -> stabilityService.record(longTerm.study().id(), pull.id(), new com.cosmetic.scm.plm.StabilityService.RecordReq(pull.dueDate(), List.of(
+                    new com.cosmetic.scm.plm.StabilityService.ResultReq(longTerm.tests().get(0).id(), null, "正常（示例）", true),
+                    new com.cosmetic.scm.plm.StabilityService.ResultReq(longTerm.tests().get(1).id(), new BigDecimal(ph), null, null)), null)));
+        }
+        as("qa1", () -> stabilityService.create(new com.cosmetic.scm.plm.StabilityService.CreateReq(cream.getId(), com.cosmetic.scm.domain.StabilityType.ACCELERATED, null, null, "小试样品（示例）", "高温（示例）", t.minusMonths(1).plusDays(5),
+                List.of(new com.cosmetic.scm.plm.StabilityService.TimepointReq(1, 0), new com.cosmetic.scm.plm.StabilityService.TimepointReq(3, 0)), stabilityTests, null)));
         // 询价：邀请两家，华澄已报价。截止前内部看不到价格
         var rfq = as("purchase1", () -> rfqService.create(new com.cosmetic.scm.sourcing.RfqService.CreateRfqReq("透明质酸钠年度询价（示例）", t.plusDays(7), List.of(hc.id(), mp.id()),
                 List.of(new com.cosmetic.scm.sourcing.RfqService.RfqLineReq(ha.getId(), new BigDecimal("20"))))));

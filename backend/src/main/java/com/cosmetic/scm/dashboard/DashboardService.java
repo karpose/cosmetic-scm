@@ -60,6 +60,7 @@ public class DashboardService {
     private final com.cosmetic.scm.sourcing.RfqRepository rfqRepo;
     private final com.cosmetic.scm.master.RegulatoryService regulatory;
     private final com.cosmetic.scm.plm.ComplianceService compliance;
+    private final com.cosmetic.scm.plm.StabilityService stability;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnRepository supplierReturns;
     private final com.cosmetic.scm.settlement.SupplierStatementRepository statementRepo;
     private final BatchRepository batches;
@@ -201,6 +202,25 @@ public class DashboardService {
         }
         if (complianceMissing > 0) {
             todos.add(new Todo("COMPLIANCE_MISSING", "合规资料不全", "info", complianceMissing + " 个成品", "—", "缺已签批的安全评估或标签", "/compliance"));
+        }
+        // 稳定性：错过取样时间这个点就补不回来了，提前 7 天提醒
+        for (com.cosmetic.scm.plm.StabilityService.DuePull p : stability.due(today.plusDays(7))) {
+            boolean late = p.dueDate().isBefore(today);
+            todos.add(new Todo("STABILITY_DUE", late ? "稳定性取样已超期" : "稳定性取样快到期", late ? "bad" : "warn", p.fgName(), p.studyNo(), p.label() + "，计划 " + p.dueDate(), "/stability"));
+        }
+        for (com.cosmetic.scm.plm.StabilityService.StudyRow s : stability.waitingConclusion()) {
+            todos.add(new Todo("STABILITY_CONCLUDE", "稳定性试验待写结论", "warn", s.fgName(), s.studyNo(), "时间点都完成了，请写结论", "/stability"));
+        }
+        for (com.cosmetic.scm.plm.StabilityService.StudyRow s : stability.waitingSignature()) {
+            todos.add(new Todo("STABILITY_REVIEW", "稳定性结论待签批", "warn", s.fgName(), s.studyNo(), "支持保质期 " + s.supportedMonths() + " 个月", "/stability"));
+        }
+        // 没做过的不进待办，上线初期不要刷屏，由上线检查提示
+        for (com.cosmetic.scm.plm.StabilityService.ProductCoverage c : stability.coverage()) {
+            if ("SHORT".equals(c.state())) {
+                todos.add(new Todo("STABILITY_GAP", "保质期超过稳定性依据", "warn", c.fgName(), c.fgCode(), "标的 " + c.shelfMonths() + " 个月，依据只有 " + c.supportedMonths() + " 个月", "/stability?tab=products"));
+            } else if ("STALE".equals(c.state())) {
+                todos.add(new Todo("STABILITY_GAP", "稳定性依据要重新做", "warn", c.fgName(), c.fgCode(), "配方已变为 V" + c.versionNo() + "，已签批的结论是旧版本的", "/stability?tab=products"));
+            }
         }
         for (com.cosmetic.scm.supplierreturn.SupplierReturn r : supplierReturns.findByStatusOrderById(com.cosmetic.scm.domain.SupplierReturnStatus.PENDING)) {
             todos.add(new Todo("SUPPLIER_RETURN", "退供待签批", "warn", lookup.partner(r.getSupplierId()).getName(), r.getReturnNo(), r.getReason(), "/supplier-returns"));

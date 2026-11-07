@@ -1,0 +1,456 @@
+<template>
+  <div class="page">
+    <div class="page-head">
+      <div>
+        <h2>稳定性试验</h2>
+        <p>标的保质期要有依据。按时间点取样检测，结果提交后不能改，不合格自动生成偏差，结论由质量安全负责人签批。一个样品放在一个条件下算一次试验。</p>
+      </div>
+      <div class="toolbar">
+        <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
+        <el-button v-if="canCreate" type="primary" @click="openCreate()">登记试验</el-button>
+      </div>
+    </div>
+
+    <el-tabs v-model="tab" class="seg">
+      <el-tab-pane :label="`试验（${activeCount} 个进行中）`" name="studies" />
+      <el-tab-pane :label="`保质期依据（${gapCount} 个不足）`" name="products" />
+    </el-tabs>
+
+    <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
+
+    <el-card v-else-if="tab === 'studies'" shadow="never" body-style="padding:0 0 8px">
+      <template #header><div class="filters"><el-input v-model="st.keyword.value" placeholder="搜索编号、成品、批号、条件" clearable /></div></template>
+      <el-table :data="st.paged.value" v-loading="loader.loading.value" empty-text="还没有稳定性试验">
+        <el-table-column label="编号" width="160"><template #default="{ row }"><a href="#" class="mono" @click.prevent="openDetail(row.id)">{{ row.studyNo }}</a><div class="muted small">{{ row.studyTypeLabel }}</div></template></el-table-column>
+        <el-table-column label="成品和样品" min-width="210"><template #default="{ row }">{{ row.fgName }} <span class="mono muted small">V{{ row.versionNo }}</span><div class="muted small">{{ row.batchNo ? `批号 ${row.batchNo}` : row.sampleRef }}</div></template></el-table-column>
+        <el-table-column label="条件" min-width="130"><template #default="{ row }">{{ row.condition }}<div class="muted small">{{ row.startDate }} 开始</div></template></el-table-column>
+        <el-table-column label="进度" min-width="150">
+          <template #default="{ row }">
+            <span class="mono">{{ row.pullsTotal - row.pullsOpen }} / {{ row.pullsTotal }}</span>
+            <span v-if="row.failed" class="late small">，{{ row.failed }} 次不合格</span>
+            <div v-if="row.status === 'ACTIVE' && row.nextDue" class="small" :class="row.nextDue < todayStr ? 'late' : 'muted'">下次 {{ row.nextDue }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="130"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /><div v-if="row.supportedMonths != null" class="muted small">支持 {{ row.supportedMonths }} 个月</div></template></el-table-column>
+        <el-table-column label="" width="90" :fixed="narrow ? false : 'right'"><template #default="{ row }"><el-button size="small" text @click="openDetail(row.id)">详情</el-button></template></el-table-column>
+      </el-table>
+      <ListCapHint :count="studies.length" />
+      <ListPager v-model:page="st.page.value" v-model:size="st.size.value" :total="st.total.value" />
+    </el-card>
+
+    <el-card v-else shadow="never" body-style="padding:0 0 8px">
+      <template #header><div class="filters"><el-input v-model="pt.keyword.value" placeholder="搜索编码、成品名称" clearable /></div></template>
+      <el-table :data="pt.paged.value" v-loading="loader.loading.value" empty-text="还没有生效配方的成品">
+        <el-table-column label="成品" min-width="200"><template #default="{ row }">{{ row.fgName }}<div class="muted small mono">{{ row.fgCode }}</div></template></el-table-column>
+        <el-table-column label="生效配方" width="90"><template #default="{ row }"><span class="mono">V{{ row.versionNo }}</span></template></el-table-column>
+        <el-table-column label="标的保质期" width="110"><template #default="{ row }">{{ row.shelfMonths != null ? `${row.shelfMonths} 个月` : '—' }}</template></el-table-column>
+        <el-table-column label="已签批的依据" width="120"><template #default="{ row }">{{ row.supportedMonths != null ? `${row.supportedMonths} 个月` : '—' }}</template></el-table-column>
+        <el-table-column label="状态" width="170"><template #default="{ row }"><el-tag :type="COVERAGE[row.state].tag" size="small" disable-transitions>{{ COVERAGE[row.state].label }}</el-tag></template></el-table-column>
+        <el-table-column v-if="canCreate" label="" width="90" :fixed="narrow ? false : 'right'"><template #default="{ row }"><el-button size="small" text @click="openCreate(row)">登记</el-button></template></el-table-column>
+      </el-table>
+      <ListPager v-model:page="pt.page.value" v-model:size="pt.size.value" :total="pt.total.value" />
+    </el-card>
+
+    <!-- 登记试验 -->
+    <el-dialog v-model="cr.visible" title="登记稳定性试验" width="720px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <div class="form-grid">
+          <el-form-item label="成品">
+            <el-select id="st-fg" v-model="cr.fgItemId" filterable placeholder="选择成品" style="width:100%" @change="cr.formulaVersionId = null">
+              <el-option v-for="p in products" :key="p.fgItemId" :value="p.fgItemId" :label="`${p.fgName}（${p.fgCode}）`" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="配方版本（默认当前生效版本）">
+            <el-select id="st-version" v-model="cr.formulaVersionId" clearable placeholder="当前生效版本" style="width:100%">
+              <el-option v-for="v in versionOptions" :key="v.id" :value="v.id" :label="`V${v.versionNo} · ${v.statusLabel}`" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="批号（有批次的填）"><el-input id="st-batch" v-model="cr.batchNo" maxlength="40" placeholder="系统里的批号" /></el-form-item>
+          <el-form-item label="样品来源（没有批号时必填）"><el-input id="st-sample" v-model="cr.sampleRef" maxlength="100" placeholder="如：小试样品 2026-01" /></el-form-item>
+          <el-form-item label="试验类型">
+            <el-select id="st-type" v-model="cr.studyType" style="width:100%" @change="applyPreset">
+              <el-option v-for="(v, k) in TYPES" :key="k" :value="k" :label="v" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="试验条件"><el-input id="st-condition" v-model="cr.condition" maxlength="120" placeholder="按贵司方案填写温度、湿度、光照" /></el-form-item>
+          <el-form-item label="开始日期（样品放进去那天）"><el-date-picker id="st-start" v-model="cr.startDate" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d > startOfToday" /></el-form-item>
+        </div>
+
+        <div class="sub-head"><b>时间点</b><el-button size="small" text @click="cr.timepoints.push({ months: 0, days: 0 })">加一个时间点</el-button></div>
+        <p class="muted small sub-note">下面是常用安排，不是法规要求，请按贵司方案修改。计划日期 = 开始日期 + 月数 + 天数。</p>
+        <div v-for="(t, i) in cr.timepoints" :key="i" class="row-inputs time-row">
+          <el-input-number v-model="t.months" :min="0" :max="120" :precision="0" controls-position="right" :aria-label="`第 ${i + 1} 个时间点的月数`" />
+          <span class="muted small">月</span>
+          <el-input-number v-model="t.days" :min="0" :max="3650" :precision="0" controls-position="right" :aria-label="`第 ${i + 1} 个时间点的天数`" />
+          <span class="muted small">天</span>
+          <el-button size="small" text :disabled="cr.timepoints.length <= 1" @click="cr.timepoints.splice(i, 1)">删除</el-button>
+        </div>
+
+        <div class="sub-head"><b>检测项目</b><el-button size="small" text @click="cr.tests.push(blankTest())">加一个项目</el-button></div>
+        <p class="muted small sub-note">填了上下限的由系统判定合格与否；没填的由检测人判定。<b>方案登记后不能改。</b></p>
+        <div v-for="(t, i) in cr.tests" :key="i" class="row-inputs test-row">
+          <el-input v-model="t.name" maxlength="60" placeholder="项目" :aria-label="`第 ${i + 1} 个项目的名称`" />
+          <el-input v-model="t.unit" maxlength="20" placeholder="单位" :aria-label="`第 ${i + 1} 个项目的单位`" />
+          <el-input-number v-model="t.minValue" :controls="false" placeholder="下限" :aria-label="`第 ${i + 1} 个项目的下限`" />
+          <el-input-number v-model="t.maxValue" :controls="false" placeholder="上限" :aria-label="`第 ${i + 1} 个项目的上限`" />
+          <el-input v-model="t.criteria" maxlength="200" placeholder="判定标准（选填）" :aria-label="`第 ${i + 1} 个项目的判定标准`" />
+          <el-button size="small" text :disabled="cr.tests.length <= 1" @click="cr.tests.splice(i, 1)">删除</el-button>
+        </div>
+        <el-form-item label="备注（选填）" style="margin-top:12px"><el-input id="st-note" v-model="cr.note" type="textarea" :rows="2" maxlength="500" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="cr.visible = false">取消</el-button>
+        <el-button type="primary" :loading="cr.saving" @click="submitCreate">保存试验</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 详情 -->
+    <el-dialog v-model="dt.visible" :title="`试验 ${dt.data?.study.studyNo || ''}`" width="860px">
+      <template v-if="dt.data">
+        <p class="summary-line">
+          <StatusTag :status="dt.data.study.status" :label="dt.data.study.statusLabel" />
+          {{ dt.data.study.fgName }} <span class="mono muted small">V{{ dt.data.study.versionNo }}</span>
+          · {{ dt.data.study.studyTypeLabel }} · {{ dt.data.study.condition }}
+          · {{ dt.data.study.batchNo ? `批号 ${dt.data.study.batchNo}` : dt.data.study.sampleRef }}
+          · {{ dt.data.study.startDate }} 开始
+        </p>
+        <el-alert v-if="dt.data.rejectNote && dt.data.study.status === 'ACTIVE'" type="warning" :closable="false" show-icon :title="`结论被退回：${dt.data.rejectNote}`" />
+        <el-alert v-if="dt.data.cancelReason" type="info" :closable="false" show-icon :title="`${dt.data.study.statusLabel}：${dt.data.cancelReason}`" />
+
+        <el-table :data="dt.data.pulls" size="small" style="margin-top:10px" scrollbar-tabindex="0">
+          <el-table-column label="时间点" width="130" :fixed="narrow ? false : 'left'"><template #default="{ row }"><b>{{ row.label }}</b><div class="muted small">计划 {{ row.dueDate }}</div></template></el-table-column>
+          <el-table-column v-for="t in dt.data.tests" :key="t.id" min-width="120">
+            <template #header>{{ t.name }}<div class="muted small head-limit">{{ limitText(t) }}</div></template>
+            <template #default="{ row }">
+              <span v-if="resultOf(row, t)" :class="{ late: !resultOf(row, t).passed }">{{ shown(resultOf(row, t), t) }}<template v-if="!resultOf(row, t).passed">（不合格）</template></span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="取样" min-width="170">
+            <template #default="{ row }">
+              <template v-if="row.status === 'DONE'">{{ row.doneDate }}<div class="muted small">{{ row.testedBy }}</div></template>
+              <template v-else-if="row.status === 'SKIPPED'"><span class="late">未取样</span><div class="muted small">{{ row.skipReason }}</div></template>
+              <span v-else class="small" :class="row.dueDate < todayStr ? 'late' : 'muted'">{{ row.dueDate < todayStr ? '已超期' : '待取样' }}</span>
+              <div v-if="row.note" class="muted small">{{ row.note }}</div>
+              <div v-if="row.deviationNo" class="small"><router-link to="/qms" class="mono">{{ row.deviationNo }}</router-link></div>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="canRecord && dt.data.study.status === 'ACTIVE'" label="" width="150" :fixed="narrow ? false : 'right'">
+            <template #default="{ row }">
+              <template v-if="row.status === 'PENDING'">
+                <el-button size="small" type="primary" :disabled="!takeable(row)" @click="openRecord(row)">{{ takeable(row) ? '录入结果' : '未到时间' }}</el-button>
+                <el-button size="small" text @click="skip(row)">未取样</el-button>
+              </template>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <div v-if="dt.data.conclusion" class="conclusion">
+          <b>结论</b>（支持保质期 {{ dt.data.study.supportedMonths }} 个月）：{{ dt.data.conclusion }}
+          <div class="muted small">{{ dt.data.study.submittedBy }} 提交<template v-if="dt.data.study.signedBy">，{{ dt.data.study.signedBy }} 签批于 {{ fmtTime(dt.data.study.signedAt) }}</template></div>
+        </div>
+        <p v-if="dt.data.note" class="small muted">备注：{{ dt.data.note }}</p>
+        <div style="margin-top:12px"><AttachmentList owner-type="STABILITY_STUDY" :owner-id="dt.data.study.id" :can-upload="auth.canAttach()" title="试验报告和原始记录" /></div>
+      </template>
+      <template #footer>
+        <template v-if="dt.data">
+          <el-button v-if="canRecord && dt.data.study.status === 'ACTIVE'" text @click="noteAction('cancel', '取消试验', '取消后不再提醒，已有的结果会保留。')">取消试验</el-button>
+          <el-button v-if="isQso && dt.data.study.status === 'REVIEW'" text @click="noteAction('reject', '退回结论', '写明退回原因，退回后可以重写。')">退回</el-button>
+          <el-button v-if="isQso && dt.data.study.status === 'APPROVED'" text @click="noteAction('void', '作废结论', '作废后保质期依据随之失效，记录会保留。')">作废</el-button>
+          <el-button v-if="canRecord && dt.data.study.status === 'ACTIVE'" type="primary" :disabled="!canConclude" @click="openConclude">写结论</el-button>
+          <el-button v-if="isQso && dt.data.study.status === 'REVIEW'" type="primary" @click="openApprove">签批结论</el-button>
+        </template>
+        <el-button @click="dt.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 录入结果 -->
+    <el-dialog v-model="rc.visible" :title="`录入结果：${rc.pull?.label || ''}`" width="560px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="取样日期"><el-date-picker id="st-done" v-model="rc.doneDate" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d > startOfToday" /></el-form-item>
+        <div v-for="l in rc.lines" :key="l.test.id" class="result-line">
+          <div class="result-name"><b>{{ l.test.name }}</b> <span class="muted small">{{ limitText(l.test) }}</span></div>
+          <template v-if="l.test.judgedBySystem">
+            <el-input-number v-model="l.value" :controls="false" :aria-label="`${l.test.name}的实测值`" />
+            <el-tag v-if="l.value != null" :type="lineFailed(l) ? 'danger' : 'success'" size="small" disable-transitions>{{ lineFailed(l) ? '超限' : '合格' }}</el-tag>
+          </template>
+          <template v-else>
+            <el-input v-model="l.text" maxlength="200" placeholder="结果" :aria-label="`${l.test.name}的结果`" class="result-text" />
+            <el-radio-group v-model="l.passed" :aria-label="`${l.test.name}是否合格`">
+              <el-radio-button :value="true">合格</el-radio-button>
+              <el-radio-button :value="false">不合格</el-radio-button>
+            </el-radio-group>
+          </template>
+        </div>
+        <el-alert v-if="anyFailed" type="error" :closable="false" show-icon title="有不合格项，保存后会自动生成重大偏差，请在备注里写明现场情况。" />
+        <el-form-item :label="noteLabel" style="margin-top:12px"><el-input id="st-result-note" v-model="rc.note" type="textarea" :rows="2" maxlength="500" /></el-form-item>
+        <p class="muted small">结果提交后不能改，请核对后再保存。</p>
+      </el-form>
+      <template #footer>
+        <el-button @click="rc.visible = false">取消</el-button>
+        <el-button type="primary" :loading="rc.saving" @click="submitRecord">保存结果</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 写结论 -->
+    <el-dialog v-model="cc.visible" title="写结论" width="520px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="支持的保质期（月）"><el-input-number id="st-months" v-model="cc.supportedMonths" :min="0" :max="120" :precision="0" style="width:100%" /></el-form-item>
+        <el-form-item label="结论"><el-input id="st-conclusion" v-model="cc.conclusion" type="textarea" :rows="4" maxlength="1000" placeholder="写明依据；有未取样或不合格的时间点要说明" /></el-form-item>
+        <p class="muted small">系统不判断结论对不对，提交后由另一位质量安全负责人签批。</p>
+      </el-form>
+      <template #footer>
+        <el-button @click="cc.visible = false">取消</el-button>
+        <el-button type="primary" :loading="cc.saving" @click="submitConclude">提交结论</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 签批 -->
+    <el-dialog v-model="ap.visible" title="签批稳定性结论" width="480px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <p v-if="dt.data" style="margin-top:0">{{ dt.data.study.fgName }}：支持保质期 {{ dt.data.study.supportedMonths }} 个月。{{ dt.data.conclusion }}</p>
+        <p v-if="dt.data?.study.submittedBy === auth.user?.username" class="late small">结论是您提交的，要由另一位质量安全负责人签批。</p>
+        <el-form-item label="签批密码"><el-input id="st-password" v-model="ap.password" type="password" show-password autocomplete="current-password" @keydown.enter.prevent="submitApprove" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="ap.visible = false">取消</el-button>
+        <el-button type="primary" :loading="ap.saving" @click="submitApprove">签批</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import http from '../api'
+import AttachmentList from '../components/AttachmentList.vue'
+import ListCapHint from '../components/ListCapHint.vue'
+import ListPager from '../components/ListPager.vue'
+import LoadError from '../components/LoadError.vue'
+import StatusTag from '../components/StatusTag.vue'
+import { useAuth } from '../stores/auth'
+import { fmtQty, fmtTime, startOfBusinessDay, today } from '../utils/format'
+import { latestOnly } from '../utils/latest'
+import { useLoader } from '../utils/loader'
+import { textMatch, usePaged } from '../utils/table'
+
+const TYPES = { ACCELERATED: '加速', LONG_TERM: '长期', CYCLE: '循环', LIGHT: '光照', OTHER: '其他' }
+// 常用安排，不是法规要求，登记时可以改
+const PRESET = {
+  ACCELERATED: [[0, 0], [1, 0], [2, 0], [3, 0]],
+  LONG_TERM: [[0, 0], [3, 0], [6, 0], [12, 0], [24, 0], [36, 0]],
+  CYCLE: [[0, 0], [0, 7], [0, 14], [0, 21]],
+  LIGHT: [[0, 0], [1, 0]],
+  OTHER: [[0, 0]]
+}
+const COVERAGE = {
+  OK: { tag: 'success', label: '依据够' },
+  SHORT: { tag: 'danger', label: '依据短于保质期' },
+  RUNNING: { tag: 'primary', label: '试验进行中' },
+  STALE: { tag: 'warning', label: '配方变了，要重新做' },
+  NONE: { tag: 'info', label: '没有结论' }
+}
+const WINDOW_DAYS = 7
+
+const route = useRoute()
+const auth = useAuth()
+const tab = ref(route.query.tab === 'products' ? 'products' : 'studies')
+const canCreate = computed(() => auth.hasAny('MASTER_DATA', 'QA', 'QSO'))
+const canRecord = computed(() => auth.hasAny('QA', 'QSO'))
+const isQso = computed(() => auth.hasAny('QSO'))
+const studies = ref([])
+const products = ref([])
+const versions = ref([])
+const loader = useLoader(async () => {
+  const [s, p, v] = await Promise.all([http.get('/stability/studies'), http.get('/stability/products'), http.get('/plm/formulas')])
+  studies.value = s
+  products.value = p
+  versions.value = v
+})
+const load = () => loader.run()
+const st = usePaged(studies, { match: textMatch('studyNo', 'fgName', 'fgCode', 'batchNo', 'condition') })
+const pt = usePaged(products, { match: textMatch('fgCode', 'fgName') })
+const activeCount = computed(() => studies.value.filter((s) => s.status === 'ACTIVE').length)
+const gapCount = computed(() => products.value.filter((p) => p.state !== 'OK').length)
+const todayStr = today()
+const startOfToday = startOfBusinessDay()
+const narrow = ref(window.innerWidth <= 768)
+const onResize = () => { narrow.value = window.innerWidth <= 768 }
+onMounted(() => { load(); window.addEventListener('resize', onResize) })
+onBeforeUnmount(() => window.removeEventListener('resize', onResize))
+
+const blankTest = (name = '') => ({ name, unit: '', minValue: undefined, maxValue: undefined, criteria: '' })
+const presetOf = (type) => PRESET[type].map(([months, days]) => ({ months, days }))
+
+const cr = reactive({ visible: false, saving: false, fgItemId: null, formulaVersionId: null, batchNo: '', sampleRef: '', studyType: 'LONG_TERM', condition: '', startDate: '', timepoints: [], tests: [], note: '' })
+const versionOptions = computed(() => versions.value.filter((v) => v.fgItemId === cr.fgItemId && ['DRAFT', 'PENDING', 'EFFECTIVE'].includes(v.status)))
+function openCreate(row) {
+  Object.assign(cr, { visible: true, saving: false, fgItemId: row?.fgItemId || null, formulaVersionId: null, batchNo: '', sampleRef: '', studyType: 'LONG_TERM', condition: '', startDate: today(),
+    timepoints: presetOf('LONG_TERM'), tests: ['外观', '气味', 'pH', '粘度'].map(blankTest), note: '' })
+}
+function applyPreset() {
+  cr.timepoints = presetOf(cr.studyType)
+}
+async function submitCreate() {
+  if (!cr.fgItemId) return ElMessage.warning('请选择成品')
+  if (!cr.batchNo.trim() && !cr.sampleRef.trim()) return ElMessage.warning('请填写批号，没有批号的请写明样品来源')
+  if (!cr.condition.trim() || !cr.startDate) return ElMessage.warning('请填写试验条件和开始日期')
+  if (cr.tests.some((t) => !t.name.trim())) return ElMessage.warning('请填写检测项目的名称，不用的项目请删除')
+  cr.saving = true
+  try {
+    const tests = cr.tests.map((t) => ({ name: t.name, unit: t.unit, minValue: t.minValue ?? null, maxValue: t.maxValue ?? null, criteria: t.criteria }))
+    const d = await http.post('/stability/studies', { fgItemId: cr.fgItemId, formulaVersionId: cr.formulaVersionId, batchNo: cr.batchNo, sampleRef: cr.sampleRef, studyType: cr.studyType, condition: cr.condition, startDate: cr.startDate, timepoints: cr.timepoints, tests, note: cr.note })
+    ElMessage.success(`试验 ${d.study.studyNo} 已登记`)
+    cr.visible = false
+    tab.value = 'studies'
+    load()
+    dt.data = d
+    dt.visible = true
+  } finally {
+    cr.saving = false
+  }
+}
+
+const dt = reactive({ visible: false, data: null })
+const detailReq = latestOnly()
+async function openDetail(id) {
+  const current = detailReq()
+  const d = await http.get(`/stability/studies/${id}`)
+  if (!current()) return
+  dt.data = d
+  dt.visible = true
+}
+function applyDetail(d) {
+  dt.data = d
+  load()
+}
+const canConclude = computed(() => dt.data && dt.data.pulls.every((p) => p.status !== 'PENDING'))
+const resultOf = (pull, test) => pull.results.find((r) => r.testId === test.id)
+const withUnit = (v, t) => `${fmtQty(v)}${t.unit ? ` ${t.unit}` : ''}`
+const shown = (r, t) => [r.value != null ? withUnit(r.value, t) : '', r.text || ''].filter(Boolean).join(' ') || (r.passed ? '合格' : '')
+function limitText(t) {
+  if (t.minValue != null && t.maxValue != null) return `${fmtQty(t.minValue)} ~ ${fmtQty(t.maxValue)}${t.unit ? ` ${t.unit}` : ''}`
+  if (t.minValue != null) return `≥ ${withUnit(t.minValue, t)}`
+  if (t.maxValue != null) return `≤ ${withUnit(t.maxValue, t)}`
+  return t.criteria || ''
+}
+// 纯日期加减，和时区无关
+function addDays(date, n) {
+  const d = new Date(`${date}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+const takeable = (pull) => todayStr >= addDays(pull.dueDate, -WINDOW_DAYS)
+
+async function skip(pull) {
+  let note
+  try {
+    note = (await ElMessageBox.prompt('写明为什么做不了（如样品不够）。结论时要说明。', `${pull.label}未取样`, { confirmButtonText: '登记未取样', cancelButtonText: '取消', inputValidator: (v) => !!v?.trim() || '请写明原因' })).value
+  } catch {
+    return
+  }
+  applyDetail(await http.post(`/stability/studies/${dt.data.study.id}/pulls/${pull.id}/skip`, { note }))
+  ElMessage.success('已登记未取样')
+}
+
+const rc = reactive({ visible: false, saving: false, pull: null, doneDate: '', lines: [], note: '' })
+function openRecord(pull) {
+  Object.assign(rc, { visible: true, saving: false, pull, doneDate: today(), note: '', lines: dt.data.tests.map((test) => ({ test, value: undefined, text: '', passed: null })) })
+}
+function lineFailed(l) {
+  if (!l.test.judgedBySystem) return l.passed === false
+  if (l.value == null) return false
+  return (l.test.minValue != null && l.value < Number(l.test.minValue)) || (l.test.maxValue != null && l.value > Number(l.test.maxValue))
+}
+const anyFailed = computed(() => rc.lines.some(lineFailed))
+const isLate = computed(() => rc.pull && rc.doneDate > addDays(rc.pull.dueDate, WINDOW_DAYS))
+const noteLabel = computed(() => {
+  if (anyFailed.value) return '现场情况（必填）'
+  return isLate.value ? `晚于计划 ${WINDOW_DAYS} 天以上，请写明原因（必填）` : '备注（选填）'
+})
+async function submitRecord() {
+  if (!rc.doneDate) return ElMessage.warning('请选择取样日期')
+  for (const l of rc.lines) {
+    if (l.test.judgedBySystem && l.value == null) return ElMessage.warning(`请填写“${l.test.name}”的实测值`)
+    if (!l.test.judgedBySystem && (!l.text.trim() || l.passed === null)) return ElMessage.warning(`请填写“${l.test.name}”的结果并判定是否合格`)
+  }
+  if ((anyFailed.value || isLate.value) && !rc.note.trim()) return ElMessage.warning(anyFailed.value ? '有不合格项，请写明现场情况' : '请写明晚于计划的原因')
+  rc.saving = true
+  try {
+    const results = rc.lines.map((l) => ({ testId: l.test.id, value: l.value ?? null, text: l.text, passed: l.passed }))
+    const d = await http.post(`/stability/studies/${dt.data.study.id}/pulls/${rc.pull.id}/record`, { doneDate: rc.doneDate, results, note: rc.note })
+    const dev = d.pulls.find((p) => p.id === rc.pull.id)?.deviationNo
+    ElMessage[dev ? 'warning' : 'success'](dev ? `结果已保存，已生成偏差 ${dev}` : '结果已保存')
+    rc.visible = false
+    applyDetail(d)
+  } finally {
+    rc.saving = false
+  }
+}
+
+const cc = reactive({ visible: false, saving: false, supportedMonths: 0, conclusion: '' })
+function openConclude() {
+  Object.assign(cc, { visible: true, saving: false, supportedMonths: 0, conclusion: '' })
+}
+async function submitConclude() {
+  if (!cc.conclusion.trim()) return ElMessage.warning('请填写结论')
+  if (cc.supportedMonths == null) return ElMessage.warning('请填写支持的保质期')
+  cc.saving = true
+  try {
+    const d = await http.post(`/stability/studies/${dt.data.study.id}/conclude`, { conclusion: cc.conclusion, supportedMonths: cc.supportedMonths })
+    ElMessage.success('结论已提交，等待签批')
+    cc.visible = false
+    applyDetail(d)
+  } finally {
+    cc.saving = false
+  }
+}
+
+const ap = reactive({ visible: false, saving: false, password: '' })
+function openApprove() {
+  Object.assign(ap, { visible: true, saving: false, password: '' })
+}
+async function submitApprove() {
+  if (!ap.password) return ElMessage.warning('请输入签批密码')
+  ap.saving = true
+  try {
+    const d = await http.post(`/stability/studies/${dt.data.study.id}/approve`, { password: ap.password })
+    ElMessage.success('已签批')
+    ap.visible = false
+    applyDetail(d)
+  } finally {
+    ap.saving = false
+  }
+}
+
+async function noteAction(action, title, hint) {
+  let note
+  try {
+    note = (await ElMessageBox.prompt(hint, title, { confirmButtonText: title, cancelButtonText: '不了', inputValidator: (v) => !!v?.trim() || '请写明原因' })).value
+  } catch {
+    return
+  }
+  applyDetail(await http.post(`/stability/studies/${dt.data.study.id}/${action}`, { note }))
+  ElMessage.success(`已${title}`)
+}
+</script>
+
+<style scoped>
+.late { color: var(--el-color-danger); }
+.summary-line { margin: 0 0 10px; line-height: 1.8; }
+.sub-head { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+.sub-note { margin: 2px 0 8px; }
+.row-inputs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.time-row :deep(.el-input-number) { width: 110px; }
+.test-row > :nth-child(1) { flex: 1 1 110px; }
+.test-row > :nth-child(2) { flex: 0 1 80px; }
+.test-row > :nth-child(3), .test-row > :nth-child(4) { flex: 0 1 90px; }
+.test-row > :nth-child(5) { flex: 2 1 150px; }
+.head-limit { font-weight: 400; white-space: normal; line-height: 1.3; }
+.conclusion { margin-top: 12px; line-height: 1.7; }
+.result-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--el-border-color-lighter); }
+.result-name { flex: 1 1 100%; }
+.result-text { flex: 1 1 160px; }
+</style>

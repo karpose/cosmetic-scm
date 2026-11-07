@@ -57,6 +57,7 @@ public class GoLiveService {
     private final com.cosmetic.scm.master.RegulatedSubstanceRepository regulated;
     private final com.cosmetic.scm.master.RegulatoryService regulatory;
     private final ComplianceService complianceDocs;
+    private final com.cosmetic.scm.plm.StabilityService stability;
 
     @Value("${scm.demo-data:false}")
     private boolean demoData;
@@ -172,6 +173,10 @@ public class GoLiveService {
         long incomplete = products.stream().filter(p -> !p.complete()).count();
         c.add(incomplete == 0 ? new Check(g, "产品合规资料", "OK", products.isEmpty() ? "还没有配方，导入后再检查" : "安全评估和标签都已签批", "/compliance")
                 : new Check(g, "产品合规资料", "WARN", incomplete + " 个成品缺已签批的安全评估或标签", "/compliance"));
+        List<com.cosmetic.scm.plm.StabilityService.ProductCoverage> coverage = stability.coverage();
+        long noBasis = coverage.stream().filter(p -> !"OK".equals(p.state())).count();
+        c.add(noBasis == 0 ? new Check(g, "稳定性依据", "OK", coverage.isEmpty() ? "还没有配方，导入后再检查" : "保质期都有已签批的结论", "/stability?tab=products")
+                : new Check(g, "稳定性依据", "WARN", noBasis + " 个成品的保质期没有足够的稳定性结论（已有报告的可以按实际开始日期补录）", "/stability?tab=products"));
     }
 
     private void production(List<Check> c) {
