@@ -1156,6 +1156,61 @@ test('多家比价：各报各的互相看不到，每行定最低价，一家�
   await expect(page.locator('.rfq').filter({ hasText: title })).toContainText('已中标')
 })
 
+test('退货给供应商：发起、质量签批后扣库存，追溯和门户都能看到', async ({ page }) => {
+  test.setTimeout(240_000)
+  await login(page, 'purchase1')
+  // 新进一批：不影响前面用例留下的数据
+  const parts = await api(page, '/partners')
+  const hc = parts.find((p) => p.code === 'SUP-HC').id
+  const item = (await api(page, '/items')).find((i) => i.code === 'RM-GLY-002').id
+  const wh = (await api(page, '/warehouses')).find((w) => w.code === 'WH-MAIN').id
+  const res = await page.evaluate(async ([hc, item, wh]) => {
+    const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
+    const po = await (await fetch('/api/purchase-orders', { method: 'POST', headers: h, body: JSON.stringify({ supplierId: hc, lines: [{ itemId: item, qty: 8 }] }) })).json()
+    return (await fetch(`/api/purchase-orders/${po.id}/receipts`, { method: 'POST', headers: h, body: JSON.stringify({ lines: [{ poLineId: po.lines[0].id, qty: 8, extBatchNo: 'HC-RS-E2E', warehouseId: wh }] }) })).json()
+  }, [hc, item, wh])
+  const batchNo = res.batchNos[0]
+
+  await page.goto('/supplier-returns')
+  await page.getByRole('button', { name: '发起退供' }).click()
+  const d = dialog(page, '发起退供')
+  await d.locator('.el-select:has(#rs-supplier)').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: '华澄' }).click()
+  await expect(page.locator('.el-select-dropdown__item:visible')).toHaveCount(0)
+  await d.locator('.el-select:has(#rs-batch)').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: batchNo }).click()
+  // 默认带入可退数量
+  await expect(d.locator('#rs-qty')).toHaveValue('8.0000')
+  await d.locator('#rs-qty').fill('3')
+  await d.locator('#rs-reason').fill('来料检验不合格')
+  await d.getByRole('button', { name: '提交质量签批' }).click()
+  await toast(page, '等质量签批')
+  const row = page.locator('.el-table__row').filter({ hasText: batchNo })
+  await expect(row).toContainText('待质量签批')
+  // 采购没有签批按钮
+  await expect(row.getByRole('button', { name: '签批' })).toHaveCount(0)
+
+  await login(page, 'qa1')
+  await page.goto('/supplier-returns')
+  await row.getByRole('button', { name: '签批' }).click()
+  const ap = dialog(page, '签批退供')
+  await ap.locator('#rs-password').fill(DEMO)
+  await ap.getByRole('button', { name: '签批并扣库存' }).click()
+  await toast(page, '库存已扣减')
+  await expect(row).toContainText('已退回')
+  const stock = (await api(page, '/stock')).find((x) => x.batchNo === batchNo)
+  expect(Number(stock.qty)).toBe(5)
+
+  await page.goto(`/trace?no=${batchNo}`)
+  await expect(page.getByText('退回供应商')).toBeVisible()
+  await expect(page.locator('.el-card').filter({ hasText: '退回供应商' })).toContainText('来料检验不合格')
+
+  await login(page, 'sup1')
+  await page.getByRole('tab', { name: /退货/ }).click()
+  const card = page.locator('.return-card').filter({ hasText: 'HC-RS-E2E' })
+  await expect(card).toContainText('来料检验不合格')
+})
+
 test('供应商账号可以填邮箱接收提醒，提醒页列出会发给谁', async ({ page }) => {
   await login(page, 'admin', 'Admin@123456')
   await page.goto('/users')
@@ -1310,7 +1365,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页

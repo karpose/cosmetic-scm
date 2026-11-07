@@ -39,4 +39,7 @@ public class SupplierStatementLine {
     private BigDecimal amount;
 
     private BigDecimal taxAmount;
+
+    /** 冲减行：结算后才退的货。数量和金额都是负数。 */
+    private Long returnId;
 }

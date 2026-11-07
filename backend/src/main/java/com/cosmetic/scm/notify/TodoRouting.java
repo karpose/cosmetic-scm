@@ -15,6 +15,7 @@ final class TodoRouting {
             Map.entry("SHIPMENT", Set.of(Role.WAREHOUSE, Role.PURCHASE)),
             Map.entry("PO_LATE", Set.of(Role.PURCHASE)),
             Map.entry("RFQ_AWARD", Set.of(Role.PURCHASE)),
+            Map.entry("SUPPLIER_RETURN", QUALITY),
             Map.entry("STATEMENT_DISPUTE", Set.of(Role.PURCHASE)),
             Map.entry("STATEMENT_APPROVE", Set.of(Role.FINANCE)),
             Map.entry("STATEMENT_PAY", Set.of(Role.FINANCE)),

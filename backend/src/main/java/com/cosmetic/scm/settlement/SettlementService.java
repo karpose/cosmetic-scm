@@ -19,6 +19,7 @@ import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.SourceType;
 import com.cosmetic.scm.domain.StatementStatus;
+import com.cosmetic.scm.domain.SupplierReturnStatus;
 import com.cosmetic.scm.inventory.Batch;
 import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.master.Item;
@@ -32,6 +33,8 @@ import com.cosmetic.scm.purchase.PurchaseOrderRepository;
 import com.cosmetic.scm.security.AppUser;
 import com.cosmetic.scm.security.CurrentUser;
 import com.cosmetic.scm.security.SignatureService;
+import com.cosmetic.scm.supplierreturn.SupplierReturn;
+import com.cosmetic.scm.supplierreturn.SupplierReturnRepository;
 
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
@@ -55,6 +58,7 @@ public class SettlementService {
     private final SupplierStatementRepository statements;
     private final SupplierStatementLineRepository statementLines;
     private final SupplierPaymentRepository payments;
+    private final SupplierReturnRepository returns;
     private final BatchRepository batches;
     private final PurchaseOrderRepository orders;
     private final PoLineRepository poLines;
@@ -91,8 +95,9 @@ public class SettlementService {
                          @Size(max = 60) String referenceNo) {
     }
 
+    /** returnNo 不为空的是冲减行：结算后才退的货，数量和金额是负数。 */
     public record LineView(String batchNo, String extBatchNo, String poNo, String itemCode, String itemName, String unit, BigDecimal qty,
-                           BigDecimal unitPrice, BigDecimal taxRate, BigDecimal amount, BigDecimal taxAmount, LocalDate receivedOn) {
+                           BigDecimal unitPrice, BigDecimal taxRate, BigDecimal amount, BigDecimal taxAmount, LocalDate receivedOn, String returnNo) {
     }
 
     public record MissingPrice(String batchNo, String poNo, String itemName) {
@@ -113,7 +118,9 @@ public class SettlementService {
                                 List<PaymentView> payments) {
     }
 
-    private record Priced(Batch batch, PoLine line, String poNo, BigDecimal amount, BigDecimal tax) {
+    /** ret 不为空的是冲减行。settled 是这一行顺带算过的退货，要标记，下次不再算。 */
+    private record Priced(Batch batch, Long poLineId, String poNo, BigDecimal qty, BigDecimal unitPrice, BigDecimal taxRate, BigDecimal amount, BigDecimal tax,
+                          SupplierReturn ret, List<SupplierReturn> settled) {
     }
 
     private record Unbilled(List<Priced> priced, List<MissingPrice> missing) {
@@ -137,8 +144,8 @@ public class SettlementService {
         BigDecimal tax = u.priced().stream().map(Priced::tax).reduce(BigDecimal.ZERO, BigDecimal::add);
         return new PreviewView(u.priced().stream().map(p -> {
             Item i = items.get(p.batch().getItemId());
-            return new LineView(p.batch().getBatchNo(), p.batch().getExtBatchNo(), p.poNo(), i.getCode(), i.getName(), i.getUnit(), p.batch().getQtyIn(),
-                    p.line().getUnitPrice(), taxOf(p.line()), p.amount(), p.tax(), p.batch().getCreatedAt().toLocalDate());
+            return new LineView(p.batch().getBatchNo(), p.batch().getExtBatchNo(), p.poNo(), i.getCode(), i.getName(), i.getUnit(), p.qty(),
+                    p.unitPrice(), p.taxRate(), p.amount(), p.tax(), p.batch().getCreatedAt().toLocalDate(), p.ret() == null ? null : p.ret().getReturnNo());
         }).toList(), u.missing(), goods, tax);
     }
 
@@ -169,7 +176,7 @@ public class SettlementService {
         BigDecimal tax = u.priced().stream().map(Priced::tax).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal total = goods.add(adjustment);
         if (total.signum() <= 0) {
-            throw new BizException("调整后合计要大于 0");
+            throw new BizException("合计要大于 0。退货冲减超过了货款的话，等有新货款再一起结算");
         }
         SupplierStatement st = new SupplierStatement();
         st.setStatementNo(docNo.next("ST", today));
@@ -189,13 +196,19 @@ public class SettlementService {
             SupplierStatementLine l = new SupplierStatementLine();
             l.setStatementId(st.getId());
             l.setBatchId(p.batch().getId());
-            l.setPoLineId(p.line().getId());
-            l.setQty(p.batch().getQtyIn());
-            l.setUnitPrice(p.line().getUnitPrice());
-            l.setTaxRate(taxOf(p.line()));
+            l.setPoLineId(p.poLineId());
+            l.setQty(p.qty());
+            l.setUnitPrice(p.unitPrice());
+            l.setTaxRate(p.taxRate());
             l.setAmount(p.amount());
             l.setTaxAmount(p.tax());
+            l.setReturnId(p.ret() == null ? null : p.ret().getId());
             statementLines.save(l);
+            // 算过的退货做标记：结算前退的减了数量，结算后退的做了冲减，下次都不能再算
+            for (SupplierReturn r : p.settled()) {
+                r.setSettledStatementId(st.getId());
+                returns.save(r);
+            }
         }
         audit.logMoney("生成对账单", st.getStatementNo(), s.getName() + "，" + u.priced().size() + " 批，合计 " + total.toPlainString());
         return views(List.of(st)).get(0);
@@ -210,6 +223,11 @@ public class SettlementService {
         st.setStatus(StatementStatus.CANCELLED);
         st.setCancelReason(req.reason().trim());
         statements.save(st);
+        // 这张单算过的退货放回去，重新生成时再算一次
+        for (SupplierReturn r : returns.findBySettledStatementId(st.getId())) {
+            r.setSettledStatementId(null);
+            returns.save(r);
+        }
         audit.logMoney("作废对账单", st.getStatementNo(), name(st), req.reason().trim());
         return views(List.of(st)).get(0);
     }
@@ -328,7 +346,8 @@ public class SettlementService {
 
     /** 生成对账单之后批次被冻结或判不合格，不能接着审批和付款：问题还没有结论，钱付出去就要不回来了。 */
     private void requireStillReleased(SupplierStatement st) {
-        List<Long> ids = statementLines.findByStatementIdInOrderById(List.of(st.getId())).stream().map(SupplierStatementLine::getBatchId).toList();
+        // 冲减行不算：退回去的货本来就可能是不合格的
+        List<Long> ids = statementLines.findByStatementIdInOrderById(List.of(st.getId())).stream().filter(l -> l.getReturnId() == null).map(SupplierStatementLine::getBatchId).toList();
         List<String> bad = batches.findAllById(ids).stream().filter(b -> b.getStatus() != BatchStatus.RELEASED)
                 .map(b -> b.getBatchNo() + "（" + b.getStatus().getLabel() + "）").toList();
         if (!bad.isEmpty()) {
@@ -366,39 +385,67 @@ public class SettlementService {
 
     /**
      * 还没结算的批次：只算检验放行的。待检的还不知道要不要，不合格的不付，冻结的等有结论。
-     * 按入库数量算，后来发料、报废多少都和供应商无关。
+     * 结算数量 = 入库数量 - 已退回供应商的；之后发料、报废多少都和供应商无关。
+     * 已结算的批次后来又退货的，按当时的单价和税率生成冲减行。
      */
     private Unbilled unbilled(Long supplierId, LocalDate periodTo) {
-        List<Batch> list = batches.findByPartnerIdAndSourceTypeAndStatusAndCreatedAtLessThanOrderById(supplierId, SourceType.PO, BatchStatus.RELEASED, periodTo.plusDays(1).atStartOfDay());
-        if (list.isEmpty()) {
-            return new Unbilled(List.of(), List.of());
-        }
-        Set<Long> billed = Set.copyOf(statementLines.billedBatchIds(list.stream().map(Batch::getId).toList(), StatementStatus.CANCELLED));
+        LocalDateTime before = periodTo.plusDays(1).atStartOfDay();
+        List<Batch> list = batches.findByPartnerIdAndSourceTypeAndStatusAndCreatedAtLessThanOrderById(supplierId, SourceType.PO, BatchStatus.RELEASED, before);
+        Set<Long> billed = list.isEmpty() ? Set.of() : Set.copyOf(statementLines.billedBatchIds(list.stream().map(Batch::getId).toList(), StatementStatus.CANCELLED));
         List<Batch> open = list.stream().filter(b -> !billed.contains(b.getId())).toList();
-        if (open.isEmpty()) {
-            return new Unbilled(List.of(), List.of());
-        }
-        Map<String, PurchaseOrder> pos = orders.findByPoNoIn(open.stream().map(Batch::getSourceNo).distinct().toList()).stream()
-                .collect(Collectors.toMap(PurchaseOrder::getPoNo, p -> p));
-        Map<String, PoLine> byPoItem = new HashMap<>();
-        poLines.findByPoIdIn(pos.values().stream().map(PurchaseOrder::getId).toList()).forEach(l -> byPoItem.put(l.getPoId() + ":" + l.getItemId(), l));
         Map<Long, Item> items = lookup.itemMap();
+        // 这段时间已签批、还没算过的退货。对账截止之后才退的，留给下一张
+        Map<Long, List<SupplierReturn>> unsettled = returns.findUnsettled(supplierId, SupplierReturnStatus.DONE, before).stream().collect(Collectors.groupingBy(SupplierReturn::getBatchId));
         List<Priced> priced = new ArrayList<>();
         List<MissingPrice> missing = new ArrayList<>();
-        for (Batch b : open) {
-            PurchaseOrder po = pos.get(b.getSourceNo());
-            PoLine line = po == null ? null : byPoItem.get(po.getId() + ":" + b.getItemId());
-            if (line == null || line.getUnitPrice() == null) {
-                missing.add(new MissingPrice(b.getBatchNo(), b.getSourceNo(), items.get(b.getItemId()).getName()));
-                continue;
+        if (!open.isEmpty()) {
+            Map<String, PurchaseOrder> pos = orders.findByPoNoIn(open.stream().map(Batch::getSourceNo).distinct().toList()).stream()
+                    .collect(Collectors.toMap(PurchaseOrder::getPoNo, p -> p));
+            Map<String, PoLine> byPoItem = new HashMap<>();
+            poLines.findByPoIdIn(pos.values().stream().map(PurchaseOrder::getId).toList()).forEach(l -> byPoItem.put(l.getPoId() + ":" + l.getItemId(), l));
+            // 所有已退回的数量都要减，不只是还没算过的：对账单作废重新生成时，标记已经清空，这里算的是同一批
+            Map<Long, BigDecimal> returned = new HashMap<>();
+            returns.findByBatchIdInAndStatus(open.stream().map(Batch::getId).toList(), SupplierReturnStatus.DONE).stream()
+                    .filter(r -> r.getSignedAt().isBefore(before)).forEach(r -> returned.merge(r.getBatchId(), r.getQty(), BigDecimal::add));
+            for (Batch b : open) {
+                BigDecimal qty = b.getQtyIn().subtract(returned.getOrDefault(b.getId(), BigDecimal.ZERO));
+                List<SupplierReturn> settled = unsettled.getOrDefault(b.getId(), List.of());
+                if (qty.signum() <= 0) {
+                    continue; // 全退了，没有货款
+                }
+                PurchaseOrder po = pos.get(b.getSourceNo());
+                PoLine line = po == null ? null : byPoItem.get(po.getId() + ":" + b.getItemId());
+                if (line == null || line.getUnitPrice() == null) {
+                    missing.add(new MissingPrice(b.getBatchNo(), b.getSourceNo(), items.get(b.getItemId()).getName()));
+                    continue;
+                }
+                BigDecimal rate = taxOf(line);
+                BigDecimal amount = qty.multiply(line.getUnitPrice()).setScale(2, RoundingMode.HALF_UP);
+                priced.add(new Priced(b, line.getId(), po.getPoNo(), qty, line.getUnitPrice(), rate, amount, taxIn(amount, rate), null, settled));
             }
-            BigDecimal amount = b.getQtyIn().multiply(line.getUnitPrice()).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal rate = taxOf(line);
-            // 单价含税：税额 = 含税金额 × 税率 / (100 + 税率)
-            BigDecimal tax = amount.multiply(rate).divide(BigDecimal.valueOf(100).add(rate), 2, RoundingMode.HALF_UP);
-            priced.add(new Priced(b, line, po.getPoNo(), amount, tax));
+        }
+        // 冲减：批次已经结算过，之后才退的货
+        List<Long> creditBatches = unsettled.keySet().stream().toList();
+        if (!creditBatches.isEmpty()) {
+            Map<Long, SupplierStatementLine> billedLine = new HashMap<>();
+            statementLines.billedLines(creditBatches, StatementStatus.CANCELLED).forEach(l -> billedLine.put(l.getBatchId(), l));
+            Map<Long, Batch> bm = new HashMap<>();
+            batches.findAllById(billedLine.keySet()).forEach(b -> bm.put(b.getId(), b));
+            for (Map.Entry<Long, SupplierStatementLine> e : billedLine.entrySet()) {
+                SupplierStatementLine l = e.getValue();
+                Batch b = bm.get(e.getKey());
+                for (SupplierReturn r : unsettled.get(e.getKey())) {
+                    BigDecimal amount = r.getQty().multiply(l.getUnitPrice()).setScale(2, RoundingMode.HALF_UP).negate();
+                    priced.add(new Priced(b, l.getPoLineId(), b.getSourceNo(), r.getQty().negate(), l.getUnitPrice(), l.getTaxRate(), amount, taxIn(amount, l.getTaxRate()), r, List.of(r)));
+                }
+            }
         }
         return new Unbilled(priced, missing);
+    }
+
+    /** 单价含税：税额 = 含税金额 × 税率 / (100 + 税率)。 */
+    private static BigDecimal taxIn(BigDecimal amount, BigDecimal rate) {
+        return amount.multiply(rate).divide(BigDecimal.valueOf(100).add(rate), 2, RoundingMode.HALF_UP);
     }
 
     private List<StatementView> views(List<SupplierStatement> list) {
@@ -410,6 +457,8 @@ public class SettlementService {
         Map<Long, Batch> bm = new HashMap<>();
         batches.findAllById(all.stream().map(SupplierStatementLine::getBatchId).distinct().toList()).forEach(b -> bm.put(b.getId(), b));
         Map<Long, Item> items = lookup.itemMap();
+        Map<Long, String> returnNos = new HashMap<>();
+        returns.findAllById(all.stream().map(SupplierStatementLine::getReturnId).filter(java.util.Objects::nonNull).toList()).forEach(r -> returnNos.put(r.getId(), r.getReturnNo()));
         Map<Long, List<SupplierStatementLine>> byStatement = all.stream().collect(Collectors.groupingBy(SupplierStatementLine::getStatementId));
         Map<Long, List<PaymentView>> pays = payments.findByStatementIdInOrderById(ids).stream().collect(Collectors.groupingBy(SupplierPayment::getStatementId,
                 Collectors.mapping(p -> new PaymentView(p.getPayDate(), p.getAmount(), p.getReferenceNo(), p.getCreatedBy(), p.getCreatedAt()), Collectors.toList())));
@@ -421,7 +470,7 @@ public class SettlementService {
                     Batch b = bm.get(l.getBatchId());
                     Item i = items.get(b.getItemId());
                     return new LineView(b.getBatchNo(), b.getExtBatchNo(), b.getSourceNo(), i.getCode(), i.getName(), i.getUnit(), l.getQty(), l.getUnitPrice(), l.getTaxRate(),
-                            l.getAmount(), l.getTaxAmount(), b.getCreatedAt().toLocalDate());
+                            l.getAmount(), l.getTaxAmount(), b.getCreatedAt().toLocalDate(), l.getReturnId() == null ? null : returnNos.get(l.getReturnId()));
                 }).toList(), pays.getOrDefault(s.getId(), List.of()))).toList();
     }
 }

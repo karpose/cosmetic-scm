@@ -28,6 +28,7 @@ public class SupplierPortalController {
     private final SupplierPortalService portal;
     private final RfqService rfqs;
     private final SettlementService settlement;
+    private final com.cosmetic.scm.supplierreturn.SupplierReturnService supplierReturns;
 
     @GetMapping("/orders")
     public List<SupplierOrderView> orders() {
@@ -47,6 +48,11 @@ public class SupplierPortalController {
     @PostMapping("/rfqs/{id}/quote")
     public List<RfqService.PortalRfq> quote(@PathVariable Long id, @Valid @RequestBody RfqService.QuoteReq req) {
         return rfqs.submitQuote(id, req);
+    }
+
+    @GetMapping("/returns")
+    public List<com.cosmetic.scm.supplierreturn.SupplierReturnService.ReturnView> returns() {
+        return supplierReturns.mine();
     }
 
     @GetMapping("/statements")

@@ -112,6 +112,18 @@
                         title="批次附件（COA、检验报告、批生产记录）" />
       </el-card>
 
+      <el-card v-if="t.supplierReturns?.length" shadow="never">
+        <template #header><b>退回供应商</b></template>
+        <el-table :data="t.supplierReturns" empty-text="没有退回">
+          <el-table-column label="退供单" width="150"><template #default="{ row }"><span class="mono">{{ row.returnNo }}</span></template></el-table-column>
+          <el-table-column prop="supplierName" label="供应商" min-width="150" />
+          <el-table-column label="数量" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span></template></el-table-column>
+          <el-table-column prop="reason" label="原因" min-width="160" />
+          <el-table-column prop="statusLabel" label="状态" width="110" />
+          <el-table-column label="签批" width="150"><template #default="{ row }">{{ row.signedBy || '—' }}<div v-if="row.signedAt" class="muted small mono">{{ fmtTime(row.signedAt) }}</div></template></el-table-column>
+        </el-table>
+      </el-card>
+
       <el-card shadow="never" body-style="padding:0">
         <template #header>
           <div class="head">

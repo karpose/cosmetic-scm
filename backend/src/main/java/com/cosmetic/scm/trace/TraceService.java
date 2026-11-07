@@ -63,6 +63,7 @@ public class TraceService {
     private final SoAllocationRepository allocations;
     private final SalesOrderRepository salesOrders;
     private final SalesReturnRepository returns;
+    private final com.cosmetic.scm.supplierreturn.SupplierReturnService supplierReturns;
     private final SalesReturnLineRepository returnLines;
     private final RecallRepository recalls;
     private final QualityService quality;
@@ -99,7 +100,8 @@ public class TraceService {
                             List<DownstreamMoView> downstreamOrders, List<BatchView> finishedBatches,
                             List<ShipmentView> shipments, List<StockAt> stock, List<DecisionView> decisions,
                             List<String> affectedBatchNos, List<ReturnTraceView> returns, List<RecallBrief> recalls,
-                            long elapsedMs) {
+                            long elapsedMs,
+                            List<com.cosmetic.scm.supplierreturn.SupplierReturnService.ReturnView> supplierReturns) {
     }
 
     public record LotHit(String batchNo, String itemCode, String itemName, String statusLabel, String extBatchNo, String matchLabel) {
@@ -252,6 +254,7 @@ public class TraceService {
         BatchView self = inventory.toViews(List.of(b)).get(0);
         long ms = (System.nanoTime() - start) / 1_000_000;
         return new TraceView(self, item.getFilingNo(), source, upstream, downstream, finishedViews, shipments, stock,
-                quality.decisionsOf(b.getId()), affected, returnViews, recallViews, ms);
+                quality.decisionsOf(b.getId()), affected, returnViews, recallViews, ms,
+                supplierReturns.ofBatch(self.id()));
     }
 }

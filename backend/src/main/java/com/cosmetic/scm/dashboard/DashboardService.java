@@ -58,6 +58,7 @@ public class DashboardService {
     private final PurchaseOrderRepository purchaseOrders;
     private final com.cosmetic.scm.purchase.PoShipmentRepository poShipments;
     private final com.cosmetic.scm.sourcing.RfqRepository rfqRepo;
+    private final com.cosmetic.scm.supplierreturn.SupplierReturnRepository supplierReturns;
     private final com.cosmetic.scm.settlement.SupplierStatementRepository statementRepo;
     private final BatchRepository batches;
     private final MfgOrderRepository mfgOrders;
@@ -182,6 +183,9 @@ public class DashboardService {
         for (com.cosmetic.scm.purchase.PurchaseOrder po : purchaseOrders.findOverdue(List.of(PoStatus.OPEN, PoStatus.PARTIAL), today)) {
             todos.add(new Todo("PO_LATE", "采购单超交期", "warn", lookup.partner(po.getSupplierId()).getName(), po.getPoNo(),
                     "交期 " + (po.getPromisedDate() != null ? po.getPromisedDate() : po.getExpectedDate()) + "，还没到齐", "/purchase"));
+        }
+        for (com.cosmetic.scm.supplierreturn.SupplierReturn r : supplierReturns.findByStatusOrderById(com.cosmetic.scm.domain.SupplierReturnStatus.PENDING)) {
+            todos.add(new Todo("SUPPLIER_RETURN", "退供待签批", "warn", lookup.partner(r.getSupplierId()).getName(), r.getReturnNo(), r.getReason(), "/supplier-returns"));
         }
         for (com.cosmetic.scm.sourcing.Rfq r : rfqRepo.findWaitingAward(com.cosmetic.scm.domain.RfqStatus.OPEN, com.cosmetic.scm.domain.RfqStatus.CLOSED, today)) {
             todos.add(new Todo("RFQ_AWARD", "询价待定标", "warn", r.getTitle(), r.getRfqNo(), "报价已截止，请比价定标", "/sourcing"));
