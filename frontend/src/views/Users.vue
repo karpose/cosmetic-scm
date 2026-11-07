@@ -50,7 +50,7 @@
         <div class="form-grid">
           <el-form-item label="账号"><el-input id="us-username" v-model="form.username" :disabled="!!form.id" /></el-form-item>
           <el-form-item label="姓名"><el-input id="us-name" v-model="form.displayName" /></el-form-item>
-          <el-form-item v-if="!portalRole" label="邮箱（选填，接收本岗位的每日待办）"><el-input id="us-email" v-model="form.email" maxlength="120" /></el-form-item>
+          <el-form-item v-if="!portalRole || portalRole === 'SUPPLIER_PORTAL'" :label="portalRole ? '邮箱（选填，接收待确认采购单、交期和资质提醒）' : '邮箱（选填，接收本岗位的每日待办）'"><el-input id="us-email" v-model="form.email" maxlength="120" /></el-form-item>
           <el-form-item v-if="!form.id" label="初始密码"><el-input id="us-password" v-model="form.password" type="password" show-password autocomplete="new-password" /></el-form-item>
         </div>
         <p v-if="!form.id" class="muted small hint">{{ PASSWORD_RULE }}。对方首次登录须修改密码。</p>

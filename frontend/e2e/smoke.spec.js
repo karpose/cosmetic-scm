@@ -913,6 +913,21 @@ test('供应商门户：确认订单、回复交期、发送货通知、传 COA�
   await expect(done).toContainText('已收货')
 })
 
+test('供应商账号可以填邮箱接收提醒，提醒页列出会发给谁', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  await page.goto('/users')
+  await page.getByRole('button', { name: '新增账号' }).click()
+  const d = dialog(page, '新增账号')
+  await d.getByText('代工厂门户', { exact: true }).click()
+  await expect(d.locator('#us-email')).toBeHidden()
+  await d.getByText('供应商门户', { exact: true }).click()
+  await expect(d.locator('#us-email')).toBeVisible()
+  await expect(d.getByText('接收待确认采购单、交期和资质提醒')).toBeVisible()
+  await d.getByRole('button', { name: '取消' }).click()
+  await page.goto('/notifications')
+  await expect(page.getByText('“立即发送一次”不会发给供应商')).toBeVisible()
+})
+
 test('供应商管理页能看到准时交货和综合评分', async ({ page }) => {
   await login(page, 'qa1')
   await page.goto('/qms?tab=audits')
