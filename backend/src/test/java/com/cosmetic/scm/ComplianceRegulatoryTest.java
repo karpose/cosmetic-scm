@@ -26,13 +26,18 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
-/** 法规目录和产品合规资料。目录用的都是假物质，不是法规原文。 */
+/**
+ * 法规目录和产品合规资料。目录用的都是假物质，不是法规原文。
+ * 用单独的库：这里建了没有配方的成品、导入过目录，留在共用库里会让上线检查的用例随执行顺序失败。
+ */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@TestPropertySource(properties = "spring.datasource.url=jdbc:h2:mem:scm-compliance;MODE=MySQL;DB_CLOSE_DELAY=-1")
 class ComplianceRegulatoryTest {
 
     private static final String PWD = DemoDataLoader.DEMO_PASSWORD;
