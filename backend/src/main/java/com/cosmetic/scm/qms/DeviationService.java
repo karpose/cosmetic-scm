@@ -146,6 +146,16 @@ public class DeviationService {
         return d;
     }
 
+    /** 稳定性试验结果不合格时自动生成。挂在批次上：批次还没放行的，偏差关闭前放不了行。 */
+    @Transactional
+    public Deviation createForStudy(String studyNo, Long batchId, LocalDate occurred, String title, String description) {
+        Deviation d = newDeviation(occurred, DeviationArea.QC, DeviationLevel.MAJOR, title, description, time.today().plusDays(15));
+        d.setBatchId(batchId);
+        deviations.save(d);
+        audit.log("登记偏差", d.getDeviationNo(), "稳定性试验自动生成，" + studyNo + "：" + title, description);
+        return d;
+    }
+
     private Deviation newDeviation(LocalDate occurred, DeviationArea area, DeviationLevel level, String title, String description, LocalDate due) {
         Deviation d = new Deviation();
         d.setDeviationNo(docNo.next("DV", time.today()));

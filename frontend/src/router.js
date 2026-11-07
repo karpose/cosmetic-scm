@@ -17,6 +17,7 @@ const routes = [
       { path: '', name: 'dashboard', component: () => import('./views/Dashboard.vue'), meta: { title: '总览' } },
       { path: 'analytics', name: 'analytics', component: () => import('./views/Analytics.vue'), meta: { title: '经营看板' } },
       { path: 'planning', name: 'planning', component: () => import('./views/Planning.vue'), meta: { title: '补货建议' } },
+      { path: 'stability', name: 'stability', component: () => import('./views/Stability.vue'), meta: { title: '稳定性试验' } },
       { path: 'compliance', name: 'compliance', component: () => import('./views/Compliance.vue'), meta: { title: '合规资料' } },
       { path: 'supplier-returns', name: 'supplier-returns', component: () => import('./views/SupplierReturns.vue'), meta: { title: '退供' } },
       { path: 'sourcing', name: 'sourcing', component: () => import('./views/Sourcing.vue'), meta: { title: '询价比价', roles: ['ADMIN', 'PURCHASE', 'FINANCE'] } },

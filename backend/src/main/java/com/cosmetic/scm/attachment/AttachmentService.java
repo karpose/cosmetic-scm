@@ -74,6 +74,7 @@ public class AttachmentService {
     private final com.cosmetic.scm.security.UserRepository users;
     private final com.cosmetic.scm.settlement.SupplierStatementRepository statements;
     private final com.cosmetic.scm.plm.ComplianceDocRepository complianceDocs;
+    private final com.cosmetic.scm.plm.StabilityStudyRepository stabilityStudies;
 
     @Value("${scm.storage.max-file-mb:20}")
     private int maxFileMb;
@@ -297,6 +298,7 @@ public class AttachmentService {
             case EQUIPMENT -> equipment;
             case SUPPLIER_STATEMENT -> statements;
             case COMPLIANCE_DOC -> complianceDocs;
+            case STABILITY_STUDY -> stabilityStudies;
         };
     }
 

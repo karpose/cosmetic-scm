@@ -80,7 +80,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   ArrowDown, Bell, Box, Coin, Connection, Finished, DataAnalysis, DataBoard, Document, Expand, Fold, Goods, Guide, Iphone, Memo, Notebook, OfficeBuilding,
-  Operation, Postcard, RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, TrendCharts, User, Van, WarningFilled
+  Operation, Postcard, RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, Timer, TrendCharts, User, Van, WarningFilled
 } from '@element-plus/icons-vue'
 import { useAuth, PASSWORD_RULE, ROLE_LABELS } from '../stores/auth'
 
@@ -135,6 +135,7 @@ const groups = computed(() => {
         { path: '/quality-events', title: '投诉与召回', icon: WarningFilled },
         { path: '/qms', title: '质量体系', icon: Memo },
         { path: '/compliance', title: '合规资料', icon: Stamp },
+        { path: '/stability', title: '稳定性试验', icon: Timer },
         { path: '/serials', title: '一物一码', icon: Postcard },
         { path: '/audit', title: '审计日志', icon: Document }
       ]

@@ -1277,6 +1277,74 @@ test('合规资料：登记、上传、QSO 签批；全成分表；导入和停�
   await expect(rule).toContainText('已停用')
 })
 
+test('稳定性试验：登记方案、录结果、超限生成偏差、写结论、QSO 签批', async ({ page }) => {
+  test.setTimeout(240_000)
+  await login(page, 'qa1')
+  await page.goto('/stability')
+  // 示例：面霜的加速试验 1 个月快到期了，总览会提醒
+  await page.getByRole('tab', { name: /保质期依据/ }).click()
+  const creamRow = page.locator('.el-table__row').filter({ hasText: 'FG-CRM-002' })
+  await expect(creamRow.getByText('试验进行中')).toBeVisible()
+
+  await creamRow.getByRole('button', { name: '登记' }).click()
+  const cr = dialog(page, '登记稳定性试验')
+  await cr.locator('#st-sample').fill('E2E 小试样品')
+  await cr.locator('#st-condition').fill('E2E 条件')
+  // 只留一个起始时间点和 pH，上下限 5~7
+  await cr.locator('.el-form-item').filter({ hasText: '试验类型' }).locator('.el-select').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: '其他' }).click()
+  const rows = cr.locator('.test-row')
+  while (await rows.count() > 1) await rows.first().getByRole('button', { name: '删除' }).click()
+  await rows.getByRole('textbox', { name: /名称/ }).fill('pH')
+  await rows.getByRole('spinbutton', { name: /下限/ }).fill('5')
+  await rows.getByRole('spinbutton', { name: /上限/ }).fill('7')
+  await cr.getByRole('button', { name: '保存试验' }).click()
+  await toast(page, '已登记')
+
+  const dt = page.getByRole('dialog', { name: /^试验 ST/ })
+  await expect(dt.getByText('5 ~ 7')).toBeVisible()
+  await expect(dt.getByRole('button', { name: '写结论' })).toBeDisabled()
+  await dt.getByRole('button', { name: '录入结果' }).click()
+  const rc = page.getByRole('dialog', { name: /录入结果/ })
+  await rc.getByRole('spinbutton', { name: /实测值/ }).fill('8')
+  await expect(rc.getByText('超限')).toBeVisible()
+  // 超限要写现场情况，保存后生成偏差
+  await rc.getByRole('button', { name: '保存结果' }).click()
+  await toast(page, '请写明现场情况')
+  await rc.locator('#st-result-note').fill('E2E 偏高')
+  await rc.getByRole('button', { name: '保存结果' }).click()
+  await toast(page, '已生成偏差')
+  await expect(dt.getByText('（不合格）')).toBeVisible()
+  await expect(dt.getByRole('link', { name: /^DV/ })).toBeVisible()
+  const no = (await dt.locator('.el-dialog__title').textContent()).replace('试验 ', '').trim()
+
+  await dt.getByRole('button', { name: '写结论' }).click()
+  const cc = page.getByRole('dialog', { name: '写结论' })
+  await cc.locator('#st-conclusion').fill('E2E 不支持')
+  await cc.getByRole('button', { name: '提交结论' }).click()
+  await toast(page, '等待签批')
+
+  // 偏差没关不能签批
+  await login(page, 'qso1')
+  await page.goto('/stability')
+  await page.getByRole('link', { name: no }).click()
+  await dt.getByRole('button', { name: '签批结论' }).click()
+  const ap = page.getByRole('dialog', { name: '签批稳定性结论' })
+  await ap.locator('#st-password').fill(DEMO)
+  await ap.getByRole('button', { name: '签批', exact: true }).click()
+  await toast(page, '没关闭')
+  await ap.getByRole('button', { name: '取消' }).click()
+  await dt.getByRole('button', { name: '退回' }).click()
+  await page.locator('.el-message-box input').fill('E2E 退回')
+  await page.locator('.el-message-box').getByRole('button', { name: '退回结论' }).click()
+  await toast(page, '已退回结论')
+  await expect(dt.getByText('结论被退回')).toBeVisible()
+  await dt.getByRole('button', { name: '取消试验' }).click()
+  await page.locator('.el-message-box input').fill('E2E 结束')
+  await page.locator('.el-message-box').getByRole('button', { name: '取消试验' }).click()
+  await toast(page, '已取消试验')
+})
+
 test('供应商账号可以填邮箱接收提醒，提醒页列出会发给谁', async ({ page }) => {
   await login(page, 'admin', 'Admin@123456')
   await page.goto('/users')
@@ -1431,7 +1499,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页
