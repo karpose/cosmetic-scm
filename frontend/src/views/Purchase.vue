@@ -29,6 +29,7 @@
           <template #default="{ row }">
             <div v-for="l in row.lines" :key="l.id">
               {{ l.itemName }} <span class="mono muted small">{{ fmtQty(l.receivedQty) }} / {{ fmtQty(l.qty) }} {{ l.unit }}</span>
+              <span v-if="l.unitPrice != null" class="mono muted small"> · ¥{{ fmtQty(l.unitPrice) }}</span>
             </div>
           </template>
         </el-table-column>
@@ -41,9 +42,10 @@
           </template>
         </el-table-column>
         <el-table-column label="状态" width="130"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /><div v-if="row.closeReason" class="muted small" :title="row.closedBy">{{ row.closeReason }}</div></template></el-table-column>
-        <el-table-column label="" width="150" fixed="right">
+        <el-table-column label="" width="190" :fixed="narrow ? false : 'right'">
           <template #default="{ row }">
             <el-button v-if="isOpen(row) && canReceive" size="small" @click="openReceive(row)">收货</el-button>
+            <el-button v-if="row.status !== 'CANCELLED' && canCreate" size="small" text @click="openPrice(row)">单价</el-button>
             <el-button v-if="isOpen(row) && canCreate" size="small" text @click="closeOrder(row)">{{ row.status === 'PARTIAL' ? '关闭' : '取消' }}</el-button>
           </template>
         </el-table-column>
@@ -74,14 +76,34 @@
               </el-select>
               <el-input-number :id="`po-qty-${i}`" v-model="l.qty" :min="0" :precision="4" :controls="false" placeholder="数量" style="width:100%" />
               <el-button text :disabled="create.lines.length === 1" @click="create.lines.splice(i, 1)">删除</el-button>
+              <div class="price-row">
+                <el-input-number :id="`po-price-${i}`" aria-label="含税单价" v-model="l.unitPrice" :min="0" :precision="4" :controls="false" placeholder="含税单价（选填，对账按它算）" style="width:100%" />
+                <el-input-number :id="`po-tax-${i}`" aria-label="税率" v-model="l.taxRate" :min="0" :max="100" :precision="2" :controls="false" placeholder="税率 %" style="width:100%" />
+              </div>
             </div>
-            <el-button size="small" @click="create.lines.push({ itemId: null, qty: null })">添加一行</el-button>
+            <el-button size="small" @click="create.lines.push({ itemId: null, qty: null, unitPrice: undefined, taxRate: 13 })">添加一行</el-button>
           </div>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="create.visible = false">取消</el-button>
         <el-button type="primary" :loading="create.saving" @click="submitCreate">保存采购单</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 单价 -->
+    <el-dialog v-model="price.visible" :title="`单价：${price.po?.poNo || ''}`" width="620px">
+      <p class="muted small" style="margin-top:0">含税单价，对账按它算。修改已有单价要写原因；进了对账单的不能改。</p>
+      <el-form label-position="top" @submit.prevent>
+        <div v-for="l in price.lines" :key="l.poLineId" class="form-grid">
+          <el-form-item :label="`${l.itemName} 含税单价（元 / ${l.unit}）`"><el-input-number :id="`pr-price-${l.poLineId}`" v-model="l.unitPrice" :min="0" :precision="4" :controls="false" style="width:100%" /></el-form-item>
+          <el-form-item label="税率 %"><el-input-number :id="`pr-tax-${l.poLineId}`" v-model="l.taxRate" :min="0" :max="100" :precision="2" :controls="false" style="width:100%" /></el-form-item>
+        </div>
+        <el-form-item label="修改原因（改已有单价时必填）"><el-input id="pr-reason" v-model="price.reason" maxlength="300" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="price.visible = false">取消</el-button>
+        <el-button type="primary" :loading="price.saving" @click="submitPrice">保存单价</el-button>
       </template>
     </el-dialog>
 
@@ -117,7 +139,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
@@ -132,6 +154,10 @@ import { textMatch, usePaged } from '../utils/table'
 import { fmtQty, startOfBusinessDay, today } from '../utils/format'
 
 const auth = useAuth()
+const narrow = ref(window.innerWidth <= 768)
+const onResize = () => { narrow.value = window.innerWidth <= 768 }
+onMounted(() => window.addEventListener('resize', onResize))
+onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 const rd = useRefData()
 const orders = ref([])
 const loading = ref(false)
@@ -166,6 +192,25 @@ async function closeOrder(row) {
 
 const create = reactive({ visible: false, saving: false, supplierId: null, expectedDate: null, lines: [] })
 const recv = reactive({ visible: false, saving: false, po: null, lines: [], shipments: [], shipmentId: null })
+const price = reactive({ visible: false, saving: false, po: null, lines: [], reason: '' })
+function openPrice(po) {
+  Object.assign(price, { visible: true, saving: false, po, reason: '', lines: po.lines.map((l) => ({
+    poLineId: l.id, itemName: l.itemName, unit: l.unit, unitPrice: l.unitPrice ?? undefined, taxRate: l.taxRate ?? 13
+  })) })
+}
+async function submitPrice() {
+  const lines = price.lines.filter((l) => l.unitPrice > 0).map(({ poLineId, unitPrice, taxRate }) => ({ poLineId, unitPrice, taxRate: taxRate ?? 0 }))
+  if (!lines.length) return ElMessage.warning('请至少填一行单价')
+  price.saving = true
+  try {
+    await http.post(`/purchase-orders/${price.po.id}/prices`, { lines, reason: price.reason })
+    ElMessage.success('单价已保存')
+    price.visible = false
+    load()
+  } finally {
+    price.saving = false
+  }
+}
 const dueOf = (po) => po.promisedDate || po.expectedDate
 const isLate = (po) => isOpen(po) && dueOf(po) && dueOf(po) < today()
 const openShipments = (po) => (po.shipments || []).filter((s) => s.status === 'OPEN')
@@ -183,11 +228,11 @@ async function load() {
 }
 
 function openCreate() {
-  Object.assign(create, { visible: true, supplierId: null, expectedDate: null, lines: [{ itemId: null, qty: null }] })
+  Object.assign(create, { visible: true, supplierId: null, expectedDate: null, lines: [{ itemId: null, qty: null, unitPrice: undefined, taxRate: 13 }] })
 }
 
 async function submitCreate() {
-  const lines = create.lines.filter((l) => l.itemId || l.qty)
+  const lines = create.lines.filter((l) => l.itemId || l.qty).map((l) => ({ itemId: l.itemId, qty: l.qty, unitPrice: l.unitPrice > 0 ? l.unitPrice : null, taxRate: l.unitPrice > 0 ? (l.taxRate ?? 0) : null }))
   if (!create.supplierId) return ElMessage.warning('请选择供应商')
   if (!lines.length || lines.some((l) => !l.itemId || !(l.qty > 0))) return ElMessage.warning('请把每一行的物料和数量填完整')
   create.saving = true
@@ -248,5 +293,6 @@ onMounted(() => Promise.all([load(), rd.load()]))
 </script>
 
 <style scoped>
+.price-row { grid-column: 1 / -1; display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 8px; }
 .late { color: var(--el-color-danger); font-weight: 600; }
 </style>

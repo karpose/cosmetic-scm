@@ -72,6 +72,7 @@ public class AttachmentService {
     private final TimeProvider time;
     private final CurrentUser currentUser;
     private final com.cosmetic.scm.security.UserRepository users;
+    private final com.cosmetic.scm.settlement.SupplierStatementRepository statements;
 
     @Value("${scm.storage.max-file-mb:20}")
     private int maxFileMb;
@@ -160,12 +161,30 @@ public class AttachmentService {
         boolean ownerIsMine = switch (a.getOwnerType()) {
             case PURCHASE_ORDER -> purchaseOrders.findById(a.getOwnerId()).filter(p -> mine.equals(p.getSupplierId())).isPresent();
             case PARTNER -> mine.equals(a.getOwnerId());
+            case SUPPLIER_STATEMENT -> statements.findById(a.getOwnerId()).filter(x -> mine.equals(x.getSupplierId())).isPresent();
             default -> false;
         };
         if (!ownerIsMine || !users.usernamesOfPartner(mine).contains(a.getUploadedBy())) {
             throw BizException.notFound("附件");
         }
         return read(a);
+    }
+
+    @Transactional
+    public AttachmentView uploadForSupplierStatement(Long id, MultipartFile file, String note) {
+        requireOwnStatement(id);
+        return store(OwnerType.SUPPLIER_STATEMENT, id, file, note);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AttachmentView> listForSupplierStatement(Long id) {
+        requireOwnStatement(id);
+        return uploadedByMyPartner(list(OwnerType.SUPPLIER_STATEMENT, id));
+    }
+
+    private void requireOwnStatement(Long id) {
+        Long mine = currentUser.portalPartnerId();
+        statements.findById(id).filter(x -> mine.equals(x.getSupplierId())).orElseThrow(() -> BizException.notFound("对账单"));
     }
 
     private List<AttachmentView> uploadedByMyPartner(List<AttachmentView> all) {
@@ -253,6 +272,7 @@ public class AttachmentService {
             case SALES_RETURN -> returns;
             case PARTNER -> partners;
             case EQUIPMENT -> equipment;
+            case SUPPLIER_STATEMENT -> statements;
         };
     }
 

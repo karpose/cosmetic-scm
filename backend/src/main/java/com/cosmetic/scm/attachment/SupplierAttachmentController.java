@@ -47,6 +47,16 @@ public class SupplierAttachmentController {
         return attachments.uploadForSupplierProfile(file, note);
     }
 
+    @GetMapping("/statements/{id}/attachments")
+    public List<AttachmentView> statementFiles(@PathVariable Long id) {
+        return attachments.listForSupplierStatement(id);
+    }
+
+    @PostMapping(value = "/statements/{id}/attachments", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public AttachmentView uploadStatementFile(@PathVariable Long id, @RequestParam(required = false) String note, @RequestPart("file") MultipartFile file) {
+        return attachments.uploadForSupplierStatement(id, file, note);
+    }
+
     @GetMapping("/attachments/{id}/download")
     public ResponseEntity<byte[]> download(@PathVariable Long id) {
         return AttachmentController.asFile(attachments.downloadForSupplier(id));

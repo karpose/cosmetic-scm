@@ -32,6 +32,12 @@ public class PoLine {
 
     private BigDecimal receivedQty;
 
+    /** 含税单价，选填：询价定标带入，或采购录入。对账按它算。 */
+    private BigDecimal unitPrice;
+
+    /** 税率（%）。 */
+    private BigDecimal taxRate;
+
     public BigDecimal remaining() {
         return qty.subtract(receivedQty).max(BigDecimal.ZERO);
     }

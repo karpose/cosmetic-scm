@@ -57,6 +57,8 @@ public class DashboardService {
 
     private final PurchaseOrderRepository purchaseOrders;
     private final com.cosmetic.scm.purchase.PoShipmentRepository poShipments;
+    private final com.cosmetic.scm.sourcing.RfqRepository rfqRepo;
+    private final com.cosmetic.scm.settlement.SupplierStatementRepository statementRepo;
     private final BatchRepository batches;
     private final MfgOrderRepository mfgOrders;
     private final SalesOrderRepository salesOrders;
@@ -179,6 +181,17 @@ public class DashboardService {
         for (com.cosmetic.scm.purchase.PurchaseOrder po : purchaseOrders.findOverdue(List.of(PoStatus.OPEN, PoStatus.PARTIAL), today)) {
             todos.add(new Todo("PO_LATE", "采购单超交期", "warn", lookup.partner(po.getSupplierId()).getName(), po.getPoNo(),
                     "交期 " + (po.getPromisedDate() != null ? po.getPromisedDate() : po.getExpectedDate()) + "，还没到齐", "/purchase"));
+        }
+        for (com.cosmetic.scm.sourcing.Rfq r : rfqRepo.findWaitingAward(com.cosmetic.scm.domain.RfqStatus.OPEN, com.cosmetic.scm.domain.RfqStatus.CLOSED, today)) {
+            todos.add(new Todo("RFQ_AWARD", "询价待定标", "warn", r.getTitle(), r.getRfqNo(), "报价已截止，请比价定标", "/sourcing"));
+        }
+        for (com.cosmetic.scm.settlement.SupplierStatement s : statementRepo.findByStatusInOrderById(List.of(com.cosmetic.scm.domain.StatementStatus.DISPUTED, com.cosmetic.scm.domain.StatementStatus.INVOICED, com.cosmetic.scm.domain.StatementStatus.APPROVED))) {
+            String name = lookup.partner(s.getSupplierId()).getName();
+            switch (s.getStatus()) {
+                case DISPUTED -> todos.add(new Todo("STATEMENT_DISPUTE", "对账单有异议", "warn", name, s.getStatementNo(), s.getDisputeNote(), "/settlement"));
+                case INVOICED -> todos.add(new Todo("STATEMENT_APPROVE", "对账单待审批", "warn", name, s.getStatementNo(), "发票 " + s.getInvoiceNo() + "，合计 " + s.getTotalAmount().toPlainString(), "/settlement"));
+                default -> todos.add(new Todo("STATEMENT_PAY", "对账单待付款", "info", name, s.getStatementNo(), "未付 " + s.getTotalAmount().subtract(s.getPaidAmount()).toPlainString(), "/settlement"));
+            }
         }
         long channelFailed = integration.failedCount();
         if (channelFailed > 0) {

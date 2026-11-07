@@ -139,6 +139,10 @@ const groups = computed(() => {
     },
     { title: '基础', items: [{ path: '/master', title: '主数据', icon: Coin }, { path: '/formulas', title: '配方与备案', icon: Notebook }] }
   ]
+  // 价格和金额只给采购和财务
+  if (auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE')) {
+    list[1].items.splice(2, 0, { path: '/sourcing', title: '询价比价', icon: Tickets }, { path: '/settlement', title: '对账结算', icon: Coin })
+  }
   if (auth.hasAny('ADMIN', 'MASTER_DATA', 'QA', 'QSO')) list[3].items.push({ path: '/golive', title: '上线检查', icon: Finished })
   if (auth.hasAny('ADMIN')) {
     list[3].items.push({ path: '/users', title: '账号与权限', icon: User })

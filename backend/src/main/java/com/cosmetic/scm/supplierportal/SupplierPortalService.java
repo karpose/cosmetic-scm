@@ -85,7 +85,7 @@ public class SupplierPortalService {
 
     /** notifiedQty：已发送货通知但还没收货的数量；还能通知的是 remaining - notifiedQty。 */
     public record OrderLineView(Long id, String itemCode, String itemName, String unit, Integer shelfMonths, BigDecimal qty,
-                                BigDecimal receivedQty, BigDecimal remaining, BigDecimal notifiedQty) {
+                                BigDecimal receivedQty, BigDecimal remaining, BigDecimal notifiedQty, BigDecimal unitPrice, BigDecimal taxRate) {
     }
 
     public record PromiseView(LocalDate promisedDate, String note, String createdBy, LocalDateTime createdAt) {
@@ -286,7 +286,7 @@ public class SupplierPortalService {
                         .map(l -> {
                             Item i = im.get(l.getItemId());
                             return new OrderLineView(l.getId(), i.getCode(), i.getName(), i.getUnit(), i.getShelfMonths(), l.getQty(),
-                                    l.getReceivedQty(), l.remaining(), notified.getOrDefault(l.getId(), BigDecimal.ZERO));
+                                    l.getReceivedQty(), l.remaining(), notified.getOrDefault(l.getId(), BigDecimal.ZERO), l.getUnitPrice(), l.getTaxRate());
                         }).toList(),
                 sm.getOrDefault(po.getId(), List.of()), pm.getOrDefault(po.getId(), List.of()))).toList();
     }

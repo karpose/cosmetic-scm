@@ -49,6 +49,7 @@ public class GlobalExceptionHandler {
     private static final java.util.regex.Pattern LINE_FIELD = java.util.regex.Pattern.compile("\\[(\\d+)]");
 
     private static final java.util.Map<String, String> FIELD_LABELS = java.util.Map.ofEntries(
+            java.util.Map.entry("unitPrice", "单价"), java.util.Map.entry("taxRate", "税率"), java.util.Map.entry("leadDays", "交货天数"), java.util.Map.entry("validUntil", "报价有效期"), java.util.Map.entry("deadline", "截止日期"), java.util.Map.entry("invoiceNo", "发票号"), java.util.Map.entry("invoiceDate", "发票日期"), java.util.Map.entry("amount", "金额"), java.util.Map.entry("payDate", "付款日期"), java.util.Map.entry("periodTo", "对账截止日期"), java.util.Map.entry("supplierIds", "供应商"), java.util.Map.entry("rfqLineId", "询价行"), java.util.Map.entry("adjustment", "调整金额"), java.util.Map.entry("adjustmentNote", "调整原因"), java.util.Map.entry("referenceNo", "付款凭证号"), java.util.Map.entry("title", "标题"),
             java.util.Map.entry("promisedDate", "交期"), java.util.Map.entry("shipDate", "发货日期"), java.util.Map.entry("extBatchNo", "批号"),
             java.util.Map.entry("mfgDate", "生产日期"), java.util.Map.entry("poLineId", "采购行"),
             java.util.Map.entry("code", "编码"), java.util.Map.entry("name", "名称"), java.util.Map.entry("username", "账号"),

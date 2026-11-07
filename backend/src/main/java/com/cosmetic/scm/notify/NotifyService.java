@@ -66,6 +66,8 @@ public class NotifyService {
     private final CurrentUser currentUser;
     private final PurchaseOrderRepository purchaseOrders;
     private final PartnerRepository partners;
+    private final com.cosmetic.scm.sourcing.RfqService rfqs;
+    private final com.cosmetic.scm.settlement.SupplierStatementRepository statements;
 
     @Value("${scm.notify.enabled:false}")
     private boolean enabled;
@@ -202,6 +204,13 @@ public class NotifyService {
             } else if (!po.getPromisedDate().isAfter(today.plusDays(SUPPLIER_DUE_WARN_DAYS))) {
                 items.add(new Todo("SUP_DUE", "交期临近", "warn", "采购单", po.getPoNo(), "交期 " + po.getPromisedDate(), "/portal/supplier"));
             }
+        }
+        for (com.cosmetic.scm.sourcing.Rfq r : rfqs.waitingQuote(partnerId)) {
+            items.add(new Todo("SUP_QUOTE", "待报价询价", "warn", r.getTitle(), r.getRfqNo(), "报价截止 " + r.getDeadline(), "/portal/supplier"));
+        }
+        for (com.cosmetic.scm.settlement.SupplierStatement s : statements.findBySupplierIdAndStatusIn(partnerId, List.of(com.cosmetic.scm.domain.StatementStatus.SENT, com.cosmetic.scm.domain.StatementStatus.CONFIRMED))) {
+            boolean sent = s.getStatus() == com.cosmetic.scm.domain.StatementStatus.SENT;
+            items.add(new Todo("SUP_STATEMENT", sent ? "待确认对账单" : "对账单待开票", "warn", "对账单", s.getStatementNo(), "合计 " + s.getTotalAmount().toPlainString(), "/portal/supplier"));
         }
         items.sort(Comparator.comparingInt(t -> "bad".equals(t.level()) ? 0 : 1));
         return items;

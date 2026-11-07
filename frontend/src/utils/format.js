@@ -48,6 +48,7 @@ export const ITEM_TYPE = { RM: '原料', PK: '包材', FG: '成品' }
 export const PARTNER_KIND = { SUPPLIER: '物料供应商', OEM: '受托生产企业', OWN_FACTORY: '自有工厂', CUSTOMER: '客户渠道' }
 export const WAREHOUSE_KIND = { OWN: '自有仓', OEM: '代工厂寄存仓', PLATFORM: '平台仓', THIRD_PARTY: '第三方仓', RETURN: '退货隔离区' }
 export const STATUS_TAG = {
+  SENT: 'primary', DISPUTED: 'danger', CONFIRMED: 'warning', INVOICED: 'warning', PAID: 'success', AWARDED: 'success',
   QUARANTINE: 'warning', PENDING_RELEASE: 'primary', RELEASED: 'success', REJECTED: 'danger', FROZEN: 'danger',
   OPEN: 'warning', PARTIAL: 'primary', RECEIVED: 'success',
   PLANNED: 'info', ISSUED: 'primary', COMPLETED: 'success',

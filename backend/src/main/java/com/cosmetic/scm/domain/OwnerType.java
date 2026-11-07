@@ -9,7 +9,8 @@ public enum OwnerType {
     RECALL("召回"),
     SALES_RETURN("退货单"),
     PARTNER("往来单位"),
-    EQUIPMENT("设备");
+    EQUIPMENT("设备"),
+    SUPPLIER_STATEMENT("对账单");
 
     private final String label;
 
