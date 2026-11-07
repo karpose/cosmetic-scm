@@ -1211,6 +1211,72 @@ test('退货给供应商：发起、质量签批后扣库存，追溯和门户�
   await expect(card).toContainText('来料检验不合格')
 })
 
+test('合规资料：登记、上传、QSO 签批；全成分表；导入和停用法规目录', async ({ page }) => {
+  test.setTimeout(240_000)
+  await login(page, 'qa1')
+  await page.goto('/compliance')
+  // 示例：面霜有配方但没有资料
+  const row = page.locator('.el-table__row').filter({ hasText: 'FG-CRM-002' })
+  await expect(row.getByText('未登记').first()).toBeVisible()
+  await row.getByRole('button', { name: '全成分表' }).click()
+  const ing = dialog(page, '全成分表草稿')
+  await expect(ing.getByText('不能直接用于标签')).toBeVisible()
+  await expect(ing.locator('.el-table__row').first()).toContainText('角鲨烷')
+  await ing.getByRole('button', { name: '关闭', exact: true }).click()
+
+  await row.getByRole('button', { name: '登记' }).click()
+  const cr = dialog(page, '登记合规资料')
+  await cr.locator('#cd-title').fill('面霜安全评估')
+  await cr.locator('#cd-evaluator').fill('第三方机构')
+  await cr.getByRole('button', { name: '保存资料' }).click()
+  await toast(page, '请上传报告文件')
+  const files = page.getByRole('dialog', { name: /报告文件：/ })
+  await files.locator('input[type=file]').setInputFiles(pdfFile('安全评估-E2E.pdf'))
+  await toast(page, '已上传 安全评估-E2E.pdf')
+  await files.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(row.getByText('待签批').first()).toBeVisible()
+  // 质检没有签批按钮
+  const doc = page.locator('.el-table__row').filter({ hasText: '面霜安全评估' })
+  await expect(doc.getByRole('button', { name: '签批' })).toHaveCount(0)
+
+  await login(page, 'qso1')
+  await page.goto('/compliance')
+  await doc.getByRole('button', { name: '签批' }).click()
+  const ap = dialog(page, '签批：')
+  await expect(ap.getByText('安全评估-E2E.pdf')).toBeVisible()
+  await ap.locator('#cd-password').fill(DEMO)
+  await ap.getByRole('button', { name: '签批', exact: true }).click()
+  await toast(page, '已签批')
+  await expect(row.getByText('已签批').first()).toBeVisible()
+
+  // 法规目录：假物质，不是法规原文
+  await page.getByRole('tab', { name: /法规目录/ }).click()
+  await expect(page.getByText('系统不内置法规内容')).toBeVisible()
+  await page.getByRole('button', { name: '导入法规目录' }).click()
+  const im = dialog(page, '批量导入法规目录')
+  const header = '类别,INCI 名称,中文名,CAS 号,浓度上限（%）,使用条件,来源文件和版本'
+  await im.locator('input[type=file]').setInputFiles({ name: 'reg.csv', mimeType: 'text/csv', buffer: Buffer.from('﻿' + [header, '限用,E2E Fake Glycerin,,,0.001,,E2E 测试数据', '禁用,E2E Fake No Source,,,,,'].join('\r\n') + '\r\n') })
+  await expect(im.getByText(/问题/).first()).toBeVisible()
+  await im.locator('input[type=file]').setInputFiles({ name: 'reg.csv', mimeType: 'text/csv', buffer: Buffer.from('﻿' + [header, '限用,E2E Fake Glycerin,,,0.001,,E2E 测试数据'].join('\r\n') + '\r\n') })
+  await im.getByRole('button', { name: /确认导入/ }).click()
+  await toast(page, '已导入')
+  const rule = page.locator('.block .el-table__row').filter({ hasText: 'E2E Fake Glycerin' })
+  await expect(rule).toContainText('E2E 测试数据')
+  // 再导入同一物质、上限留空：预检要让人看到放宽了。不确认，不改
+  await page.getByRole('button', { name: '导入法规目录' }).click()
+  await im.locator('input[type=file]').setInputFiles({ name: 'reg2.csv', mimeType: 'text/csv', buffer: Buffer.from('\ufeff' + [header, '限用,e2e fake glycerin,,,,,E2E 第二版'].join('\n')) })
+  await expect(im.getByText(/会修改已有数据 1 处/)).toBeVisible()
+  await expect(im.getByText('无上限')).toBeVisible()
+  await im.getByRole('button', { name: '关闭此对话框' }).click()
+  await expect(im).toBeHidden()
+  await expect(rule).toContainText('0.001')
+  await rule.getByRole('button', { name: '停用' }).click()
+  await page.locator('.el-message-box input').fill('测试结束')
+  await page.locator('.el-message-box').getByRole('button', { name: '停用' }).click()
+  await toast(page, '已停用')
+  await expect(rule).toContainText('已停用')
+})
+
 test('供应商账号可以填邮箱接收提醒，提醒页列出会发给谁', async ({ page }) => {
   await login(page, 'admin', 'Admin@123456')
   await page.goto('/users')
@@ -1365,7 +1431,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页

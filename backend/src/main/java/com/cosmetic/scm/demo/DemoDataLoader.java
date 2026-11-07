@@ -105,6 +105,8 @@ public class DemoDataLoader implements ApplicationRunner {
     private final PurchaseService purchase;
     private final SupplierPortalService supplierPortal;
     private final com.cosmetic.scm.sourcing.RfqService rfqService;
+    private final com.cosmetic.scm.master.RegulatoryService regulatoryService;
+    private final com.cosmetic.scm.plm.ComplianceService complianceService;
     private final QualityService quality;
     private final ProductionService production;
     private final SalesService sales;
@@ -268,6 +270,16 @@ public class DemoDataLoader implements ApplicationRunner {
         }
         if (!users.existsByUsername("finance1")) {
             userService.newUser("finance1", "财务 · 示例", DEMO_PASSWORD, EnumSet.of(Role.FINANCE), null, false);
+        }
+        // 法规目录：只是演示功能的假数据，不是法规原文。真实内容要按官方发布的版本导入
+        String demoSource = "示例数据，不是法规原文";
+        as("qa1", () -> regulatoryService.importRows(new com.cosmetic.scm.master.RegulatoryService.ImportReq(List.of(
+                new com.cosmetic.scm.master.RegulatoryService.RowReq(com.cosmetic.scm.domain.RegulatedCatalog.RESTRICTED, "Phenoxyethanol", "苯氧乙醇", null, new BigDecimal("1.0"), "（示例）", demoSource),
+                new com.cosmetic.scm.master.RegulatoryService.RowReq(com.cosmetic.scm.domain.RegulatedCatalog.BANNED, "Demo Banned Substance", "示例禁用物质", null, null, "（示例）", demoSource)), false)));
+        // 合规资料：精华液的安全评估和标签已签批，面霜还没有
+        for (var type : List.of(com.cosmetic.scm.domain.ComplianceDocType.SAFETY, com.cosmetic.scm.domain.ComplianceDocType.LABEL)) {
+            var doc = as("qa1", () -> complianceService.create(new com.cosmetic.scm.plm.ComplianceService.CreateReq(serum.getId(), type, null, "精华液" + type.getLabel() + "（示例）", null, "质量部（示例）", t.minusDays(30), null)));
+            as("qso1", () -> complianceService.approve(doc.id(), new com.cosmetic.scm.plm.ComplianceService.ApproveReq(DEMO_PASSWORD)));
         }
         // 询价：邀请两家，华澄已报价。截止前内部看不到价格
         var rfq = as("purchase1", () -> rfqService.create(new com.cosmetic.scm.sourcing.RfqService.CreateRfqReq("透明质酸钠年度询价（示例）", t.plusDays(7), List.of(hc.id(), mp.id()),

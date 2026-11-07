@@ -55,6 +55,12 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class QualityService {
 
+    @org.springframework.beans.factory.annotation.Value("${scm.compliance.require-docs-for-release:false}")
+    private boolean requireComplianceDocs;
+
+    private final com.cosmetic.scm.plm.ComplianceService compliance;
+    private final com.cosmetic.scm.master.MasterService master;
+
     private final QualityDecisionRepository decisions;
     private final com.cosmetic.scm.inventory.GenealogyRepository genealogy;
     private final com.cosmetic.scm.recall.RecallRepository recalls;
@@ -164,6 +170,14 @@ public class QualityService {
             List<String> missing = new ArrayList<>();
             if (oem && !(req.oemReleaseReviewed() && b.isOemReleased())) {
                 missing.add("受托厂出厂放行记录已审核");
+            }
+            // 合规资料缺失默认只提醒，开关打开后才拦：一上线就拦的话，所有现存产品都放不了行
+            if (requireComplianceDocs) {
+                Long versionId = b.getSourceType() == SourceType.MO ? mfgOrders.findByMoNo(b.getSourceNo()).map(com.cosmetic.scm.production.MfgOrder::getFormulaVersionId).orElse(null) : null;
+                if (versionId == null) {
+                    versionId = master.effectiveVersionId(item.getId());
+                }
+                compliance.missingFor(item.getId(), versionId).forEach(t -> missing.add("该配方版本的" + t + "已签批"));
             }
             if (!req.inspectionPassed()) {
                 missing.add("出厂检验合格");

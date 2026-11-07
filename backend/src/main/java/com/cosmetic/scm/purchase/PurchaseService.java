@@ -65,6 +65,7 @@ public class PurchaseService {
     private final PoShipmentLineRepository shipmentLines;
     private final com.cosmetic.scm.security.UserRepository users;
     private final com.cosmetic.scm.settlement.SupplierStatementLineRepository statementLines;
+    private final com.cosmetic.scm.master.RegulatoryService regulatory;
 
     public record PoLineReq(@NotNull Long itemId, @NotNull @Positive @Qty BigDecimal qty,
                             @Positive(message = "单价要大于 0") @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "单价最多 14 位整数、4 位小数") BigDecimal unitPrice,
@@ -179,7 +180,7 @@ public class PurchaseService {
             if (item.getItemType() == ItemType.FG) {
                 throw new BizException("采购单只能采购原料和包材，" + item.getName() + " 是成品");
             }
-            if (item.isBanned()) {
+            if (regulatory.isBanned(item)) {
                 throw new BizException(item.getName() + " 为禁用原料，物料审查不通过，不能采购");
             }
             if (!item.isActive()) {

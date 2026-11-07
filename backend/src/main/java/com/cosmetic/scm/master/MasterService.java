@@ -54,6 +54,7 @@ public class MasterService {
     private final BomRepository boms;
     private final BomLineRepository bomLines;
     private final FormulaVersionRepository formulaVersions;
+    private final RegulatoryService regulatory;
     private final FormulaLineRepository formulaLines;
     private final ProductFilingRepository filings;
     private final MasterLookup lookup;
@@ -478,8 +479,9 @@ public class MasterService {
                 c.level().name(), c.concentrationPct(), c.message());
     }
 
-    private static FormulaCompliance.Check check(Item fg, Item m, BigDecimal qtyPer) {
-        return FormulaCompliance.check(m.getName(), m.getItemType() == ItemType.RM, m.isBanned(), m.getLimitPct(),
+    /** 物料上人工标的和法规目录都要看，取严的。 */
+    private FormulaCompliance.Check check(Item fg, Item m, BigDecimal qtyPer) {
+        return FormulaCompliance.check(m.getName(), m.getItemType() == ItemType.RM, regulatory.isBanned(m), regulatory.effectiveLimit(m),
                 qtyPer, m.getUnit(), fg.getNetG());
     }
 

@@ -23,6 +23,7 @@ import com.cosmetic.scm.master.PartnerRepository;
 import com.cosmetic.scm.master.WarehouseRepository;
 import com.cosmetic.scm.mes.EquipmentRepository;
 import com.cosmetic.scm.mes.RoutingStepRepository;
+import com.cosmetic.scm.plm.ComplianceService;
 import com.cosmetic.scm.plm.FormulaVersionRepository;
 import com.cosmetic.scm.plm.ProductFilingRepository;
 import com.cosmetic.scm.security.AppUser;
@@ -53,6 +54,9 @@ public class GoLiveService {
     private final EquipmentRepository equipment;
     private final BatchRepository batches;
     private final TimeProvider time;
+    private final com.cosmetic.scm.master.RegulatedSubstanceRepository regulated;
+    private final com.cosmetic.scm.master.RegulatoryService regulatory;
+    private final ComplianceService complianceDocs;
 
     @Value("${scm.demo-data:false}")
     private boolean demoData;
@@ -74,6 +78,7 @@ public class GoLiveService {
         accounts(c);
         masterData(c);
         formulas(c);
+        compliance(c);
         production(c);
         stockAndOthers(c);
         return new Checklist(c, c.stream().filter(x -> "BLOCK".equals(x.state())).count(),
@@ -152,6 +157,21 @@ public class GoLiveService {
         long unchecked = filings.findByStatus(FilingStatus.FILED).stream().filter(f -> f.getFiledDate() == null).count();
         c.add(unchecked == 0 ? new Check(g, "备案记录", "OK", fg.isEmpty() ? "还没有成品，导入后再检查" : "类型和日期都已核对", "/formulas?tab=filings")
                 : new Check(g, "备案记录", "WARN", unchecked + " 条是自动生成的，请核对类型和日期；特殊化妆品要补注册证有效期，否则到期提醒不生效", "/formulas?tab=filings"));
+    }
+
+    private void compliance(List<Check> c) {
+        String g = "合规资料";
+        long rules = regulated.countByActiveTrue();
+        c.add(rules == 0 ? new Check(g, "法规目录", "WARN", "还没有导入。现在禁用和限用只靠物料上人工标的，请按官方发布的版本导入", "/compliance?tab=regulatory")
+                : new Check(g, "法规目录", "OK", rules + " 条。法规更新时要重新导入", "/compliance?tab=regulatory"));
+        long violations = regulatory.violations().size();
+        if (violations > 0) {
+            c.add(new Check(g, "配方和法规", "BLOCK", violations + " 处生效配方不符合法规目录", "/compliance?tab=regulatory"));
+        }
+        List<ComplianceService.ProductStatus> products = complianceDocs.statuses().stream().filter(p -> p.versionId() != null).toList();
+        long incomplete = products.stream().filter(p -> !p.complete()).count();
+        c.add(incomplete == 0 ? new Check(g, "产品合规资料", "OK", products.isEmpty() ? "还没有配方，导入后再检查" : "安全评估和标签都已签批", "/compliance")
+                : new Check(g, "产品合规资料", "WARN", incomplete + " 个成品缺已签批的安全评估或标签", "/compliance"));
     }
 
     private void production(List<Check> c) {
