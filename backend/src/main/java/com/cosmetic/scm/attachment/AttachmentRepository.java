@@ -9,4 +9,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface AttachmentRepository extends JpaRepository<Attachment, Long> {
 
     List<Attachment> findByOwnerTypeAndOwnerIdOrderByIdDesc(OwnerType ownerType, Long ownerId);
+
+    boolean existsByOwnerTypeAndOwnerId(OwnerType ownerType, Long ownerId);
 }
