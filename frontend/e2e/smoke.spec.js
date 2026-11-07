@@ -1345,6 +1345,144 @@ test('稳定性试验：登记方案、录结果、超限生成偏差、写结�
   await toast(page, '已取消试验')
 })
 
+test('质量标准：新建和修订、QSO 签批；有标准的成品要先录检验结果才能上市放行', async ({ page }) => {
+  test.setTimeout(240_000)
+  await login(page, 'qa1')
+  await page.goto('/specs')
+  // 示例：角鲨烷已生效，面霜待签批
+  await expect(page.locator('.el-table__row').filter({ hasText: 'RM-SQU-005' }).getByText('生效')).toBeVisible()
+  await expect(page.locator('.el-table__row').filter({ hasText: 'FG-CRM-002' }).getByText('待签批')).toBeVisible()
+
+  // 修订：带入现行版本的项目
+  await page.locator('.el-table__row').filter({ hasText: 'RM-SQU-005' }).getByRole('button', { name: '修订' }).click()
+  const rv = dialog(page, '修订标准')
+  await expect(rv.getByText('已带入现行 V1')).toBeVisible()
+  await expect(rv.locator('.line-row')).toHaveCount(2)
+  await rv.locator('#qs-note').fill('E2E 修订')
+  await rv.getByRole('button', { name: '提交签批' }).click()
+  await toast(page, '等待签批')
+  await page.getByRole('dialog', { name: /^质量标准 QS/ }).getByRole('button', { name: '关闭', exact: true }).click()
+
+  // 新建：精华液 pH 5~7
+  await page.getByRole('button', { name: '新建标准' }).click()
+  const cr = dialog(page, '新建质量标准')
+  await cr.locator('.el-form-item').filter({ hasText: '物料' }).first().locator('.el-select').click()
+  await page.keyboard.type('精华液')
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: 'FG-SER-001' }).click()
+  await cr.locator('#qs-note').fill('E2E 首版')
+  const line = cr.locator('.line-row')
+  await line.getByRole('textbox', { name: /名称/ }).fill('pH')
+  await line.getByRole('spinbutton', { name: /下限/ }).fill('5')
+  await line.getByRole('spinbutton', { name: /上限/ }).fill('7')
+  await cr.getByRole('button', { name: '提交签批' }).click()
+  await toast(page, '等待签批')
+  const detail = page.getByRole('dialog', { name: /^质量标准 QS/ })
+  // 质检员没有签批按钮
+  await expect(detail.getByRole('button', { name: '签批生效' })).toHaveCount(0)
+  await detail.getByRole('button', { name: '关闭', exact: true }).click()
+
+  await login(page, 'qso1')
+  await page.goto('/specs')
+  for (const name of ['FG-SER-001', 'RM-SQU-005']) {
+    await page.locator('.el-table__row').filter({ hasText: name }).filter({ hasText: '待签批' }).getByRole('button', { name: '详情' }).click()
+    await detail.locator('#qs-password').fill(DEMO)
+    await detail.getByRole('button', { name: '签批生效' }).click()
+    await toast(page, '标准生效')
+    await detail.getByRole('button', { name: '关闭', exact: true }).click()
+  }
+  await expect(page.locator('.el-table__row').filter({ hasText: 'RM-SQU-005' })).toHaveCount(1)
+  await expect(page.locator('.el-table__row').filter({ hasText: 'RM-SQU-005' })).toContainText('V2')
+
+  // 精华液有了标准：没检验不能放行
+  await page.goto('/quality')
+  const fgRow = page.locator('.el-table__row').filter({ hasText: '烟酰胺精华液' }).filter({ has: page.getByRole('button', { name: '上市放行审核' }) }).first()
+  await fgRow.getByRole('button', { name: '上市放行审核' }).click()
+  const rel = dialog(page, '成品上市放行')
+  await expect(rel.getByText('请先录入检验结果')).toBeVisible()
+  await expect(rel.getByRole('button', { name: '签批', exact: true })).toBeDisabled()
+  await rel.getByRole('button', { name: '取消' }).click()
+
+  // 质检员录结果
+  await login(page, 'qa1')
+  await page.goto('/quality')
+  await page.locator('.el-table__row').filter({ hasText: '烟酰胺精华液' }).getByRole('button', { name: '检验记录' }).first().click()
+  const ins = dialog(page, '检验记录：')
+  await ins.getByRole('button', { name: '录入检验结果' }).click()
+  const rc = page.getByRole('dialog', { name: /录入检验结果/ })
+  await rc.getByRole('spinbutton', { name: /pH的实测值/ }).fill('6.2')
+  await expect(rc.getByText('合格', { exact: true })).toBeVisible()
+  await rc.getByRole('button', { name: '保存检验结果' }).click()
+  await toast(page, '检验结果已保存')
+  await expect(ins.getByText(/QI-/).first()).toBeVisible()
+  await ins.getByRole('button', { name: '关闭', exact: true }).click()
+
+  // QSO 再看：不再拦，报告编号带入检验单号
+  await login(page, 'qso1')
+  await page.goto('/quality')
+  await fgRow.getByRole('button', { name: '上市放行审核' }).click()
+  await expect(rel.getByText('请先录入检验结果')).toHaveCount(0)
+  await expect(rel.locator('#rel-report')).toHaveValue(/^QI-/)
+  await expect(rel.getByRole('button', { name: '签批', exact: true })).toBeEnabled()
+  await rel.getByRole('button', { name: '取消' }).click()
+})
+
+test('新品立项：申请、管理员批准、关联成品、记录试制；上市检查没通过不能提交', async ({ page }) => {
+  test.setTimeout(240_000)
+  await login(page, 'qa1')
+  await page.goto('/npd')
+  // 示例：面膜待批准，面霜开发中
+  await expect(page.locator('.el-table__row').filter({ hasText: '舒缓修护面膜' }).getByText('待立项审批')).toBeVisible()
+  await expect(page.locator('.el-table__row').filter({ hasText: 'FG-CRM-002' }).getByText('开发中')).toBeVisible()
+
+  await page.getByRole('button', { name: '申请立项' }).click()
+  const cr = dialog(page, '申请立项')
+  await cr.locator('#np-name').fill('E2E 新品精华')
+  await cr.locator('#np-category').fill('精华')
+  await cr.locator('#np-target').fill(new Date(Date.now() + 90 * 86400000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' }))
+  await cr.locator('#np-target').press('Enter')
+  await cr.getByRole('button', { name: '提交立项' }).click()
+  await toast(page, '等待管理员批准')
+  const dt = page.getByRole('dialog', { name: /^新品项目 NP/ })
+  await expect(dt.getByText('待立项审批')).toBeVisible()
+  await expect(dt.getByRole('button', { name: '批准立项' })).toHaveCount(0)
+  await dt.getByRole('button', { name: '关闭', exact: true }).click()
+
+  await login(page, 'admin', 'Admin@123456')
+  await page.goto('/npd')
+  await page.locator('.el-table__row').filter({ hasText: 'E2E 新品精华' }).getByRole('button', { name: '详情' }).click()
+  await dt.getByRole('button', { name: '批准立项' }).click()
+  await toast(page, '已批准立项')
+  await expect(dt.getByText('开发中')).toBeVisible()
+
+  await login(page, 'qa1')
+  await page.goto('/npd')
+  await page.locator('.el-table__row').filter({ hasText: 'E2E 新品精华' }).getByRole('button', { name: '详情' }).click()
+  await expect(dt.getByText('先在主数据建好成品')).toBeVisible()
+  await dt.locator('.link-row .el-select').click()
+  await page.keyboard.type('精华液')
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: 'FG-SER-001' }).click()
+  await dt.getByRole('button', { name: '关联成品' }).click()
+  await toast(page, '已关联成品')
+  // 7 项检查逐项显示；精华液有生效配方，稳定性试验还没结论
+  await expect(dt.locator('.check-row')).toHaveCount(7)
+  await expect(dt.locator('.check-row').filter({ hasText: '生效配方' }).getByText('通过', { exact: true })).toBeVisible()
+  await expect(dt.locator('.check-row').filter({ hasText: '稳定性依据' }).getByText('未通过')).toBeVisible()
+  await expect(dt.getByRole('button', { name: '提交上市' })).toBeDisabled()
+
+  await dt.getByRole('button', { name: '记录试制' }).click()
+  const tr = page.getByRole('dialog', { name: '记录试制' })
+  await tr.getByText('中试', { exact: true }).click()
+  await tr.locator('#nt-summary').fill('E2E 中试')
+  await tr.getByRole('button', { name: '保存试制记录' }).click()
+  await toast(page, '中试要选配方版本')
+  await tr.getByText('小试', { exact: true }).click()
+  await tr.locator('#nt-summary').fill('E2E 小试，肤感偏油')
+  await tr.getByText('需调整').click()
+  await tr.getByRole('button', { name: '保存试制记录' }).click()
+  await toast(page, '试制记录已保存')
+  await expect(dt.locator('.el-table__row').filter({ hasText: 'E2E 小试' }).getByText('需调整')).toBeVisible()
+})
+
 test('供应商账号可以填邮箱接收提醒，提醒页列出会发给谁', async ({ page }) => {
   await login(page, 'admin', 'Admin@123456')
   await page.goto('/users')
@@ -1499,7 +1637,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页

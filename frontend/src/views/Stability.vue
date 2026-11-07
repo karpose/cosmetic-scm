@@ -86,7 +86,7 @@
           <el-button size="small" text :disabled="cr.timepoints.length <= 1" @click="cr.timepoints.splice(i, 1)">删除</el-button>
         </div>
 
-        <div class="sub-head"><b>检测项目</b><el-button size="small" text @click="cr.tests.push(blankTest())">加一个项目</el-button></div>
+        <div class="sub-head"><b>检测项目</b><span><el-button size="small" text :disabled="!cr.fgItemId" :loading="cr.loadingSpec" @click="fromSpec">从质量标准带入</el-button><el-button size="small" text @click="cr.tests.push(blankTest())">加一个项目</el-button></span></div>
         <p class="muted small sub-note">填了上下限的由系统判定合格与否；没填的由检测人判定。<b>方案登记后不能改。</b></p>
         <div v-for="(t, i) in cr.tests" :key="i" class="row-inputs test-row">
           <el-input v-model="t.name" maxlength="60" placeholder="项目" :aria-label="`第 ${i + 1} 个项目的名称`" />
@@ -284,11 +284,23 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 const blankTest = (name = '') => ({ name, unit: '', minValue: undefined, maxValue: undefined, criteria: '' })
 const presetOf = (type) => PRESET[type].map(([months, days]) => ({ months, days }))
 
-const cr = reactive({ visible: false, saving: false, fgItemId: null, formulaVersionId: null, batchNo: '', sampleRef: '', studyType: 'LONG_TERM', condition: '', startDate: '', timepoints: [], tests: [], note: '' })
+const cr = reactive({ visible: false, saving: false, loadingSpec: false, fgItemId: null, formulaVersionId: null, batchNo: '', sampleRef: '', studyType: 'LONG_TERM', condition: '', startDate: '', timepoints: [], tests: [], note: '' })
 const versionOptions = computed(() => versions.value.filter((v) => v.fgItemId === cr.fgItemId && ['DRAFT', 'PENDING', 'EFFECTIVE'].includes(v.status)))
 function openCreate(row) {
   Object.assign(cr, { visible: true, saving: false, fgItemId: row?.fgItemId || null, formulaVersionId: null, batchNo: '', sampleRef: '', studyType: 'LONG_TERM', condition: '', startDate: today(),
     timepoints: presetOf('LONG_TERM'), tests: ['外观', '气味', 'pH', '粘度'].map(blankTest), note: '' })
+}
+// 稳定性的限度可能比放行标准宽，带入后请按方案核对
+async function fromSpec() {
+  cr.loadingSpec = true
+  try {
+    const spec = await http.get(`/quality/items/${cr.fgItemId}/spec`)
+    if (!spec) return ElMessage.warning('这个成品还没有生效的质量标准')
+    cr.tests = spec.lines.map((l) => ({ name: l.name, unit: l.unit || '', minValue: l.minValue != null ? Number(l.minValue) : undefined, maxValue: l.maxValue != null ? Number(l.maxValue) : undefined, criteria: l.criteria || '' }))
+    ElMessage.success(`已带入 ${spec.specNo} V${spec.versionNo} 的 ${spec.lines.length} 个项目，请按试验方案核对限度`)
+  } finally {
+    cr.loadingSpec = false
+  }
 }
 function applyPreset() {
   cr.timepoints = presetOf(cr.studyType)

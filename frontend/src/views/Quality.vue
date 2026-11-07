@@ -40,7 +40,10 @@
         </el-table-column>
         <el-table-column label="生产 → 有效期" width="200"><template #default="{ row }"><span class="mono small">{{ fmtDate(row.mfgDate) }} → {{ fmtDate(row.expDate) }}</span></template></el-table-column>
         <el-table-column label="" width="130" fixed="right">
-          <template #default="{ row }"><el-button size="small" type="primary" :disabled="!canRelease" @click="openRelease(row)">上市放行审核</el-button></template>
+          <template #default="{ row }">
+            <el-button v-if="canRelease" size="small" type="primary" @click="openRelease(row)">上市放行审核</el-button>
+            <el-button v-else size="small" :disabled="!canQc" @click="openInspect(row)">检验记录</el-button>
+          </template>
         </el-table-column>
       </el-table>
     </el-card>
@@ -81,6 +84,7 @@
         <el-descriptions-item label="供应商">{{ qc.batch.partnerName }} · 来料批号 {{ qc.batch.extBatchNo || '—' }}</el-descriptions-item>
         <el-descriptions-item label="数量">{{ fmtQty(qc.batch.qtyIn) }} {{ qc.batch.unit }}</el-descriptions-item>
       </el-descriptions>
+      <InspectionPanel v-if="qc.batch" :batch-id="qc.batch.id" :batch-no="qc.batch.batchNo" :can-record="canQc" :can-void="canRelease" @loaded="onQcPanel" />
       <AttachmentList v-if="qc.batch" style="margin-top:12px" owner-type="BATCH" :owner-id="qc.batch.id" :can-upload="auth.canAttach()"
                       title="供应商 COA / 检验报告" empty-text="还没有上传 COA 或检验报告" />
       <el-form label-position="top" style="margin-top:12px" @submit.prevent>
@@ -96,7 +100,7 @@
       </el-form>
       <template #footer>
         <el-button @click="qc.visible = false">取消</el-button>
-        <el-button type="primary" :loading="qc.saving" @click="submitQc">签批</el-button>
+        <el-button type="primary" :loading="qc.saving" :disabled="!qc.panel || (qc.decision === 'RELEASED' && !!qc.panel.blocker)" @click="submitQc">签批</el-button>
       </template>
     </el-dialog>
 
@@ -108,6 +112,7 @@
         <el-descriptions-item label="数量 / 效期">{{ fmtQty(rel.batch.qtyIn) }} · {{ fmtDate(rel.batch.mfgDate) }} 至 {{ fmtDate(rel.batch.expDate) }}</el-descriptions-item>
         <el-descriptions-item label="批次追溯"><BatchNo :no="rel.batch.batchNo" /> <span class="muted small">点击查看所用物料批次</span></el-descriptions-item>
       </el-descriptions>
+      <InspectionPanel v-if="rel.batch" :batch-id="rel.batch.id" :batch-no="rel.batch.batchNo" :can-record="canQc" :can-void="canRelease" @loaded="onRelPanel" />
       <el-form label-position="top" style="margin-top:12px" @submit.prevent>
         <el-form-item label="放行检查">
           <div class="checks">
@@ -134,8 +139,15 @@
       </el-form>
       <template #footer>
         <el-button @click="rel.visible = false">取消</el-button>
-        <el-button type="primary" :loading="rel.saving" @click="submitRelease">签批</el-button>
+        <el-button type="primary" :loading="rel.saving" :disabled="!rel.panel || (rel.decision === 'RELEASED' && !!rel.panel.blocker)" @click="submitRelease">签批</el-button>
       </template>
+    </el-dialog>
+
+    <!-- 成品检验（质检员录结果，上市放行由 QSO 签） -->
+    <el-dialog v-model="ins.visible" :title="`检验记录：${ins.batch?.batchNo || ''}`" width="560px">
+      <p v-if="ins.batch" style="margin:0">{{ ins.batch.itemName }} · {{ fmtQty(ins.batch.qtyIn) }}</p>
+      <InspectionPanel v-if="ins.batch" :batch-id="ins.batch.id" :batch-no="ins.batch.batchNo" :can-record="canQc" :can-void="canRelease" />
+      <template #footer><el-button @click="ins.visible = false">关闭</el-button></template>
     </el-dialog>
 
     <!-- 解冻 -->
@@ -158,6 +170,7 @@ import { ElMessage } from 'element-plus'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
 import AttachmentList from '../components/AttachmentList.vue'
+import InspectionPanel from '../components/InspectionPanel.vue'
 import { useAuth } from '../stores/auth'
 import { fmtDate, fmtQty, fmtTime } from '../utils/format'
 
@@ -167,13 +180,28 @@ const q = reactive({ quarantine: [], pendingRelease: [], frozen: [], recent: [] 
 const canQc = computed(() => auth.hasAny('QA', 'QSO'))
 const canRelease = computed(() => auth.hasAny('QSO'))
 
-const qc = reactive({ visible: false, saving: false, batch: null, decision: 'RELEASED', reportNo: '', note: '', password: '' })
+const qc = reactive({ visible: false, saving: false, batch: null, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '' })
 const rel = reactive({
-  visible: false, saving: false, batch: null, decision: 'RELEASED', reportNo: '', note: '', password: '',
+  visible: false, saving: false, batch: null, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '',
   oemReleaseReviewed: false, inspectionPassed: false, recordsComplete: false, consistentWithFiling: false,
   retainQty: null, retainLocation: ''
 })
 const unf = reactive({ visible: false, saving: false, batch: null, reason: '', password: '' })
+const ins = reactive({ visible: false, batch: null })
+
+// 检验面板读完才能签批；最近一次检验合格时，报告编号默认填检验单号
+const passedNo = (p) => p?.spec && !p.blocker ? p.inspections.find((i) => i.status === 'VALID')?.inspectionNo : null
+function onQcPanel(p) {
+  qc.panel = p
+  if (passedNo(p) && !qc.reportNo) qc.reportNo = passedNo(p)
+}
+function onRelPanel(p) {
+  rel.panel = p
+  if (passedNo(p) && !rel.reportNo) rel.reportNo = passedNo(p)
+}
+function openInspect(batch) {
+  Object.assign(ins, { visible: true, batch })
+}
 
 async function load() {
   loading.value = true
@@ -185,7 +213,7 @@ async function load() {
 }
 
 function openQc(batch) {
-  Object.assign(qc, { visible: true, batch, decision: 'RELEASED', reportNo: '', note: '', password: '' })
+  Object.assign(qc, { visible: true, batch, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '' })
 }
 
 async function submitQc() {
@@ -205,7 +233,7 @@ async function submitQc() {
 
 function openRelease(batch) {
   Object.assign(rel, {
-    visible: true, batch, decision: 'RELEASED', reportNo: '', note: '', password: '',
+    visible: true, batch, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '',
     oemReleaseReviewed: false, inspectionPassed: false, recordsComplete: false, consistentWithFiling: false,
     retainQty: null, retainLocation: ''
   })
@@ -215,7 +243,7 @@ async function submitRelease() {
   if (!rel.note.trim() || !rel.password) return ElMessage.warning('请填写签批说明和签批密码')
   rel.saving = true
   try {
-    const { visible, saving, batch, ...body } = rel
+    const { visible, saving, batch, panel, ...body } = rel
     await http.post(`/quality/batches/${rel.batch.id}/market-release`, body)
     ElMessage.success(rel.decision === 'RELEASED' ? '已上市放行，可以出库' : '已判定不予放行')
     rel.visible = false

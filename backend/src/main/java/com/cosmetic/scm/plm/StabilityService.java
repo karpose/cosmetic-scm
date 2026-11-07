@@ -23,6 +23,7 @@ import com.cosmetic.scm.domain.SourceType;
 import com.cosmetic.scm.domain.StabilityPullStatus;
 import com.cosmetic.scm.domain.StabilityStudyStatus;
 import com.cosmetic.scm.domain.StabilityType;
+import com.cosmetic.scm.domain.rules.SpecLimit;
 import com.cosmetic.scm.inventory.Batch;
 import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.master.Item;
@@ -352,11 +353,11 @@ public class StabilityService {
 
     /** 有上下限的由系统判定，填的合格不合格不算数；没有上下限的人工判定。 */
     private static boolean judge(StabilityTest t, ResultReq r) {
-        if (t.getMinValue() != null || t.getMaxValue() != null) {
+        if (SpecLimit.hasLimits(t.getMinValue(), t.getMaxValue())) {
             if (r.value() == null) {
                 throw new BizException("“" + t.getName() + "”有限度（" + limitsOf(t) + "），请填写实测数值");
             }
-            return (t.getMinValue() == null || r.value().compareTo(t.getMinValue()) >= 0) && (t.getMaxValue() == null || r.value().compareTo(t.getMaxValue()) <= 0);
+            return SpecLimit.within(t.getMinValue(), t.getMaxValue(), r.value());
         }
         if (r.value() == null && (r.text() == null || r.text().isBlank())) {
             throw new BizException("请填写“" + t.getName() + "”的结果");
@@ -489,14 +490,7 @@ public class StabilityService {
     }
 
     private static String limitsOf(StabilityTest t) {
-        String unit = t.getUnit() == null ? "" : " " + t.getUnit();
-        if (t.getMinValue() != null && t.getMaxValue() != null) {
-            return plain(t.getMinValue()) + " ~ " + plain(t.getMaxValue()) + unit;
-        }
-        if (t.getMinValue() != null) {
-            return "≥ " + plain(t.getMinValue()) + unit;
-        }
-        return t.getMaxValue() == null ? "" : "≤ " + plain(t.getMaxValue()) + unit;
+        return SpecLimit.text(t.getMinValue(), t.getMaxValue(), t.getUnit());
     }
 
     private static String shown(ResultReq r, StabilityTest t) {

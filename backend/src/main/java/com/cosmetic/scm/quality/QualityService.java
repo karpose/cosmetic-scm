@@ -59,6 +59,7 @@ public class QualityService {
     private boolean requireComplianceDocs;
 
     private final com.cosmetic.scm.plm.ComplianceService compliance;
+    private final QualitySpecService specs;
     private final com.cosmetic.scm.master.MasterService master;
 
     private final QualityDecisionRepository decisions;
@@ -140,6 +141,9 @@ public class QualityService {
             throw new BizException("批次 " + b.getBatchNo() + " 已过有效期，不能放行");
         }
         if (req.decision() == Decision.RELEASED) {
+            specs.blocker(b).ifPresent(m -> {
+                throw new BizException(m);
+            });
             requireNoOpenDeviation(b);
         }
         b.setStatus(req.decision() == Decision.RELEASED ? BatchStatus.RELEASED : BatchStatus.REJECTED);
@@ -182,6 +186,7 @@ public class QualityService {
             if (!req.inspectionPassed()) {
                 missing.add("出厂检验合格");
             }
+            specs.blocker(b).ifPresent(missing::add);
             if (!req.recordsComplete()) {
                 missing.add("批生产记录完整、物料平衡在限度内");
             }

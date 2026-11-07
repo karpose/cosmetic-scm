@@ -80,7 +80,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   ArrowDown, Bell, Box, Coin, Connection, Finished, DataAnalysis, DataBoard, Document, Expand, Fold, Goods, Guide, Iphone, Memo, Notebook, OfficeBuilding,
-  Operation, Postcard, RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, Timer, TrendCharts, User, Van, WarningFilled
+  Operation, Postcard, RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, MagicStick, Timer, TrendCharts, User, Van, WarningFilled
 } from '@element-plus/icons-vue'
 import { useAuth, PASSWORD_RULE, ROLE_LABELS } from '../stores/auth'
 
@@ -119,6 +119,7 @@ const groups = computed(() => {
         { path: '/supplier-returns', title: '退供', icon: RefreshLeft },
         { path: '/production', title: '生产与委托', icon: Goods },
         { path: '/quality', title: '质量放行', icon: Stamp },
+        { path: '/specs', title: '质量标准', icon: Tickets },
         { path: '/stock', title: '库存', icon: Box },
         { path: '/inventory-ops', title: '库存作业', icon: Operation },
         { path: '/scan', title: '扫码作业', icon: Iphone },
@@ -136,6 +137,7 @@ const groups = computed(() => {
         { path: '/qms', title: '质量体系', icon: Memo },
         { path: '/compliance', title: '合规资料', icon: Stamp },
         { path: '/stability', title: '稳定性试验', icon: Timer },
+        { path: '/npd', title: '新品立项', icon: MagicStick },
         { path: '/serials', title: '一物一码', icon: Postcard },
         { path: '/audit', title: '审计日志', icon: Document }
       ]
