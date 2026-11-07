@@ -71,6 +71,7 @@ import com.cosmetic.scm.qms.SupplierAuditService;
 import com.cosmetic.scm.security.AppUser;
 import com.cosmetic.scm.serial.SerialService;
 import com.cosmetic.scm.security.UserRepository;
+import com.cosmetic.scm.supplierportal.SupplierPortalService;
 import com.cosmetic.scm.security.UserService;
 
 import org.slf4j.Logger;
@@ -102,6 +103,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final UserService userService;
     private final MasterService master;
     private final PurchaseService purchase;
+    private final SupplierPortalService supplierPortal;
     private final QualityService quality;
     private final ProductionService production;
     private final SalesService sales;
@@ -260,6 +262,15 @@ public class DemoDataLoader implements ApplicationRunner {
         if (!users.existsByUsername("dealer1")) {
             userService.newUser("dealer1", "华东经销商 · 采购（示例）", DEMO_PASSWORD, EnumSet.of(Role.DEALER), hd.id(), false);
         }
+        if (!users.existsByUsername("sup1")) {
+            userService.newUser("sup1", "华澄化工 · 销售（示例）", DEMO_PASSWORD, EnumSet.of(Role.SUPPLIER_PORTAL), hc.id(), false);
+        }
+        // 供应商门户：一张待回复的采购单，一张已确认并发了送货通知的
+        as("purchase1", () -> purchase.create(new CreatePoReq(hc.id(), List.of(line(ha, "2")), t.plusDays(10))));
+        PoView shippedPo = as("purchase1", () -> purchase.create(new CreatePoReq(hc.id(), List.of(line(gly, "10")), t.plusDays(5))));
+        as("sup1", () -> supplierPortal.promise(shippedPo.id(), new SupplierPortalService.PromiseReq(t.plusDays(6), "（示例）")));
+        as("sup1", () -> supplierPortal.createShipment(shippedPo.id(), new SupplierPortalService.ShipmentReq(t, "物流单号 SF1234（示例）",
+                List.of(new SupplierPortalService.ShipmentLineReq(shippedPo.lines().get(0).id(), new BigDecimal("10"), "HC-GLY-DEMO-01", t.minusDays(3), null)))));
 
         // ---------- 第三张委托单：已发料，受托厂已在门户接单排产，等它申报完工 ----------
         MoView mo4 = as("prod1", () -> production.create(new CreateMoReq(a3.id(), serum.getId(), new BigDecimal("3000"), t.plusDays(10))));

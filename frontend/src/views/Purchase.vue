@@ -23,13 +23,21 @@
       <LoadError v-if="loadError" :message="loadError" :loading="loading" @retry="load" />
       <el-table v-else :data="t.paged.value" v-loading="loading" empty-text="还没有采购单">
         <el-table-column label="单号" width="150"><template #default="{ row }"><span class="mono">{{ row.poNo }}</span></template></el-table-column>
-        <el-table-column prop="supplierName" label="供应商" min-width="160" />
+        <el-table-column prop="supplierName" label="供应商" min-width="140" />
         <el-table-column label="日期" width="110"><template #default="{ row }"><span class="mono">{{ row.orderDate }}</span></template></el-table-column>
-        <el-table-column label="物料（已收 / 订购）" min-width="260">
+        <el-table-column label="物料（已收 / 订购）" min-width="220">
           <template #default="{ row }">
             <div v-for="l in row.lines" :key="l.id">
               {{ l.itemName }} <span class="mono muted small">{{ fmtQty(l.receivedQty) }} / {{ fmtQty(l.qty) }} {{ l.unit }}</span>
             </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="交期" width="150">
+          <template #default="{ row }">
+            <div v-if="dueOf(row)" class="mono" :class="{ late: isLate(row) }">{{ dueOf(row) }}</div>
+            <div v-if="dueOf(row)" class="muted small">{{ row.promisedDate ? '供应商回复' : '采购期望' }}</div>
+            <div v-if="isOpen(row) && row.supplierHasPortal && !row.supplierConfirmedAt" class="muted small">供应商未确认</div>
+            <el-tag v-if="openShipments(row).length" size="small" type="primary" disable-transitions>已发货待收 {{ openShipments(row).length }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="130"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /><div v-if="row.closeReason" class="muted small" :title="row.closedBy">{{ row.closeReason }}</div></template></el-table-column>
@@ -54,6 +62,9 @@
           </el-select>
           <div class="muted small">灰色选项不在合格名录或资质已过期，不能下单。</div>
         </el-form-item>
+        <el-form-item label="期望到货日（选填，准时率按它算，直到供应商回复交期）">
+          <el-date-picker id="po-expected" v-model="create.expectedDate" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d < startOfBusinessDay()" />
+        </el-form-item>
         <el-form-item label="物料与数量">
           <div style="width:100%">
             <div v-for="(l, i) in create.lines" :key="i" class="line-row">
@@ -77,6 +88,11 @@
     <!-- 收货 -->
     <el-dialog v-model="recv.visible" :title="`收货：${recv.po?.poNo || ''}`" width="860px">
       <p class="muted small" style="margin-top:0">供应商：{{ recv.po?.supplierName }}。收货后系统生成内部批号，批次状态为“待检”。有效期留空时按物料保质期推算。</p>
+      <el-form-item v-if="recv.shipments.length" label="按供应商的送货通知收货（带入批号、日期和数量，到货后请和实物核对）" label-position="top">
+        <el-select id="rv-shipment" v-model="recv.shipmentId" clearable placeholder="不按通知，手工填写" style="width:100%" @change="applyShipment">
+          <el-option v-for="s in recv.shipments" :key="s.id" :value="s.id" :label="`${s.shipmentNo} · 发货 ${s.shipDate}${s.note ? ' · ' + s.note : ''}`" />
+        </el-select>
+      </el-form-item>
       <el-card v-for="l in recv.lines" :key="l.poLineId" shadow="never" style="margin-bottom:12px">
         <div style="margin-bottom:8px"><b>{{ l.itemName }}</b> <span class="muted small">{{ l.itemCode }} · 未收 {{ fmtQty(l.remaining) }} {{ l.unit }}{{ l.shelfMonths ? ` · 保质期 ${l.shelfMonths} 个月` : '' }}</span></div>
         <div class="form-grid">
@@ -91,6 +107,7 @@
           </el-form-item>
         </div>
       </el-card>
+      <AttachmentList v-if="recv.po" owner-type="PURCHASE_ORDER" :owner-id="recv.po.id" title="这张单的附件（供应商上传的 COA 也在这里）" empty-text="还没有附件" />
       <template #footer>
         <el-button @click="recv.visible = false">取消</el-button>
         <el-button type="primary" :loading="recv.saving" @click="submitReceive">确认收货</el-button>
@@ -103,6 +120,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
+import AttachmentList from '../components/AttachmentList.vue'
 import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
 import ListPager from '../components/ListPager.vue'
@@ -111,7 +129,7 @@ import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
-import { fmtQty, today } from '../utils/format'
+import { fmtQty, startOfBusinessDay, today } from '../utils/format'
 
 const auth = useAuth()
 const rd = useRefData()
@@ -146,8 +164,11 @@ async function closeOrder(row) {
   load()
 }
 
-const create = reactive({ visible: false, saving: false, supplierId: null, lines: [] })
-const recv = reactive({ visible: false, saving: false, po: null, lines: [] })
+const create = reactive({ visible: false, saving: false, supplierId: null, expectedDate: null, lines: [] })
+const recv = reactive({ visible: false, saving: false, po: null, lines: [], shipments: [], shipmentId: null })
+const dueOf = (po) => po.promisedDate || po.expectedDate
+const isLate = (po) => isOpen(po) && dueOf(po) && dueOf(po) < today()
+const openShipments = (po) => (po.shipments || []).filter((s) => s.status === 'OPEN')
 
 async function load() {
   loading.value = true
@@ -162,7 +183,7 @@ async function load() {
 }
 
 function openCreate() {
-  Object.assign(create, { visible: true, supplierId: null, lines: [{ itemId: null, qty: null }] })
+  Object.assign(create, { visible: true, supplierId: null, expectedDate: null, lines: [{ itemId: null, qty: null }] })
 }
 
 async function submitCreate() {
@@ -171,7 +192,7 @@ async function submitCreate() {
   if (!lines.length || lines.some((l) => !l.itemId || !(l.qty > 0))) return ElMessage.warning('请把每一行的物料和数量填完整')
   create.saving = true
   try {
-    const po = await http.post('/purchase-orders', { supplierId: create.supplierId, lines })
+    const po = await http.post('/purchase-orders', { supplierId: create.supplierId, expectedDate: create.expectedDate, lines })
     ElMessage.success(`采购单 ${po.poNo} 已保存`)
     create.visible = false
     load()
@@ -188,7 +209,21 @@ async function openReceive(po) {
     poLineId: l.id, itemName: l.itemName, itemCode: l.itemCode, unit: l.unit, shelfMonths: l.shelfMonths,
     remaining: l.remaining, qty: Number(l.remaining), extBatchNo: '', mfgDate: today(), expDate: null, warehouseId: wh
   }))
+  recv.shipments = openShipments(po)
+  // 只有一张通知时直接带入，多张让人选
+  recv.shipmentId = recv.shipments.length === 1 ? recv.shipments[0].id : null
+  applyShipment()
   recv.visible = true
+}
+// 选了通知：带入它的批号、日期和数量，它没有的物料这次不收。清空：恢复手工填写
+function applyShipment() {
+  const s = recv.shipments.find((x) => x.id === recv.shipmentId)
+  for (const l of recv.lines) {
+    const n = s?.lines.find((x) => x.poLineId === l.poLineId)
+    Object.assign(l, s
+      ? { qty: n ? Math.min(Number(n.qty), Number(l.remaining)) : 0, extBatchNo: n?.extBatchNo || '', mfgDate: n?.mfgDate || today(), expDate: n?.expDate || null }
+      : { qty: Number(l.remaining), extBatchNo: '', mfgDate: today(), expDate: null })
+  }
 }
 
 async function submitReceive() {
@@ -198,6 +233,7 @@ async function submitReceive() {
   recv.saving = true
   try {
     const res = await http.post(`/purchase-orders/${recv.po.id}/receipts`, {
+      shipmentId: recv.shipmentId,
       lines: lines.map(({ poLineId, qty, extBatchNo, mfgDate, expDate, warehouseId }) => ({ poLineId, qty, extBatchNo, mfgDate, expDate, warehouseId }))
     })
     ElMessage.success(`已收货，生成待检批次 ${res.batchNos.join('、')}`)
@@ -210,3 +246,7 @@ async function submitReceive() {
 
 onMounted(() => Promise.all([load(), rd.load()]))
 </script>
+
+<style scoped>
+.late { color: var(--el-color-danger); font-weight: 600; }
+</style>

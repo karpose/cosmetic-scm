@@ -23,6 +23,8 @@ import com.cosmetic.scm.domain.AuditResult;
 import com.cosmetic.scm.domain.AuditType;
 import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.PartnerKind;
+import com.cosmetic.scm.domain.PoStatus;
+import com.cosmetic.scm.domain.rules.SupplierScore;
 import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.master.MasterLookup;
 import com.cosmetic.scm.master.Partner;
@@ -52,6 +54,7 @@ public class SupplierAuditService {
     private final DocNoService docNo;
     private final AuditService audit;
     private final TimeProvider time;
+    private final com.cosmetic.scm.purchase.PurchaseOrderRepository purchaseOrders;
 
     public record AuditReq(@NotNull(message = "请选择被审核单位") Long partnerId,
                            @NotNull(message = "请选择审核日期") LocalDate auditDate,
@@ -73,7 +76,8 @@ public class SupplierAuditService {
     /** dueState: NONE（没审核过）/ OK / DUE（快到期）/ OVERDUE；rejected / received：近 12 个月来料批次中拒收数 / 总数。 */
     public record PartnerRow(Long partnerId, String code, String name, String kindLabel, boolean qualified, boolean critical,
                              LocalDate lastAuditDate, String lastResultLabel, LocalDate nextAuditDate, String dueState,
-                             Long dueDaysLeft, long received, long rejected) {
+                             Long dueDaysLeft, long received, long rejected, long dueTotal, long onTime,
+                             Integer score, String grade) {
     }
 
     @Transactional(readOnly = true)
@@ -89,30 +93,57 @@ public class SupplierAuditService {
 
     @Transactional(readOnly = true)
     public List<PartnerRow> partnerRows() {
-        LocalDate today = time.today();
-        LocalDate since = today.minusMonths(STATS_MONTHS);
-        Map<Long, Object[]> stats = new java.util.HashMap<>();
-        for (Object[] row : batches.statsByPartner(since, BatchStatus.REJECTED)) {
-            stats.put((Long) row[0], row);
-        }
+        Stats st = stats();
         List<PartnerRow> out = new ArrayList<>();
         for (Partner p : partners.findAll()) {
-            if (p.getKind() != PartnerKind.SUPPLIER && p.getKind() != PartnerKind.OEM) {
-                continue;
+            if (p.getKind() == PartnerKind.SUPPLIER || p.getKind() == PartnerKind.OEM) {
+                out.add(toRow(p, st));
             }
-            List<SupplierAudit> history = audits.findByPartnerIdOrderByAuditDateDescIdDesc(p.getId());
-            SupplierAudit last = history.isEmpty() ? null : history.get(0);
-            LocalDate next = last == null ? null : last.getNextAuditDate();
-            Long days = next == null ? null : ChronoUnit.DAYS.between(today, next);
-            String state = last == null ? "NONE" : days == null ? "OK" : days < 0 ? "OVERDUE" : days <= DUE_WARN_DAYS ? "DUE" : "OK";
-            Object[] st = stats.get(p.getId());
-            long received = st == null ? 0 : ((Number) st[1]).longValue();
-            long rejected = st == null ? 0 : ((Number) st[2]).longValue();
-            out.add(new PartnerRow(p.getId(), p.getCode(), p.getName(), p.getKind().getLabel(), p.isQualified(), p.isCriticalSupplier(),
-                    last == null ? null : last.getAuditDate(), last == null ? null : last.getResult().getLabel(), next, state, days, received, rejected));
         }
         out.sort(Comparator.comparing(PartnerRow::code));
         return out;
+    }
+
+    /** 单个单位的一行，供应商门户用。 */
+    @Transactional(readOnly = true)
+    public PartnerRow rowOf(Long partnerId) {
+        return toRow(lookup.partner(partnerId), stats());
+    }
+
+    private record Stats(LocalDate today, Map<Long, Object[]> batches, Map<Long, Object[]> delivery) {
+    }
+
+    private Stats stats() {
+        LocalDate today = time.today();
+        LocalDate since = today.minusMonths(STATS_MONTHS);
+        Map<Long, Object[]> bm = new java.util.HashMap<>();
+        for (Object[] row : batches.statsByPartner(since, BatchStatus.REJECTED)) {
+            bm.put((Long) row[0], row);
+        }
+        Map<Long, Object[]> dm = new java.util.HashMap<>();
+        for (Object[] row : purchaseOrders.deliveryStats(since, today, List.of(PoStatus.RECEIVED, PoStatus.CLOSED), PoStatus.RECEIVED, PoStatus.CANCELLED)) {
+            dm.put((Long) row[0], row);
+        }
+        return new Stats(today, bm, dm);
+    }
+
+    private PartnerRow toRow(Partner p, Stats st) {
+        List<SupplierAudit> history = audits.findByPartnerIdOrderByAuditDateDescIdDesc(p.getId());
+        SupplierAudit last = history.isEmpty() ? null : history.get(0);
+        LocalDate next = last == null ? null : last.getNextAuditDate();
+        Long days = next == null ? null : ChronoUnit.DAYS.between(st.today(), next);
+        String state = last == null ? "NONE" : days == null ? "OK" : days < 0 ? "OVERDUE" : days <= DUE_WARN_DAYS ? "DUE" : "OK";
+        Object[] b = st.batches().get(p.getId());
+        long received = b == null ? 0 : ((Number) b[1]).longValue();
+        long rejected = b == null ? 0 : ((Number) b[2]).longValue();
+        Object[] d = st.delivery().get(p.getId());
+        long dueTotal = d == null ? 0 : ((Number) d[1]).longValue();
+        long onTime = d == null ? 0 : ((Number) d[2]).longValue();
+        SupplierScore.Result score = SupplierScore.of(received, rejected, dueTotal, onTime,
+                last == null ? null : SupplierScore.AuditLevel.valueOf(last.getResult().name()));
+        return new PartnerRow(p.getId(), p.getCode(), p.getName(), p.getKind().getLabel(), p.isQualified(), p.isCriticalSupplier(),
+                last == null ? null : last.getAuditDate(), last == null ? null : last.getResult().getLabel(), next, state, days,
+                received, rejected, dueTotal, onTime, score == null ? null : score.score(), score == null ? null : score.grade());
     }
 
     @Transactional

@@ -111,8 +111,8 @@ public class ReportService {
     private Table purchases() {
         List<List<Object>> rows = new ArrayList<>();
         purchases.listAll().forEach(p -> p.lines().forEach(l -> rows.add(row(p.poNo(), p.orderDate(), p.supplierName(), p.statusLabel(),
-                l.itemCode(), l.itemName(), l.qty(), l.receivedQty(), l.unit(), p.closeReason()))));
-        return new Table("采购明细", List.of("采购单", "日期", "供应商", "状态", "物料编码", "物料名称", "订购数量", "已收数量", "单位", "取消 / 关闭原因"), rows);
+                l.itemCode(), l.itemName(), l.qty(), l.receivedQty(), l.unit(), p.expectedDate(), p.promisedDate(), p.lastReceivedOn(), p.closeReason()))));
+        return new Table("采购明细", List.of("采购单", "日期", "供应商", "状态", "物料编码", "物料名称", "订购数量", "已收数量", "单位", "期望到货", "供应商交期", "最后收货", "取消 / 关闭原因"), rows);
     }
 
     private Table production() {

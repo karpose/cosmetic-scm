@@ -862,6 +862,73 @@ test('导入：不存在的日期在页面上按行报，不是整批“格式�
   await expect(d.locator('.issues .el-table__row').filter({ hasText: '科学计数' })).toContainText('3')
 })
 
+test('供应商门户：确认订单、回复交期、发送货通知、传 COA，采购按通知收货', async ({ page }) => {
+  await login(page, 'sup1')
+  await expect(page).toHaveURL(/\/portal\/supplier/)
+  await expect(page.getByRole('heading', { name: '采购订单协同' })).toBeVisible()
+  const card = page.locator('.order').filter({ hasText: '待确认' }).first()
+  const poNo = await card.locator('h3').innerText()
+  // 没确认前不能发通知
+  await expect(card.getByRole('button', { name: '填写送货通知' })).toBeDisabled()
+  await card.getByRole('button', { name: '确认订单' }).click()
+  await dialog(page, `确认订单：${poNo}`).getByRole('button', { name: '确认订单' }).click()
+  await toast(page, '订单已确认')
+
+  const mine = page.locator('.order').filter({ hasText: poNo })
+  await mine.getByRole('button', { name: '填写送货通知' }).click()
+  const d = dialog(page, `送货通知：${poNo}`)
+  await d.getByRole('button', { name: '发送送货通知' }).click()
+  await toast(page, '请填写每一行的批号和生产日期')
+  await d.locator('[id^=sp-batch-]').first().fill('SUP-E2E-001')
+  await d.locator('[id^=sp-mfg-]').first().fill('2026-10-01')
+  await d.locator('[id^=sp-mfg-]').first().press('Enter')
+  await d.getByRole('button', { name: '发送送货通知' }).click()
+  await toast(page, '送货通知已发送')
+  await expect(mine).toContainText('SUP-E2E-001')
+  await expect(mine.getByRole('button', { name: '填写送货通知' })).toBeDisabled()
+
+  await mine.locator('input[type=file]').setInputFiles(pdfFile('COA-SUP-E2E.pdf'))
+  await toast(page, '已上传 COA-SUP-E2E.pdf')
+  await expect(mine.getByText('COA-SUP-E2E.pdf')).toBeVisible()
+
+  await page.getByRole('tab', { name: '本单位资料' }).click()
+  await expect(page.getByText('资质编号')).toBeVisible()
+
+  // 采购看到已发货待收，打开收货时批号和生产日期已带入，COA 也在
+  await login(page, 'purchase1')
+  await page.goto('/purchase')
+  const row = page.locator('.el-table__row').filter({ hasText: poNo })
+  await expect(row).toContainText('已发货待收 1')
+  await row.getByRole('button', { name: '收货' }).click()
+  const rv = dialog(page, `收货：${poNo}`)
+  await expect(rv.locator('[id^=rv-ext-]').first()).toHaveValue('SUP-E2E-001')
+  await expect(rv.locator('[id^=rv-mfg-]').first()).toHaveValue('2026-10-01')
+  await expect(rv.getByText('COA-SUP-E2E.pdf')).toBeVisible()
+  await rv.getByRole('button', { name: '确认收货' }).click()
+  await toast(page, '生成待检批次')
+
+  await login(page, 'sup1')
+  await page.getByRole('tab', { name: /已结束/ }).click()
+  const done = page.locator('.order').filter({ hasText: poNo })
+  await expect(done).toContainText('已收货')
+})
+
+test('供应商管理页能看到准时交货和综合评分', async ({ page }) => {
+  await login(page, 'qa1')
+  await page.goto('/qms?tab=audits')
+  await expect(page.getByRole('columnheader', { name: /准时/ })).toBeVisible()
+  // 不能被右边固定的操作列挡住：曾经列太宽，分数根本看不到
+  const row = page.locator('.el-table__row').filter({ hasText: 'SUP-HC' }).first()
+  const score = row.locator('.el-tag').filter({ hasText: /^[ABCD]$/ })
+  await expect(score).toBeVisible()
+  const covered = await score.evaluate((el) => {
+    const r = el.getBoundingClientRect()
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+    return !(el === hit || el.contains(hit))
+  })
+  expect(covered).toBe(false)
+})
+
 test('期初库存导入：预检报错，改对后签批写入，能查到批次和留样', async ({ page }) => {
   await login(page, 'qso1')
   await page.goto('/inventory-ops')
@@ -1045,6 +1112,29 @@ test('手机宽度：侧栏是抽屉，弹窗不超出屏幕，确认按钮够�
   await expect(qty).toBeVisible()
   expect((await qty.boundingBox()).x + (await qty.boundingBox()).width).toBeLessThanOrEqual(375)
   await page.setViewportSize({ width: 1280, height: 720 })
+})
+
+test('无障碍：供应商门户和它的弹窗 axe 无违规', async ({ page }) => {
+  await login(page, 'sup1')
+  const check = async (scope) => {
+    await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+    const violations = await page.evaluate(async (sel) => {
+      const r = await window.axe.run(sel ? document.querySelector(sel) : document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+      return r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`)
+    }, scope)
+    expect(violations).toEqual([])
+  }
+  await expect(page.getByRole('heading', { name: '采购订单协同' })).toBeVisible()
+  await expect(page.locator('.order').first()).toBeVisible()
+  await check()
+  await page.getByRole('tab', { name: '本单位资料' }).click()
+  await expect(page.getByText('资质编号')).toBeVisible()
+  await check()
+  await page.getByRole('tab', { name: /进行中/ }).click()
+  await page.locator('.order').filter({ hasText: '已通知' }).first().getByRole('button', { name: '修改交期' }).click()
+  await expect(page.locator('.el-dialog:visible')).toBeVisible()
+  await page.waitForTimeout(400)
+  await check('.el-dialog__wrapper, .el-overlay-dialog')
 })
 
 test('无障碍：常用弹窗 axe 无违规', async ({ page }) => {

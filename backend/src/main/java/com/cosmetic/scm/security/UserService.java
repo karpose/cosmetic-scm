@@ -259,7 +259,11 @@ public class UserService {
             throw new BizException("门户账号必须选择所属单位");
         }
         Partner p = partners.findById(partnerId).orElseThrow(() -> BizException.notFound("往来单位"));
-        PartnerKind need = portal.get(0) == Role.OEM_PORTAL ? PartnerKind.OEM : PartnerKind.CUSTOMER;
+        PartnerKind need = switch (portal.get(0)) {
+            case OEM_PORTAL -> PartnerKind.OEM;
+            case SUPPLIER_PORTAL -> PartnerKind.SUPPLIER;
+            default -> PartnerKind.CUSTOMER;
+        };
         if (p.getKind() != need) {
             throw new BizException(portal.get(0).getLabel() + "账号只能绑定" + need.getLabel() + "，" + p.getName() + " 是"
                     + p.getKind().getLabel());

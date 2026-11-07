@@ -117,13 +117,18 @@
           <el-table :data="partners" empty-text="还没有供应商或受托厂">
             <el-table-column label="单位" min-width="200"><template #default="{ row }">{{ row.name }} <el-tag v-if="row.critical" size="small" type="warning" disable-transitions>关键</el-tag><div class="muted small mono">{{ row.code }} · {{ row.kindLabel }}</div></template></el-table-column>
             <el-table-column label="合格名录" width="100"><template #default="{ row }"><el-tag :type="row.qualified ? 'success' : 'danger'" size="small" disable-transitions>{{ row.qualified ? '在名录' : '已移出' }}</el-tag></template></el-table-column>
-            <el-table-column label="最近审核" width="170"><template #default="{ row }"><template v-if="row.lastAuditDate"><span class="mono">{{ row.lastAuditDate }}</span><div class="muted small">{{ row.lastResultLabel }}</div></template><span v-else class="muted">没有记录</span></template></el-table-column>
-            <el-table-column label="下次审核" width="150">
+            <el-table-column label="最近审核" width="130"><template #default="{ row }"><template v-if="row.lastAuditDate"><span class="mono">{{ row.lastAuditDate }}</span><div class="muted small">{{ row.lastResultLabel }}</div></template><span v-else class="muted">没有记录</span></template></el-table-column>
+            <el-table-column label="下次审核" width="120">
               <template #default="{ row }"><span class="mono" :class="{ bad: row.dueState === 'OVERDUE', warn: row.dueState === 'DUE' }">{{ row.nextAuditDate || '—' }}</span>
                 <div v-if="row.dueState === 'OVERDUE'" class="bad small">已超期</div><div v-else-if="row.dueState === 'DUE'" class="warn small">{{ row.dueDaysLeft }} 天后到期</div>
               </template>
             </el-table-column>
-            <el-table-column label="来料批次（拒收 / 总数）" width="170" align="right"><template #default="{ row }"><span class="mono" :class="{ bad: row.rejected > 0 }">{{ row.rejected }}</span><span class="mono"> / {{ row.received }}</span></template></el-table-column>
+            <el-table-column label="来料（拒收 / 总数）" width="140" align="right"><template #default="{ row }"><span class="mono" :class="{ bad: row.rejected > 0 }">{{ row.rejected }}</span><span class="mono"> / {{ row.received }}</span></template></el-table-column>
+            <el-table-column label="准时（按时 / 到期）" width="140" align="right"><template #default="{ row }"><span v-if="row.dueTotal" class="mono">{{ row.onTime }} / {{ row.dueTotal }}</span><span v-else class="muted">—</span></template></el-table-column>
+            <el-table-column width="110" align="center">
+              <template #header><el-tooltip content="质量 50、交货 30、审核 20，没有数据的项不计。只作参考，不影响下单" placement="top"><span>综合评分</span></el-tooltip></template>
+              <template #default="{ row }"><template v-if="row.grade"><el-tag :type="GRADE_TAG[row.grade]" size="small" disable-transitions>{{ row.grade }}</el-tag> <span class="mono small">{{ row.score }}</span></template><span v-else class="muted">—</span></template>
+            </el-table-column>
             <el-table-column v-if="isQa" label="" width="100" fixed="right"><template #default="{ row }"><el-button size="small" @click="openAudit(row)">登记审核</el-button></template></el-table-column>
           </el-table>
         </el-card>
@@ -388,6 +393,7 @@ const AREA = { PRODUCTION: '生产', QC: '检验', WAREHOUSE: '仓储', SUPPLIER
 const LEVEL = { MINOR: '微小偏差', MAJOR: '重大偏差', CRITICAL: '严重偏差' }
 const LEVEL_TAG = { MINOR: 'info', MAJOR: 'warning', CRITICAL: 'danger' }
 const CAPA_TAG = { OPEN: 'OPEN', DONE: 'PARTIAL', VERIFIED: 'RELEASED' }
+const GRADE_TAG = { A: 'success', B: 'primary', C: 'warning', D: 'danger' }
 const RESULT_TAG = { PASS: 'success', CONDITIONAL: 'warning', FAIL: 'danger' }
 const plusDays = daysFromToday
 
