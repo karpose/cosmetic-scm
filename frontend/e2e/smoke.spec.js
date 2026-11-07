@@ -1483,6 +1483,65 @@ test('新品立项：申请、管理员批准、关联成品、记录试制；�
   await expect(dt.locator('.el-table__row').filter({ hasText: 'E2E 小试' }).getByText('需调整')).toBeVisible()
 })
 
+test('受控文件：没有文件不能签批，上传后 QSO 签批成为现行版本', async ({ page }) => {
+  test.setTimeout(240_000)
+  await login(page, 'qso1')
+  await page.goto('/docs')
+  await page.locator('.el-table__row').filter({ hasText: 'SOP-QA-001' }).getByRole('button', { name: '详情' }).click()
+  const dt = page.getByRole('dialog', { name: /^受控文件 SOP-QA-001/ })
+  await expect(dt.getByText('还没有上传文件')).toBeVisible()
+  await dt.locator('#dc-password').fill(DEMO)
+  await dt.getByRole('button', { name: /签批第 1 版/ }).click()
+  await toast(page, '还没有上传文件')
+  await dt.locator('input[type=file]').setInputFiles(pdfFile('SOP-QA-001-第1版.pdf'))
+  await toast(page, '已上传')
+  await dt.locator('#dc-password').fill(DEMO)
+  await dt.getByRole('button', { name: /签批第 1 版/ }).click()
+  await toast(page, '已签批')
+  await expect(dt.getByText('现行', { exact: true })).toBeVisible()
+  await expect(dt.getByRole('button', { name: '出新版' })).toBeVisible()
+  await dt.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(page.locator('.el-table__row').filter({ hasText: 'SOP-QA-001' })).toContainText('第 1 版')
+})
+
+test('变更控制：评估生成行动项、QSO 批准、负责人完成、QSO 关闭', async ({ page }) => {
+  test.setTimeout(240_000)
+  const open = async () => {
+    await page.goto('/changes')
+    await page.locator('.el-table__row').filter({ hasText: '甘油增加第二供应商' }).getByRole('button', { name: '详情' }).click()
+    return page.getByRole('dialog', { name: /^变更 CC/ })
+  }
+  await login(page, 'qa1')
+  let dt = await open()
+  await dt.locator('#cc-impact').fill('E2E：供应商变更，需验证首批')
+  await dt.getByText('验证', { exact: true }).click()
+  await dt.getByRole('button', { name: '保存评估' }).click()
+  await toast(page, '评估已保存')
+  await expect(dt.locator('.el-table__row').filter({ hasText: '完成验证' })).toBeVisible()
+
+  await login(page, 'qso1')
+  dt = await open()
+  await dt.locator('#cc-password').fill(DEMO)
+  await dt.getByRole('button', { name: '批准变更' }).click()
+  await toast(page, '已批准')
+  await expect(dt.getByRole('button', { name: '关闭变更' })).toBeDisabled()
+
+  await login(page, 'qa1')
+  dt = await open()
+  await dt.locator('.el-table__row').filter({ hasText: '完成验证' }).getByRole('button', { name: '登记完成' }).click()
+  await page.locator('.el-message-box input').fill('E2E 首批验证合格')
+  await page.locator('.el-message-box').getByRole('button', { name: '登记完成' }).click()
+  await toast(page, '已登记完成')
+
+  await login(page, 'qso1')
+  dt = await open()
+  await dt.locator('#cc-close-note').fill('E2E 第二供应商已投用')
+  await dt.locator('#cc-password').fill(DEMO)
+  await dt.getByRole('button', { name: '关闭变更' }).click()
+  await toast(page, '变更已关闭')
+  await expect(dt.getByText('已关闭').first()).toBeVisible()
+})
+
 test('供应商账号可以填邮箱接收提醒，提醒页列出会发给谁', async ({ page }) => {
   await login(page, 'admin', 'Admin@123456')
   await page.goto('/users')
@@ -1637,7 +1696,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/changes', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页

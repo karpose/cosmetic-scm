@@ -63,6 +63,8 @@ public class DashboardService {
     private final com.cosmetic.scm.plm.StabilityService stability;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
     private final com.cosmetic.scm.plm.NpdService npd;
+    private final com.cosmetic.scm.plm.DocControlService docControl;
+    private final com.cosmetic.scm.plm.ChangeService changeControl;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnRepository supplierReturns;
     private final com.cosmetic.scm.settlement.SupplierStatementRepository statementRepo;
     private final BatchRepository batches;
@@ -204,6 +206,25 @@ public class DashboardService {
         }
         if (complianceMissing > 0) {
             todos.add(new Todo("COMPLIANCE_MISSING", "合规资料不全", "info", complianceMissing + " 个成品", "—", "缺已签批的安全评估或标签", "/compliance"));
+        }
+        for (com.cosmetic.scm.plm.DocControlService.DocRow d : docControl.pendingApproval()) {
+            todos.add(new Todo("DOC_APPROVE", "受控文件待签批", "warn", d.title(), d.docCode(), "新版本等待质量安全负责人签批", "/docs"));
+        }
+        for (com.cosmetic.scm.plm.DocControlService.DocRow d : docControl.reviewDue()) {
+            todos.add(new Todo("DOC_REVIEW", d.reviewOverdue() ? "受控文件复审已超期" : "受控文件复审快到期", d.reviewOverdue() ? "bad" : "warn", d.title(), d.docCode(), "复审期限 " + d.reviewDue(), "/docs"));
+        }
+        for (com.cosmetic.scm.plm.ChangeService.ChangeRow c : changeControl.byStatus(com.cosmetic.scm.domain.ChangeStatus.SUBMITTED)) {
+            todos.add(new Todo("CHANGE_ASSESS", "变更待评估", "warn", c.title(), c.changeNo(), c.changeTypeLabel() + "，" + c.createdBy() + " 提出", "/changes"));
+        }
+        for (com.cosmetic.scm.plm.ChangeService.ChangeRow c : changeControl.byStatus(com.cosmetic.scm.domain.ChangeStatus.ASSESSED)) {
+            todos.add(new Todo("CHANGE_APPROVE", "变更待批准", "warn", c.title(), c.changeNo(), "风险" + c.riskLabel() + "，" + c.actionsTotal() + " 项行动", "/changes"));
+        }
+        for (com.cosmetic.scm.plm.ChangeService.ChangeRow c : changeControl.byStatus(com.cosmetic.scm.domain.ChangeStatus.APPROVED)) {
+            if (c.actionsOpen() == 0) {
+                todos.add(new Todo("CHANGE_CLOSE", "变更待关闭", "info", c.title(), c.changeNo(), "行动都完成了，请确认效果后关闭", "/changes"));
+            } else if (c.actionsOverdue() > 0) {
+                todos.add(new Todo("CHANGE_ACTION", "变更行动超期", "bad", c.title(), c.changeNo(), c.actionsOverdue() + " 项行动超过期限没完成", "/changes"));
+            }
         }
         for (com.cosmetic.scm.plm.NpdService.ProjectRow p : npd.byStatus(com.cosmetic.scm.domain.NpdStatus.PROPOSED)) {
             todos.add(new Todo("NPD_PROPOSED", "新品立项待批准", "info", p.name(), p.projectNo(), p.category() + "，计划 " + p.targetLaunch() + " 上市", "/npd"));

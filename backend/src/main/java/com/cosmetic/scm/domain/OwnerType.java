@@ -14,7 +14,9 @@ public enum OwnerType {
     COMPLIANCE_DOC("合规资料"),
     STABILITY_STUDY("稳定性试验"),
     QUALITY_SPEC("质量标准"),
-    NPD_PROJECT("新品项目");
+    NPD_PROJECT("新品项目"),
+    DOC_REVISION("受控文件修订"),
+    CHANGE_REQUEST("变更");
 
     private final String label;
 

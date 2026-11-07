@@ -77,6 +77,8 @@ public class AttachmentService {
     private final com.cosmetic.scm.plm.StabilityStudyRepository stabilityStudies;
     private final com.cosmetic.scm.quality.QualitySpecRepository qualitySpecs;
     private final com.cosmetic.scm.plm.NpdProjectRepository npdProjects;
+    private final com.cosmetic.scm.plm.DocRevisionRepository docRevisions;
+    private final com.cosmetic.scm.plm.ChangeRequestRepository changeRequests;
 
     @Value("${scm.storage.max-file-mb:20}")
     private int maxFileMb;
@@ -303,6 +305,8 @@ public class AttachmentService {
             case STABILITY_STUDY -> stabilityStudies;
             case QUALITY_SPEC -> qualitySpecs;
             case NPD_PROJECT -> npdProjects;
+            case DOC_REVISION -> docRevisions;
+            case CHANGE_REQUEST -> changeRequests;
         };
     }
 

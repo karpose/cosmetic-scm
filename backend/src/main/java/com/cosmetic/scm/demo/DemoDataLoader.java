@@ -110,6 +110,8 @@ public class DemoDataLoader implements ApplicationRunner {
     private final com.cosmetic.scm.plm.StabilityService stabilityService;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecService;
     private final com.cosmetic.scm.plm.NpdService npdService;
+    private final com.cosmetic.scm.plm.DocControlService docControlService;
+    private final com.cosmetic.scm.plm.ChangeService changeService;
     private final QualityService quality;
     private final ProductionService production;
     private final SalesService sales;
@@ -315,6 +317,11 @@ public class DemoDataLoader implements ApplicationRunner {
         as("qa1", () -> npdService.link(npdCream.project().id(), new com.cosmetic.scm.plm.NpdService.LinkReq(cream.getId())));
         as("prod1", () -> npdService.addTrial(npdCream.project().id(), new com.cosmetic.scm.plm.NpdService.TrialReq(com.cosmetic.scm.domain.TrialKind.LAB, t.minusDays(20),
                 null, "2 kg", com.cosmetic.scm.domain.TrialResult.PASS, "肤感和稳定性初步观察正常（示例）")));
+        // 受控文件：一份 SOP 待签批（签批前要上传文件）；变更：换甘油供应商，待质量评估
+        as("qa1", () -> docControlService.create(new com.cosmetic.scm.plm.DocControlService.CreateReq("SOP-QA-001", "物料检验放行操作规程（示例）",
+                com.cosmetic.scm.domain.DocCategory.SOP, "质量部", 24, "首版（示例）", null)));
+        as("purchase1", () -> changeService.create(new com.cosmetic.scm.plm.ChangeService.CreateReq("甘油增加第二供应商（示例）", com.cosmetic.scm.domain.ChangeType.MATERIAL,
+                "降低单一来源风险（示例）", "引入第二家甘油供应商，规格不变（示例）", "精华液、面霜")));
         // 询价：邀请两家，华澄已报价。截止前内部看不到价格
         var rfq = as("purchase1", () -> rfqService.create(new com.cosmetic.scm.sourcing.RfqService.CreateRfqReq("透明质酸钠年度询价（示例）", t.plusDays(7), List.of(hc.id(), mp.id()),
                 List.of(new com.cosmetic.scm.sourcing.RfqService.RfqLineReq(ha.getId(), new BigDecimal("20"))))));
