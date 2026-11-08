@@ -17,7 +17,8 @@ public enum OwnerType {
     NPD_PROJECT("新品项目"),
     DOC_REVISION("受控文件修订"),
     CHANGE_REQUEST("变更"),
-    LABEL_ARTWORK("标签设计稿");
+    LABEL_ARTWORK("标签设计稿"),
+    ARTWORK_PROOF("包材打样");
 
     private final String label;
 

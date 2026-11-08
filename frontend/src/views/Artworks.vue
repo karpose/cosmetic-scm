@@ -75,6 +75,33 @@
           <p v-if="a.createdBy === auth.user?.username" class="late small">这版是您提交的，要由另一位质量安全负责人批准。</p>
           <el-form-item label="签批密码"><el-input id="aw-password" v-model="dt.password" type="password" show-password autocomplete="current-password" @keydown.enter.prevent="approve" /></el-form-item>
         </el-form>
+
+        <template v-if="a.status === 'APPROVED' || a.status === 'SUPERSEDED'">
+          <div class="sub-head row">
+            <b>打样和签样</b>
+            <el-button v-if="canProof && a.status === 'APPROVED' && !a.stale" size="small" @click="openProofCreate">登记打样</el-button>
+          </div>
+          <p class="muted small">每家印刷供应商都要按这一版打样，质量核对样张后签样；有签样，这家供应商送来的包材才能放行。</p>
+          <p v-if="!det.data" class="muted small">正在读取…</p>
+          <template v-else>
+            <el-table :data="det.data.proofs" size="small" empty-text="还没有打样">
+              <el-table-column label="编号" width="150"><template #default="{ row }"><a href="#" class="mono" @click.prevent="openProof(row)">{{ row.proofNo }}</a><div class="muted small">第 {{ row.roundNo }} 次</div></template></el-table-column>
+              <el-table-column label="供应商" min-width="140"><template #default="{ row }">{{ row.supplierName }}<div class="muted small">{{ row.proofDate }} 收到</div></template></el-table-column>
+              <el-table-column label="状态" width="120"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /><div v-if="row.current" class="small ok">现行签样</div></template></el-table-column>
+              <el-table-column label="签样 / 原因" min-width="150"><template #default="{ row }"><template v-if="row.signedBy">{{ row.signedBy }}<div class="muted small">{{ fmtTime(row.signedAt) }}</div></template><div v-if="row.resultNote" class="small">{{ row.resultNote }}</div></template></el-table-column>
+            </el-table>
+
+            <div class="sub-head"><b>印刷批次（按这一版放行的包材）</b></div>
+            <el-alert v-if="a.status === 'SUPERSEDED' && oldStock.length" type="warning" :closable="false" show-icon
+                      :title="`按这一版印刷的包材还有 ${oldStock.length} 个批次在库，请质量部决定用完还是报废（要停用可以冻结批次）`" />
+            <el-table :data="det.data.batches" size="small" empty-text="还没有按这一版放行的批次">
+              <el-table-column label="批号" width="150"><template #default="{ row }"><span class="mono">{{ row.batchNo }}</span><div class="muted small">{{ row.statusLabel }}</div></template></el-table-column>
+              <el-table-column label="供应商" min-width="140"><template #default="{ row }">{{ row.supplierName || '期初导入' }}<div v-if="row.extBatchNo" class="muted small">来料批号 {{ row.extBatchNo }}</div></template></el-table-column>
+              <el-table-column label="入库 / 现存" width="120"><template #default="{ row }">{{ fmtQty(row.qtyIn) }} / <b :class="{ late: a.status === 'SUPERSEDED' && row.onHand > 0 }">{{ fmtQty(row.onHand) }}</b></template></el-table-column>
+              <el-table-column label="签样" width="150"><template #default="{ row }"><span class="mono">{{ row.proofNo || '—' }}</span></template></el-table-column>
+            </el-table>
+          </template>
+        </template>
       </template>
       <template #footer>
         <template v-if="a && isQso && a.status === 'PENDING'">
@@ -82,6 +109,49 @@
           <el-button type="primary" :loading="dt.saving" :disabled="dt.checked.length < checklist.length" @click="approve">批准</el-button>
         </template>
         <el-button @click="dt.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="pc.visible" title="登记打样" width="520px" :close-on-click-modal="false" append-to-body>
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="印刷供应商">
+          <el-select id="pf-supplier" v-model="pc.supplierId" filterable placeholder="选择供应商" style="width:100%">
+            <el-option v-for="x in rd.suppliers.value" :key="x.id" :value="x.id" :label="`${x.name}（${x.code}）`" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="收到样张的日期"><el-date-picker id="pf-date" v-model="pc.proofDate" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d > new Date()" /></el-form-item>
+        <el-form-item label="备注"><el-input id="pf-note" v-model="pc.note" maxlength="300" placeholder="如：首次打样；换了承印物" /></el-form-item>
+        <p class="muted small">保存后上传样张照片或扫描件，再由质量人员签样。</p>
+      </el-form>
+      <template #footer>
+        <el-button @click="pc.visible = false">取消</el-button>
+        <el-button type="primary" :loading="pc.saving" @click="submitProof">保存打样</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="pf.visible" :title="`包材打样 ${pf.row?.proofNo || ''}`" width="640px" append-to-body>
+      <template v-if="pf.row">
+        <p class="summary-line"><StatusTag :status="pf.row.status" :label="pf.row.statusLabel" /> <b>{{ pf.row.supplierName }}</b> 第 {{ pf.row.roundNo }} 次打样 · {{ pf.row.pkName }} 设计稿第 {{ pf.row.artworkVersionNo }} 版 · {{ pf.row.proofDate }} 收到</p>
+        <p class="small">{{ pf.row.note }} <span class="muted">（{{ pf.row.createdBy }} 登记<template v-if="pf.row.signedBy">，{{ pf.row.signedBy }} 签样于 {{ fmtTime(pf.row.signedAt) }}</template>）</span></p>
+        <el-alert v-if="pf.row.resultNote" type="info" :closable="false" show-icon :title="`${pf.row.statusLabel}：${pf.row.resultNote}`" />
+        <AttachmentList owner-type="ARTWORK_PROOF" :owner-id="pf.row.id" :can-upload="canProof && pf.row.status === 'PENDING'" title="样张照片或扫描件" empty-text="还没有上传样张" />
+        <div class="sub-head"><b>签样核对（对照已批准的设计稿）</b></div>
+        <div class="checks">
+          <el-checkbox v-for="c in proofChecklist" :key="c.code" :model-value="pf.row.status === 'PENDING' ? pf.checked.includes(c.code) : pf.row.checked.includes(c.code)"
+                       :disabled="!(isQuality && pf.row.status === 'PENDING')" @change="(v) => toggleProof(c.code, v)">{{ c.label }}</el-checkbox>
+        </div>
+        <el-form v-if="isQuality && pf.row.status === 'PENDING'" label-position="top" style="margin-top:10px" @submit.prevent>
+          <p v-if="pf.row.createdBy === auth.user?.username" class="late small">这次打样是您登记的，要由另一位质量人员签样。</p>
+          <el-form-item label="签批密码"><el-input id="pf-password" v-model="pf.password" type="password" show-password autocomplete="current-password" @keydown.enter.prevent="approveProof" /></el-form-item>
+        </el-form>
+      </template>
+      <template #footer>
+        <template v-if="pf.row && isQuality && pf.row.status === 'PENDING'">
+          <el-button text @click="proofAction('reject', '判不合格', '写明哪里不合格，供应商改了以后重新登记打样。')">不合格</el-button>
+          <el-button type="primary" :loading="pf.saving" :disabled="pf.checked.length < proofChecklist.length" @click="approveProof">签样</el-button>
+        </template>
+        <el-button v-if="pf.row && isQso && pf.row.status === 'APPROVED'" text @click="proofAction('void', '作废签样', '作废后这家供应商的这一版包材要重新打样签样才能放行，已放行的批次不受影响。')">作废签样</el-button>
+        <el-button @click="pf.visible = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>
@@ -97,7 +167,7 @@ import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
-import { fmtTime } from '../utils/format'
+import { fmtQty, fmtTime } from '../utils/format'
 import { latestOnly } from '../utils/latest'
 import { useLoader } from '../utils/loader'
 import { useRefData } from '../utils/refdata'
@@ -107,6 +177,8 @@ const auth = useAuth()
 const rd = useRefData()
 const canEdit = computed(() => auth.hasAny('MASTER_DATA', 'QA', 'QSO'))
 const isQso = computed(() => auth.hasAny('QSO'))
+const isQuality = computed(() => auth.hasAny('QA', 'QSO'))
+const canProof = computed(() => auth.hasAny('MASTER_DATA', 'PURCHASE', 'QA', 'QSO'))
 const artworks = ref([])
 const checklist = ref([])
 const currentOnly = ref(true)
@@ -149,9 +221,76 @@ const ingReq = latestOnly()
 async function openDetail(row) {
   Object.assign(dt, { visible: true, saving: false, row, checked: [], password: '' })
   ing.data = null
+  loadDet(row.id)
   const current = ingReq()
   const d = await http.get(`/compliance/products/${row.fgItemId}/ingredients`, { silent: true }).catch(() => ({ text: '', problems: ['读取成分表失败'] }))
   if (current()) ing.data = d
+}
+
+// 打样和按这一版放行的批次
+const det = reactive({ data: null })
+const detReq = latestOnly()
+const proofChecklist = computed(() => det.data?.proofChecklist || [])
+const oldStock = computed(() => (det.data?.batches || []).filter((b) => b.onHand > 0))
+async function loadDet(id) {
+  det.data = null
+  const current = detReq()
+  const d = await http.get(`/artworks/${id}`)
+  if (current()) {
+    det.data = d
+    dt.row = d.artwork
+  }
+}
+
+const pc = reactive({ visible: false, saving: false, supplierId: null, proofDate: '', note: '' })
+function openProofCreate() {
+  rd.load()
+  Object.assign(pc, { visible: true, saving: false, supplierId: null, proofDate: new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' }), note: '' })
+}
+async function submitProof() {
+  if (!pc.supplierId || !pc.proofDate) return ElMessage.warning('请选择供应商和收到样张的日期')
+  pc.saving = true
+  try {
+    const x = await http.post(`/artworks/${a.value.id}/proofs`, { supplierId: pc.supplierId, proofDate: pc.proofDate, note: pc.note })
+    ElMessage.success(`打样 ${x.proofNo} 已登记，请上传样张`)
+    pc.visible = false
+    loadDet(a.value.id)
+    openProof(x)
+  } finally {
+    pc.saving = false
+  }
+}
+
+const pf = reactive({ visible: false, saving: false, row: null, checked: [], password: '' })
+function openProof(row) {
+  Object.assign(pf, { visible: true, saving: false, row, checked: [], password: '' })
+}
+function toggleProof(code, v) {
+  pf.checked = v ? [...new Set([...pf.checked, code])] : pf.checked.filter((x) => x !== code)
+}
+async function approveProof() {
+  if (pf.checked.length < proofChecklist.value.length) return ElMessage.warning('请逐项核对样张')
+  if (!pf.password) return ElMessage.warning('请输入签批密码')
+  pf.saving = true
+  try {
+    pf.row = await http.post(`/artworks/proofs/${pf.row.id}/approve`, { checked: pf.checked, password: pf.password })
+    pf.password = ''
+    ElMessage.success('已签样')
+    loadDet(a.value.id)
+  } finally {
+    pf.saving = false
+  }
+}
+async function proofAction(action, title, hint) {
+  let note
+  try {
+    note = (await ElMessageBox.prompt(hint, `${title} ${pf.row.proofNo}`, { confirmButtonText: title, cancelButtonText: '不了', inputValidator: (v) => !!v?.trim() || '请写明原因' })).value
+  } catch {
+    return
+  }
+  pf.row = await http.post(`/artworks/proofs/${pf.row.id}/${action}`, { note })
+  ElMessage.success(action === 'void' ? '已作废签样' : '已判不合格')
+  loadDet(a.value.id)
 }
 function toggle(code, v) {
   dt.checked = v ? [...new Set([...dt.checked, code])] : dt.checked.filter((x) => x !== code)
@@ -165,6 +304,7 @@ async function approve() {
     dt.password = ''
     ElMessage.success('已批准')
     load()
+    loadDet(a.value.id)
   } finally {
     dt.saving = false
   }
@@ -186,6 +326,8 @@ async function reject() {
 .late { color: var(--el-color-danger); }
 .summary-line { margin: 0 0 6px; line-height: 1.8; }
 .sub-head { margin: 14px 0 6px; }
+.sub-head.row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ok { color: var(--el-color-success); }
 .ing { line-height: 1.7; }
 .checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 2px 16px; }
 </style>

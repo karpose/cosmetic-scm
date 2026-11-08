@@ -24,6 +24,10 @@ public interface LabelArtworkRepository extends JpaRepository<LabelArtwork, Long
     @Query("select coalesce(max(a.versionNo), 0) from LabelArtwork a where a.pkItemId = :pkItemId")
     int maxVersion(@Param("pkItemId") Long pkItemId);
 
+    /** 只取 id，不把设计稿读进持久化上下文：之后加锁读取才能拿到数据库里的最新状态。 */
+    @Query("select a.id from LabelArtwork a where a.pkItemId = :pkItemId and a.status = :status")
+    List<Long> findIdsByPkItemIdAndStatus(@Param("pkItemId") Long pkItemId, @Param("status") ArtworkStatus status);
+
     /** 只在写事务里用。 */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from LabelArtwork x where x.id = :id")

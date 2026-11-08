@@ -190,6 +190,18 @@ public class ArtworkService {
         return views(List.of(a)).get(0);
     }
 
+    /** 单个设计稿的视图（含是否要重新评审）。 */
+    @Transactional(readOnly = true)
+    public ArtworkView view(LabelArtwork a) {
+        return views(List.of(a)).get(0);
+    }
+
+    /** 一批设计稿的视图，一次查完。 */
+    @Transactional(readOnly = true)
+    public List<ArtworkView> viewAll(List<LabelArtwork> list) {
+        return views(list);
+    }
+
     private LabelArtwork lock(Long id) {
         return artworks.lockById(id).orElseThrow(() -> BizException.notFound("标签设计稿"));
     }
