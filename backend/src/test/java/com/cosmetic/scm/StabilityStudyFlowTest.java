@@ -283,6 +283,21 @@ class StabilityStudyFlowTest {
         }
         call(qso, studyUrl(d, "approve"), Map.of("password", PWD)).andExpect(status().isOk());
         assertThat(coverageOf(qa, f).get("state").asText()).isEqualTo("SHORT");
+
+        // 导出：每个时间点每个项目一行，带判定和偏差号
+        byte[] xlsx = mvc.perform(get("/api/reports/stability").header("Authorization", "Bearer " + login("viewer1"))).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+        String sheet = "";
+        try (var z = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(xlsx), StandardCharsets.UTF_8)) {
+            java.util.zip.ZipEntry e;
+            while ((e = z.getNextEntry()) != null) {
+                if (e.getName().startsWith("xl/worksheets/")) {
+                    sheet = new String(z.readAllBytes(), StandardCharsets.UTF_8);
+                }
+            }
+        }
+        assertThat(sheet).contains(d.get("study").get("studyNo").asText()).contains("ST-BATCH-1").contains("8.5").contains("5 ~ 7").contains("不合格")
+                .contains(pull.get("deviationNo").asText()).contains("pH 偏高");
     }
 
     @Test

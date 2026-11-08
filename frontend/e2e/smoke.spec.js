@@ -1316,6 +1316,9 @@ test('稳定性试验：登记方案、录结果、超限生成偏差、写结�
   await toast(page, '已生成偏差')
   await expect(dt.getByText('（不合格）')).toBeVisible()
   await expect(dt.getByRole('link', { name: /^DV/ })).toBeVisible()
+  // 数值趋势：超限的点标出来
+  await expect(dt.getByText('数值趋势')).toBeVisible()
+  await expect(dt.getByRole('img', { name: /pH：起始 8（超限）/ })).toBeVisible()
   const no = (await dt.locator('.el-dialog__title').textContent()).replace('试验 ', '').trim()
 
   await dt.getByRole('button', { name: '写结论' }).click()
@@ -1339,6 +1342,12 @@ test('稳定性试验：登记方案、录结果、超限生成偏差、写结�
   await page.locator('.el-message-box').getByRole('button', { name: '退回结论' }).click()
   await toast(page, '已退回结论')
   await expect(dt.getByText('结论被退回')).toBeVisible()
+  await dt.getByRole('button', { name: '关闭', exact: true }).click()
+  // 导出全部试验结果
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: '导出 Excel' }).click()
+  expect((await download).suggestedFilename()).toMatch(/^稳定性试验结果-.*\.xlsx$/)
+  await page.getByRole('link', { name: no }).click()
   await dt.getByRole('button', { name: '取消试验' }).click()
   await page.locator('.el-message-box input').fill('E2E 结束')
   await page.locator('.el-message-box').getByRole('button', { name: '取消试验' }).click()

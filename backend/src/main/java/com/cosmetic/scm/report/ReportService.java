@@ -46,6 +46,7 @@ public class ReportService {
     private final SalesService sales;
     private final ComplaintService complaints;
     private final DeviationService deviations;
+    private final com.cosmetic.scm.plm.StabilityService stability;
     private final SupplierAuditService audits;
     private final RetainService retains;
     private final PurchaseService purchases;
@@ -77,6 +78,7 @@ public class ReportService {
         m.put("audit", () -> auditLogs(from, to));
         m.put("statements", this::statements);
         m.put("supplier-returns", this::supplierReturns);
+        m.put("stability", this::stabilityResults);
         return m;
     }
 
@@ -176,6 +178,15 @@ public class ReportService {
         audits.listAll().forEach(a -> rows.add(row(a.auditNo(), a.partnerName(), a.auditDate(), a.auditTypeLabel(), a.score(), a.resultLabel(), a.findings(),
                 a.auditor(), a.nextAuditDate(), a.signedBy())));
         return new Table("供应商审核", List.of("编号", "单位", "审核日期", "类型", "得分", "结论", "发现的问题", "审核员", "下次审核", "签批人"), rows);
+    }
+
+    private Table stabilityResults() {
+        List<List<Object>> rows = new ArrayList<>();
+        stability.exportRows().forEach(r -> rows.add(row(r.studyNo(), r.fgCode(), r.fgName(), r.versionNo() == null ? null : "V" + r.versionNo(), r.sample(), r.studyType(),
+                r.condition(), r.startDate(), r.status(), r.supportedMonths(), r.pullLabel(), r.dueDate(), r.pullStatus(), r.doneDate(), r.testedBy(), r.testName(),
+                r.limits(), r.result(), r.judgement(), r.deviationNo(), r.note())));
+        return new Table("稳定性试验结果", List.of("试验编号", "成品编码", "成品", "配方版本", "样品", "类型", "条件", "开始日期", "试验状态", "支持保质期（月）",
+                "时间点", "计划日期", "取样状态", "取样日期", "检测人", "检测项目", "限度或标准", "结果", "判定", "偏差", "备注"), rows);
     }
 
     private Table retainSamples() {

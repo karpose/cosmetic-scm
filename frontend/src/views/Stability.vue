@@ -7,6 +7,7 @@
       </div>
       <div class="toolbar">
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
+        <ExportButton report="stability" />
         <el-button v-if="canCreate" type="primary" @click="openCreate()">登记试验</el-button>
       </div>
     </div>
@@ -145,6 +146,22 @@
           </el-table-column>
         </el-table>
 
+        <div v-if="trends.length" class="trends">
+          <div class="sub-head"><b>数值趋势</b><span class="muted small">虚线框是限度区间，红点超限</span></div>
+          <div v-for="tr in trends" :key="tr.id" class="trend">
+            <div class="small"><b>{{ tr.name }}</b> <span class="muted">{{ tr.limit }}</span></div>
+            <svg :viewBox="`0 0 ${TW} ${TH}`" class="trend-svg" role="img" :aria-label="tr.aria">
+              <rect v-if="tr.band" x="0" :y="tr.band.y" :width="TW" :height="tr.band.h" class="band" />
+              <polyline v-if="tr.points.length > 1" :points="tr.points.map((p) => `${p.x},${p.y}`).join(' ')" class="line" />
+              <g v-for="p in tr.points" :key="p.x">
+                <circle :cx="p.x" :cy="p.y" r="4" :class="p.ok ? 'pt' : 'pt bad'" />
+                <text :x="p.x" :y="p.y - 8" text-anchor="middle" class="val">{{ p.v }}</text>
+                <text :x="p.x" :y="TH - 4" text-anchor="middle" class="lbl">{{ p.label }}</text>
+              </g>
+            </svg>
+          </div>
+        </div>
+
         <div v-if="dt.data.conclusion" class="conclusion">
           <b>结论</b>（支持保质期 {{ dt.data.study.supportedMonths }} 个月）：{{ dt.data.conclusion }}
           <div class="muted small">{{ dt.data.study.submittedBy }} 提交<template v-if="dt.data.study.signedBy">，{{ dt.data.study.signedBy }} 签批于 {{ fmtTime(dt.data.study.signedAt) }}</template></div>
@@ -226,6 +243,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
+import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
@@ -338,6 +356,34 @@ function applyDetail(d) {
   dt.data = d
   load()
 }
+// 有上下限的项目画趋势：横轴是已检测的时间点，纵轴按数值和限度一起定范围
+const TW = 600
+const TH = 150
+const trends = computed(() => {
+  if (!dt.data) return []
+  const done = dt.data.pulls.filter((p) => p.status === 'DONE')
+  return dt.data.tests.filter((t) => t.judgedBySystem).map((t) => {
+    const pts = done.map((p) => ({ p, r: p.results.find((r) => r.testId === t.id) })).filter((x) => x.r && x.r.value != null)
+    if (!pts.length) return null
+    const vals = pts.map((x) => Number(x.r.value))
+    const lims = [t.minValue, t.maxValue].filter((v) => v != null).map(Number)
+    let lo = Math.min(...vals, ...lims)
+    let hi = Math.max(...vals, ...lims)
+    if (hi === lo) { hi += 1; lo -= 1 }
+    const pad = (hi - lo) * 0.15
+    lo -= pad
+    hi += pad
+    const top = 20
+    const bottom = TH - 24
+    const y = (v) => bottom - ((v - lo) / (hi - lo)) * (bottom - top)
+    const step = pts.length > 1 ? (TW - 80) / (pts.length - 1) : 0
+    const points = pts.map((x, i) => ({ x: pts.length > 1 ? 40 + i * step : TW / 2, y: y(Number(x.r.value)), v: fmtQty(x.r.value), ok: x.r.passed, label: x.p.label }))
+    const band = t.minValue != null || t.maxValue != null
+      ? { y: y(t.maxValue != null ? Number(t.maxValue) : hi), h: y(t.minValue != null ? Number(t.minValue) : lo) - y(t.maxValue != null ? Number(t.maxValue) : hi) }
+      : null
+    return { id: t.id, name: t.name, limit: limitText(t), band, points, aria: `${t.name}：${points.map((p) => `${p.label} ${p.v}${p.ok ? '' : '（超限）'}`).join('，')}` }
+  }).filter(Boolean)
+})
 const canConclude = computed(() => dt.data && dt.data.pulls.every((p) => p.status !== 'PENDING'))
 const resultOf = (pull, test) => pull.results.find((r) => r.testId === test.id)
 const withUnit = (v, t) => `${fmtQty(v)}${t.unit ? ` ${t.unit}` : ''}`
@@ -462,6 +508,15 @@ async function noteAction(action, title, hint) {
 .test-row > :nth-child(5) { flex: 2 1 150px; }
 .head-limit { font-weight: 400; white-space: normal; line-height: 1.3; }
 .conclusion { margin-top: 12px; line-height: 1.7; }
+.trends { margin-top: 12px; }
+.trend { margin-bottom: 8px; }
+.trend-svg { width: 100%; height: auto; max-height: 170px; display: block; }
+.trend-svg .band { fill: var(--el-color-primary-light-9); stroke: var(--el-border-color-darker); stroke-dasharray: 4 3; }
+.trend-svg .line { fill: none; stroke: var(--el-color-primary); stroke-width: 2; }
+.trend-svg .pt { fill: var(--el-color-primary); }
+.trend-svg .pt.bad { fill: var(--el-color-danger); }
+.trend-svg .val { font-size: 12px; fill: var(--el-text-color-primary); }
+.trend-svg .lbl { font-size: 11px; fill: var(--el-text-color-secondary); }
 .result-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--el-border-color-lighter); }
 .result-name { flex: 1 1 100%; }
 .result-text { flex: 1 1 160px; }

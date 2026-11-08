@@ -18,6 +18,9 @@ public interface StabilityStudyRepository extends JpaRepository<StabilityStudy, 
 
     List<StabilityStudy> findTop300ByOrderByIdDesc();
 
+    /** 导出用，全部。 */
+    List<StabilityStudy> findAllByOrderByIdAsc();
+
     List<StabilityStudy> findByFgItemIdInAndStatusIn(Collection<Long> fgItemIds, Collection<StabilityStudyStatus> statuses);
 
     List<StabilityStudy> findByStatusOrderById(StabilityStudyStatus status);
