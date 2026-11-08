@@ -97,6 +97,14 @@
             </template>
           </el-table-column>
         </el-table>
+        <template v-if="dt.data.formulas.length">
+          <div class="sub-head"><b>关联的配方版本</b></div>
+          <div v-for="f in dt.data.formulas" :key="f.versionId" class="small">
+            <router-link to="/formulas">{{ f.fgName }} <span class="mono">{{ f.fgCode }} V{{ f.versionNo }}</span></router-link>
+            <StatusTag :status="f.status" :label="f.statusLabel" style="margin-left:6px" />
+          </div>
+          <p v-if="dt.data.formulas.some((f) => ['DRAFT', 'PENDING'].includes(f.status))" class="muted small">关联的配方签批或放弃之前，这项变更不能关闭。</p>
+        </template>
         <div style="margin-top:12px"><AttachmentList owner-type="CHANGE_REQUEST" :owner-id="c.id" :can-upload="auth.canAttach()" title="评估和实施资料" /></div>
 
         <el-form v-if="isQso && ['ASSESSED', 'APPROVED'].includes(c.status)" label-position="top" style="margin-top:8px" @submit.prevent>

@@ -90,6 +90,11 @@ class InputBoundaryTest {
     @Test
     void tooManyFailedLoginsFromOneSourceAreThrottled() throws Exception {
         String ip = "203.0.113." + System.nanoTime() % 200;
+        // 限流按自然分钟计数，20 次失败登录约 1.5 秒；跨过整分钟会清零，第 21 次就不是 429。离整分钟太近就等到下一分钟
+        long second = java.time.Instant.now().getEpochSecond() % 60;
+        if (second >= 55) {
+            Thread.sleep((60 - second) * 1000 + 200);
+        }
         for (int i = 0; i < 20; i++) {
             // 换账号试、换 X-Forwarded-For 都没用，nginx 会覆盖 X-Real-IP
             assertThat(loginFrom(ip, "9.9.9." + i, "spray" + i, "wrong")).isEqualTo(401);

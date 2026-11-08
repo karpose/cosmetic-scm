@@ -1542,6 +1542,17 @@ test('变更控制：评估生成行动项、QSO 批准、负责人完成、QSO 
   await expect(dt.getByText('已关闭').first()).toBeVisible()
 })
 
+test('发起配方变更：可以关联实施中的变更，选项读完前不能保存', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  await page.goto('/formulas')
+  await page.getByRole('button', { name: '发起配方变更' }).first().click()
+  const dr = dialog(page, '发起配方变更')
+  // 开关默认关闭：选填
+  await expect(dr.getByText('关联的变更（选填）')).toBeVisible()
+  await expect(dr.getByRole('button', { name: '保存草稿' })).toBeEnabled()
+  await dr.getByRole('button', { name: '取消' }).click()
+})
+
 test('供应商账号可以填邮箱接收提醒，提醒页列出会发给谁', async ({ page }) => {
   await login(page, 'admin', 'Admin@123456')
   await page.goto('/users')

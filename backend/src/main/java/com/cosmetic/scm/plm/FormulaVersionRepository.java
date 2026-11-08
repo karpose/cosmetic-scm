@@ -24,6 +24,8 @@ public interface FormulaVersionRepository extends JpaRepository<FormulaVersion, 
 
     List<FormulaVersion> findByStatus(FormulaStatus status);
 
+    List<FormulaVersion> findByChangeIdOrderById(Long changeId);
+
     /** 状态流转前先锁行：并发时第二个请求排队，读到新状态后按业务规则拒绝。只在写事务里用。 */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from FormulaVersion x where x.id = :id")

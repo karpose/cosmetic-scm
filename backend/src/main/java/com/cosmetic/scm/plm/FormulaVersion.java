@@ -47,4 +47,7 @@ public class FormulaVersion {
     private String approvedBy;
 
     private LocalDateTime approvedAt;
+
+    /** 关联的变更（变更控制）。旧版本和没要求关联时为空。 */
+    private Long changeId;
 }

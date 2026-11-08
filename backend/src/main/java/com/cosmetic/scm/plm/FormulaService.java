@@ -56,9 +56,18 @@ public class FormulaService {
     private final AuditService audit;
     private final TimeProvider time;
     private final CurrentUser currentUser;
+    private final ChangeRequestRepository changeRequests;
 
+    /** 打开后，发起配方变更要先有一项已批准的变更（变更控制）。默认关闭，上线初期不卡住现有流程。 */
+    @org.springframework.beans.factory.annotation.Value("${scm.change.require-for-formula:false}")
+    private boolean requireChange;
+
+    /** changeId：关联的变更，打开 scm.change.require-for-formula 后必填。 */
     public record DraftReq(@NotBlank(message = "请填写变更内容和原因") @Size(max = 500) String changeNote,
-                           @NotEmpty(message = "配方至少要有一行") @Valid List<BomLineReq> lines) {
+                           @NotEmpty(message = "配方至少要有一行") @Valid List<BomLineReq> lines, Long changeId) {
+        public DraftReq(String changeNote, List<BomLineReq> lines) {
+            this(changeNote, lines, null);
+        }
     }
 
     public record ApproveReq(@NotBlank(message = "请输入签批密码") String password) {
@@ -77,7 +86,7 @@ public class FormulaService {
                               String statusLabel, String changeNote, String rejectNote, String createdBy,
                               LocalDateTime createdAt, LocalDateTime submittedAt, String approvedBy,
                               LocalDateTime approvedAt, List<BomLineView> lines, List<ChangeView> changes,
-                              boolean needsFiling, String filingNo) {
+                              boolean needsFiling, String filingNo, Long changeId, String changeNo) {
     }
 
     @Transactional(readOnly = true)
@@ -92,6 +101,20 @@ public class FormulaService {
 
     @Transactional
     public VersionView createDraft(Long fgItemId, DraftReq req) {
+        // 关联变更时先锁变更行（事务第一句），和关闭变更互斥：不能一边关闭一边又挂上新的配方版本
+        ChangeRequest change = req.changeId() == null ? null : changeRequests.lockById(req.changeId()).orElseThrow(() -> BizException.notFound("变更"));
+        if (change == null && requireChange) {
+            throw new BizException("发起配方变更要先关联一项已批准的变更，请先到“变更控制”提出并批准");
+        }
+        if (change != null) {
+            if (change.getStatus() != com.cosmetic.scm.domain.ChangeStatus.APPROVED) {
+                boolean notYet = change.getStatus() == com.cosmetic.scm.domain.ChangeStatus.SUBMITTED || change.getStatus() == com.cosmetic.scm.domain.ChangeStatus.ASSESSED;
+                throw new BizException("变更 " + change.getChangeNo() + " 当前为" + change.getStatus().getLabel() + (notYet ? "，批准后才能关联配方" : "，不能再关联配方"));
+            }
+            if (change.getChangeType() != com.cosmetic.scm.domain.ChangeType.FORMULA && change.getChangeType() != com.cosmetic.scm.domain.ChangeType.MATERIAL) {
+                throw new BizException("变更 " + change.getChangeNo() + " 是" + change.getChangeType().getLabel() + "变更，配方只能关联配方或原料变更");
+            }
+        }
         // 一个成品同时只能有一个进行中的变更：先锁成品行再检查，否则同时发起会建出两个草稿
         items.lockById(fgItemId).orElseThrow(() -> BizException.notFound("成品"));
         Item fg = requireFg(fgItemId);
@@ -106,11 +129,12 @@ public class FormulaService {
         v.setVersionNo(next);
         v.setStatus(FormulaStatus.DRAFT);
         v.setChangeNote(req.changeNote().trim());
+        v.setChangeId(change == null ? null : change.getId());
         v.setCreatedBy(currentUser.usernameOrSystem());
         v.setCreatedAt(time.now());
         versions.save(v);
         saveLines(v, req.lines());
-        audit.log("新建配方变更", fg.getCode() + " V" + next, describe(req.lines()), v.getChangeNote());
+        audit.log("新建配方变更", fg.getCode() + " V" + next, describe(req.lines()) + (change == null ? "" : "，关联变更 " + change.getChangeNo()), v.getChangeNote());
         return toView(v);
     }
 
@@ -266,7 +290,8 @@ public class FormulaService {
         return new VersionView(v.getId(), v.getFgItemId(), fg.getCode(), fg.getName(), v.getVersionNo(), v.getStatus(),
                 v.getStatus().getLabel(), v.getChangeNote(), v.getRejectNote(), v.getCreatedBy(), v.getCreatedAt(),
                 v.getSubmittedAt(), v.getApprovedBy(), v.getApprovedAt(), lineViews, changeViews,
-                FormulaDiff.needsFiling(changes), filingNo);
+                FormulaDiff.needsFiling(changes), filingNo, v.getChangeId(),
+                v.getChangeId() == null ? null : changeRequests.findById(v.getChangeId()).map(ChangeRequest::getChangeNo).orElse(null));
     }
 
     private static String kindLabel(FormulaDiff.Kind k) {

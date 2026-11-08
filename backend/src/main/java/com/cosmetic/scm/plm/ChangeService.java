@@ -44,6 +44,10 @@ public class ChangeService {
     private final ChangeRequestRepository changes;
     private final ChangeActionRepository actions;
     private final UserRepository users;
+    private final FormulaVersionRepository formulaVersions;
+    private final com.cosmetic.scm.master.MasterLookup lookup;
+    @org.springframework.beans.factory.annotation.Value("${scm.change.require-for-formula:false}")
+    private boolean requireForFormula;
     private final SignatureService signature;
     private final DocNoService docNo;
     private final AuditService audit;
@@ -80,7 +84,24 @@ public class ChangeService {
                             String createdBy, LocalDateTime createdAt, String assessedBy, String approvedBy, String rejectNote, String closeNote, String closedBy, LocalDateTime closedAt) {
     }
 
-    public record ChangeDetail(ChangeRow change, List<ActionView> actions) {
+    public record LinkedFormula(Long versionId, String fgCode, String fgName, int versionNo, String status, String statusLabel) {
+    }
+
+    public record ChangeDetail(ChangeRow change, List<ActionView> actions, List<LinkedFormula> formulas) {
+    }
+
+    public record Option(Long id, String changeNo, String title, String changeTypeLabel) {
+    }
+
+    /** 发起配方变更时可选的变更：实施中的配方或原料变更。required 为 true 时必须选。 */
+    public record FormulaOptions(boolean required, List<Option> changes) {
+    }
+
+    @Transactional(readOnly = true)
+    public FormulaOptions formulaOptions() {
+        return new FormulaOptions(requireForFormula, changes.findByStatusInOrderById(List.of(ChangeStatus.APPROVED)).stream()
+                .filter(c -> c.getChangeType() == ChangeType.FORMULA || c.getChangeType() == ChangeType.MATERIAL)
+                .map(c -> new Option(c.getId(), c.getChangeNo(), c.getTitle(), c.getChangeType().getLabel())).toList());
     }
 
     @Transactional(readOnly = true)
@@ -230,6 +251,13 @@ public class ChangeService {
         if (!open.isEmpty()) {
             throw new BizException("还有行动没完成：" + String.join("、", open));
         }
+        // 关联的配方还在草稿或待签批，说明变更还没落地
+        List<String> pendingFormulas = formulaVersions.findByChangeIdOrderById(c.getId()).stream()
+                .filter(v -> v.getStatus() == com.cosmetic.scm.domain.FormulaStatus.DRAFT || v.getStatus() == com.cosmetic.scm.domain.FormulaStatus.PENDING)
+                .map(v -> lookup.item(v.getFgItemId()).getCode() + " V" + v.getVersionNo()).toList();
+        if (!pendingFormulas.isEmpty()) {
+            throw new BizException("关联的配方 " + String.join("、", pendingFormulas) + " 还没签批或放弃，不能关闭");
+        }
         c.setStatus(ChangeStatus.CLOSED);
         c.setCloseNote(req.note().trim());
         c.setClosedBy(signer.getUsername());
@@ -312,6 +340,10 @@ public class ChangeService {
     }
 
     private ChangeDetail detailOf(ChangeRequest c) {
-        return new ChangeDetail(rows(List.of(c)).get(0), actions.findByChangeIdOrderByLineNo(c.getId()).stream().map(this::view).toList());
+        List<LinkedFormula> formulas = formulaVersions.findByChangeIdOrderById(c.getId()).stream().map(v -> {
+            var fg = lookup.item(v.getFgItemId());
+            return new LinkedFormula(v.getId(), fg.getCode(), fg.getName(), v.getVersionNo(), v.getStatus().name(), v.getStatus().getLabel());
+        }).toList();
+        return new ChangeDetail(rows(List.of(c)).get(0), actions.findByChangeIdOrderByLineNo(c.getId()).stream().map(this::view).toList(), formulas);
     }
 }

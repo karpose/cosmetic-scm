@@ -113,6 +113,7 @@ docker compose up -d --build
 - 电商对接：在 `.env` 里设置 `SCM_INTEGRATION_API_KEY` 后，ERP 用请求头 `X-Api-Key` 调用 `/api/integration/**`；不设置则对接接口关闭。
 - 一物一码：`SCM_VERIFY_URL_PREFIX` 设成正式域名加 `/v/`（如 `https://scm.example.com/v/`），导出的扫码链接会用它。
 - `SCM_JWT_SECRET` 用随机长字符串并妥善保管。正式环境如果还是 `.env.example` 的占位符或开发默认值，后端会拒绝启动并说明要改哪一项。
+- 配方变更开关：`SCM_REQUIRE_CHANGE_FOR_FORMULA=true` 后，发起配方变更要先关联一项已批准的变更。默认关闭。
 - 合规资料放行开关：`SCM_COMPLIANCE_REQUIRE_DOCS=true` 后，安全评估和标签没签批的不能上市放行。默认关闭，资料补齐后再打开。规则见 `docs/PLM-默认规则.md`。
 - 供应商提醒：每日提醒开启且配置了 SMTP 时，填了邮箱的供应商门户账号按同一时间收到本单位的待确认采购单、3 天内的交期和资质到期，没有事项不发。
 - 每日提醒：设置 `SCM_NOTIFY_ENABLED=true` 和时间 `SCM_NOTIFY_CRON`（默认每天 8:30），再配置企业微信群机器人 `SCM_NOTIFY_WECOM_WEBHOOK`，或邮件 `SCM_SMTP_*` 和收件人 `SCM_NOTIFY_MAIL_TO`（见 `.env.example`）。只推送总览里警告和紧急的待办；今天没事就不发。账号填了邮箱的只收自己岗位的事项，配置的收件人和企业微信群收全部。配好后用 `admin` 在“消息提醒”点“立即发送一次”验证。
