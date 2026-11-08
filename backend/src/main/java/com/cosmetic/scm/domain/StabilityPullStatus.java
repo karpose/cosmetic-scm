@@ -4,7 +4,8 @@ package com.cosmetic.scm.domain;
 public enum StabilityPullStatus {
     PENDING("待取样"),
     DONE("已检测"),
-    SKIPPED("未取样");
+    SKIPPED("未取样"),
+    CANCELLED("方案取消");
 
     private final String label;
 

@@ -1299,6 +1299,71 @@ test('稳定性试验报告打印页：结果按时间点排列，未签批的�
   await expect(page).toHaveURL(/\/stability/)
 })
 
+test('稳定性方案修改和结果更正：加时间点、取消没做的，录错的结果由另一位 QSO 批准更正', async ({ page }) => {
+  test.setTimeout(120_000)
+  await login(page, 'qa1')
+  const no = await page.evaluate(async () => {
+    const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
+    const j = async (r) => { const x = await r.json(); if (!r.ok) throw new Error(JSON.stringify(x)); return x }
+    const fg = (await j(await fetch('/api/stability/products', { headers: h })))[0]
+    const start = new Date(Date.now() - 40 * 86400000).toISOString().slice(0, 10)
+    const d = await j(await fetch('/api/stability/studies', { method: 'POST', headers: h, body: JSON.stringify({ fgItemId: fg.fgItemId, studyType: 'OTHER', sampleRef: 'E2E 更正样品', condition: 'E2E 更正条件', startDate: start,
+      timepoints: [{ months: 0, days: 0 }, { months: 3, days: 0 }], tests: [{ name: 'pH', minValue: 5, maxValue: 7 }] }) }))
+    await j(await fetch(`/api/stability/studies/${d.study.id}/pulls/${d.pulls[0].id}/record`, { method: 'POST', headers: h, body: JSON.stringify({ doneDate: start, results: [{ testId: d.tests[0].id, value: 6 }] }) }))
+    return d.study.studyNo
+  })
+  await page.goto('/stability')
+  await page.getByRole('link', { name: no }).click()
+  const dt = page.getByRole('dialog', { name: /^试验 ST/ })
+
+  // 修改方案：加 6 个月，取消 3 个月
+  await dt.getByRole('button', { name: '修改方案' }).click()
+  const am = page.getByRole('dialog', { name: '修改方案' })
+  await am.getByRole('button', { name: '加一个时间点' }).click()
+  await am.getByRole('spinbutton', { name: '新时间点 1 的月数' }).fill('6')
+  await am.getByText(/^3 个月（计划/).click()
+  await am.locator('#st-amend-reason').fill('E2E 延长到 6 个月')
+  await am.locator('#st-amend-password').fill(DEMO)
+  await am.getByRole('button', { name: '保存修改' }).click()
+  await toast(page, '方案已改为第 1 版')
+  await expect(dt.locator('.summary-line')).toContainText('方案第 1 版')
+  await expect(dt.getByText('加时间点：6 个月；取消时间点：3 个月')).toBeVisible()
+  await expect(dt.getByText('方案取消', { exact: true })).toBeVisible()
+
+  // 申请更正起始的 pH：6 → 7.5
+  await dt.locator('.el-table__row').filter({ hasText: '起始' }).getByRole('button', { name: '申请更正' }).click()
+  const co = page.getByRole('dialog', { name: /申请更正/ })
+  await co.locator('.el-select').first().click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: 'pH' }).click()
+  await co.locator('#st-co-value').fill('7.5')
+  await expect(co.getByText('更正后不合格')).toBeVisible()
+  await co.locator('#st-co-reason').fill('E2E 原始记录是 7.5')
+  await co.getByRole('button', { name: '提交更正' }).click()
+  await toast(page, '等待质量安全负责人批准')
+  await expect(dt.getByText('6（合格） → 7.5（不合格）')).toBeVisible()
+  // 申请人看不到批准按钮
+  await expect(dt.getByRole('button', { name: '批准', exact: true })).toHaveCount(0)
+
+  // 另一位 QSO 批准：结果改为 7.5、标“已更正”、生成偏差
+  await login(page, 'qso1')
+  await page.goto('/stability')
+  await page.getByRole('link', { name: no }).click()
+  await dt.getByRole('button', { name: '批准', exact: true }).click()
+  const ca = page.getByRole('dialog', { name: '批准结果更正' })
+  await ca.locator('#st-co-password').fill(DEMO)
+  await ca.getByRole('button', { name: '批准' }).click()
+  await toast(page, '已批准更正')
+  await expect(dt.getByText('（已更正）')).toBeVisible()
+  await expect(dt.getByRole('link', { name: /^DV/ })).toBeVisible()
+  await expect(dt.getByText('已更正', { exact: true })).toBeVisible()
+  // 打印报告里有方案修改和更正记录
+  await dt.getByRole('button', { name: '打印报告' }).click()
+  const doc = page.locator('article.doc')
+  await expect(doc.getByRole('heading', { name: '方案修改（现为第 1 版）' })).toBeVisible()
+  await expect(doc.getByRole('heading', { name: '结果更正' })).toBeVisible()
+  await expect(doc.getByText('* 结果经过更正')).toBeVisible()
+})
+
 test('稳定性试验：登记方案、录结果、超限生成偏差、写结论、QSO 签批', async ({ page }) => {
   test.setTimeout(240_000)
   await login(page, 'qa1')

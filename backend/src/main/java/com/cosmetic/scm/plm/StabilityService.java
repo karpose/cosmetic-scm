@@ -17,6 +17,7 @@ import com.cosmetic.scm.common.BizException;
 import com.cosmetic.scm.common.DocNoService;
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.domain.CaseStatus;
+import com.cosmetic.scm.domain.CorrectionStatus;
 import com.cosmetic.scm.domain.FormulaStatus;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.SourceType;
@@ -66,6 +67,8 @@ public class StabilityService {
     private final StabilityTestRepository tests;
     private final StabilityPullRepository pulls;
     private final StabilityResultRepository results;
+    private final StabilityAmendmentRepository amendments;
+    private final StabilityCorrectionRepository corrections;
     private final FormulaVersionRepository versions;
     private final BatchRepository batches;
     private final MfgOrderRepository mfgOrders;
@@ -119,14 +122,25 @@ public class StabilityService {
     public record TestView(Long id, int lineNo, String name, String unit, BigDecimal minValue, BigDecimal maxValue, String criteria, boolean judgedBySystem) {
     }
 
-    public record ResultView(Long testId, BigDecimal value, String text, boolean passed) {
+    /** corrected：这个结果经过更正。 */
+    public record ResultView(Long testId, BigDecimal value, String text, boolean passed, boolean corrected) {
     }
 
     public record PullView(Long id, String label, LocalDate dueDate, StabilityPullStatus status, String statusLabel, LocalDate doneDate, String testedBy, LocalDateTime recordedAt,
                            String skipReason, String note, Boolean passed, Long deviationId, String deviationNo, List<ResultView> results) {
     }
 
-    public record StudyDetail(StudyRow study, String note, String conclusion, String rejectNote, String cancelReason, LocalDateTime submittedAt, List<TestView> tests, List<PullView> pulls) {
+    public record AmendmentView(int revNo, String reason, String summary, String createdBy, LocalDateTime createdAt) {
+    }
+
+    public record CorrectionView(Long id, Long pullId, String pullLabel, Long testId, String testName, String unit, BigDecimal oldValue, String oldText, boolean oldPassed,
+                                 BigDecimal newValue, String newText, boolean newPassed, String reason, CorrectionStatus status, String statusLabel, String requestedBy,
+                                 LocalDateTime requestedAt, String decidedBy, LocalDateTime decidedAt, String decideNote) {
+    }
+
+    /** revNo：方案现在是第几版，登记时是第 0 版。 */
+    public record StudyDetail(StudyRow study, String note, String conclusion, String rejectNote, String cancelReason, LocalDateTime submittedAt, List<TestView> tests, List<PullView> pulls,
+                              int revNo, List<AmendmentView> amendments, List<CorrectionView> corrections) {
     }
 
     /** state：OK 依据够；SHORT 依据短于标的保质期；RUNNING 进行中；STALE 只有旧配方版本的；NONE 没有。 */
@@ -409,7 +423,7 @@ public class StabilityService {
     }
 
     /** 有上下限的由系统判定，填的合格不合格不算数；没有上下限的人工判定。 */
-    private static boolean judge(StabilityTest t, ResultReq r) {
+    static boolean judge(StabilityTest t, ResultReq r) {
         if (SpecLimit.hasLimits(t.getMinValue(), t.getMaxValue())) {
             if (r.value() == null) {
                 throw new BizException("“" + t.getName() + "”有限度（" + limitsOf(t) + "），请填写实测数值");
@@ -449,6 +463,9 @@ public class StabilityService {
         }
         if (list.stream().noneMatch(p -> p.getStatus() == StabilityPullStatus.DONE)) {
             throw new BizException("没有任何检测结果，不能下结论，请取消试验");
+        }
+        if (corrections.existsByStudyIdAndStatus(id, CorrectionStatus.PENDING)) {
+            throw new BizException("有结果更正待审批，审批后再写结论");
         }
         s.setStatus(StabilityStudyStatus.REVIEW);
         s.setConclusion(req.conclusion().trim());
@@ -499,6 +516,14 @@ public class StabilityService {
         s.setStatus(StabilityStudyStatus.CANCELLED);
         s.setCancelReason(req.note().trim());
         studies.save(s);
+        // 试验取消了，待审批的更正没有意义，一并驳回
+        corrections.findByStudyIdOrderById(id).stream().filter(c -> c.getStatus() == CorrectionStatus.PENDING).forEach(c -> {
+            c.setStatus(CorrectionStatus.REJECTED);
+            c.setDecidedBy(currentUser.usernameOrSystem());
+            c.setDecidedAt(time.now());
+            c.setDecideNote("试验已取消");
+            corrections.save(c);
+        });
         audit.log("取消稳定性试验", s.getStudyNo(), lookup.item(s.getFgItemId()).getName(), req.note().trim());
         return detailOf(s);
     }
@@ -534,7 +559,7 @@ public class StabilityService {
     private StabilityPull pendingPull(StabilityStudy s, Long pullId) {
         StabilityPull p = pulls.findById(pullId).filter(x -> x.getStudyId().equals(s.getId())).orElseThrow(() -> BizException.notFound("取样时间点"));
         if (p.getStatus() != StabilityPullStatus.PENDING) {
-            throw new BizException(p.getLabel() + "当前为" + p.getStatus().getLabel() + "，结果提交后不能改；录错了请在偏差里说明");
+            throw new BizException(p.getLabel() + "当前为" + p.getStatus().getLabel() + "，结果提交后不能直接改；录错了请申请结果更正");
         }
         return p;
     }
@@ -546,7 +571,7 @@ public class StabilityService {
         return (months > 0 ? months + " 个月" : "") + (months > 0 && days > 0 ? " " : "") + (days > 0 ? days + " 天" : "");
     }
 
-    private static String limitsOf(StabilityTest t) {
+    static String limitsOf(StabilityTest t) {
         return SpecLimit.text(t.getMinValue(), t.getMaxValue(), t.getUnit());
     }
 
@@ -555,11 +580,11 @@ public class StabilityService {
         return r.text() == null || r.text().isBlank() ? v : (v.isEmpty() ? r.text().trim() : v + " " + r.text().trim());
     }
 
-    private static String plain(BigDecimal v) {
+    static String plain(BigDecimal v) {
         return v.stripTrailingZeros().toPlainString();
     }
 
-    private static String blankToNull(String s) {
+    static String blankToNull(String s) {
         return s == null || s.isBlank() ? null : s.trim();
     }
 
@@ -587,15 +612,30 @@ public class StabilityService {
         }).toList();
     }
 
-    private StudyDetail detailOf(StabilityStudy s) {
+    StudyDetail detailOf(StabilityStudy s) {
         List<StabilityPull> list = pulls.findByStudyIdOrderByDueDateAscIdAsc(s.getId());
         Map<Long, List<StabilityResult>> byPull = results.findByPullIdIn(list.stream().map(StabilityPull::getId).toList()).stream().collect(Collectors.groupingBy(StabilityResult::getPullId));
         Map<Long, String> devNos = new HashMap<>();
         deviations.findAllById(list.stream().map(StabilityPull::getDeviationId).filter(java.util.Objects::nonNull).toList()).forEach(d -> devNos.put(d.getId(), d.getDeviationNo()));
+        List<StabilityCorrection> corr = corrections.findByStudyIdOrderById(s.getId());
+        Set<String> corrected = corr.stream().filter(c -> c.getStatus() == CorrectionStatus.APPROVED).map(c -> c.getPullId() + "/" + c.getTestId()).collect(Collectors.toSet());
         List<PullView> pullViews = list.stream().map(p -> new PullView(p.getId(), p.getLabel(), p.getDueDate(), p.getStatus(), p.getStatus().getLabel(), p.getDoneDate(), p.getTestedBy(), p.getRecordedAt(), p.getSkipReason(), p.getNote(),
-                p.getPassed(), p.getDeviationId(), devNos.get(p.getDeviationId()), byPull.getOrDefault(p.getId(), List.of()).stream().map(r -> new ResultView(r.getTestId(), r.getValueNum(), r.getValueText(), r.isPassed())).toList())).toList();
-        List<TestView> testViews = tests.findByStudyIdOrderByLineNo(s.getId()).stream().map(t -> new TestView(t.getId(), t.getLineNo(), t.getName(), t.getUnit(), t.getMinValue(), t.getMaxValue(), t.getCriteria(),
+                p.getPassed(), p.getDeviationId(), devNos.get(p.getDeviationId()), byPull.getOrDefault(p.getId(), List.of()).stream()
+                        .map(r -> new ResultView(r.getTestId(), r.getValueNum(), r.getValueText(), r.isPassed(), corrected.contains(r.getPullId() + "/" + r.getTestId()))).toList())).toList();
+        List<StabilityTest> testList = tests.findByStudyIdOrderByLineNo(s.getId());
+        List<TestView> testViews = testList.stream().map(t -> new TestView(t.getId(), t.getLineNo(), t.getName(), t.getUnit(), t.getMinValue(), t.getMaxValue(), t.getCriteria(),
                 t.getMinValue() != null || t.getMaxValue() != null)).toList();
-        return new StudyDetail(rows(List.of(s)).get(0), s.getNote(), s.getConclusion(), s.getRejectNote(), s.getCancelReason(), s.getSubmittedAt(), testViews, pullViews);
+        List<AmendmentView> amendViews = amendments.findByStudyIdOrderByRevNo(s.getId()).stream()
+                .map(a -> new AmendmentView(a.getRevNo(), a.getReason(), a.getSummary(), a.getCreatedBy(), a.getCreatedAt())).toList();
+        Map<Long, StabilityTest> testById = testList.stream().collect(Collectors.toMap(StabilityTest::getId, t -> t));
+        Map<Long, String> pullLabels = list.stream().collect(Collectors.toMap(StabilityPull::getId, StabilityPull::getLabel));
+        List<CorrectionView> corrViews = corr.stream().map(c -> {
+            StabilityTest t = testById.get(c.getTestId());
+            return new CorrectionView(c.getId(), c.getPullId(), pullLabels.get(c.getPullId()), c.getTestId(), t.getName(), t.getUnit(), c.getOldValue(), c.getOldText(), c.isOldPassed(),
+                    c.getNewValue(), c.getNewText(), c.isNewPassed(), c.getReason(), c.getStatus(), c.getStatus().getLabel(), c.getRequestedBy(), c.getRequestedAt(), c.getDecidedBy(),
+                    c.getDecidedAt(), c.getDecideNote());
+        }).toList();
+        return new StudyDetail(rows(List.of(s)).get(0), s.getNote(), s.getConclusion(), s.getRejectNote(), s.getCancelReason(), s.getSubmittedAt(), testViews, pullViews,
+                amendViews.isEmpty() ? 0 : amendViews.get(amendViews.size() - 1).revNo(), amendViews, corrViews);
     }
 }

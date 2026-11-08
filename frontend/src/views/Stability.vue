@@ -88,7 +88,7 @@
         </div>
 
         <div class="sub-head"><b>检测项目</b><span><el-button size="small" text :disabled="!cr.fgItemId" :loading="cr.loadingSpec" @click="fromSpec">从质量标准带入</el-button><el-button size="small" text @click="cr.tests.push(blankTest())">加一个项目</el-button></span></div>
-        <p class="muted small sub-note">填了上下限的由系统判定合格与否；没填的由检测人判定。<b>方案登记后不能改。</b></p>
+        <p class="muted small sub-note">填了上下限的由系统判定合格与否；没填的由检测人判定。<b>登记后只能加时间点、取消还没做的时间点、加检测项目，已有项目的限度不能改。</b></p>
         <div v-for="(t, i) in cr.tests" :key="i" class="row-inputs test-row">
           <el-input v-model="t.name" maxlength="60" placeholder="项目" :aria-label="`第 ${i + 1} 个项目的名称`" />
           <el-input v-model="t.unit" maxlength="20" placeholder="单位" :aria-label="`第 ${i + 1} 个项目的单位`" />
@@ -114,6 +114,7 @@
           · {{ dt.data.study.studyTypeLabel }} · {{ dt.data.study.condition }}
           · {{ dt.data.study.batchNo ? `批号 ${dt.data.study.batchNo}` : dt.data.study.sampleRef }}
           · {{ dt.data.study.startDate }} 开始
+          <template v-if="dt.data.revNo"> · 方案第 {{ dt.data.revNo }} 版</template>
         </p>
         <el-alert v-if="dt.data.rejectNote && dt.data.study.status === 'ACTIVE'" type="warning" :closable="false" show-icon :title="`结论被退回：${dt.data.rejectNote}`" />
         <el-alert v-if="dt.data.cancelReason" type="info" :closable="false" show-icon :title="`${dt.data.study.statusLabel}：${dt.data.cancelReason}`" />
@@ -124,6 +125,7 @@
             <template #header>{{ t.name }}<div class="muted small head-limit">{{ limitText(t) }}</div></template>
             <template #default="{ row }">
               <span v-if="resultOf(row, t)" :class="{ late: !resultOf(row, t).passed }">{{ shown(resultOf(row, t), t) }}<template v-if="!resultOf(row, t).passed">（不合格）</template></span>
+              <span v-if="resultOf(row, t)?.corrected" class="muted small">（已更正）</span>
               <span v-else class="muted">—</span>
             </template>
           </el-table-column>
@@ -131,6 +133,7 @@
             <template #default="{ row }">
               <template v-if="row.status === 'DONE'">{{ row.doneDate }}<div class="muted small">{{ row.testedBy }}</div></template>
               <template v-else-if="row.status === 'SKIPPED'"><span class="late">未取样</span><div class="muted small">{{ row.skipReason }}</div></template>
+              <template v-else-if="row.status === 'CANCELLED'"><span class="muted">方案取消</span><div class="muted small">{{ row.skipReason }}</div></template>
               <span v-else class="small" :class="row.dueDate < todayStr ? 'late' : 'muted'">{{ row.dueDate < todayStr ? '已超期' : '待取样' }}</span>
               <div v-if="row.note" class="muted small">{{ row.note }}</div>
               <div v-if="row.deviationNo" class="small"><router-link to="/qms" class="mono">{{ row.deviationNo }}</router-link></div>
@@ -142,6 +145,7 @@
                 <el-button size="small" type="primary" :disabled="!takeable(row)" @click="openRecord(row)">{{ takeable(row) ? '录入结果' : '未到时间' }}</el-button>
                 <el-button size="small" text @click="skip(row)">未取样</el-button>
               </template>
+              <el-button v-else-if="row.status === 'DONE'" size="small" text @click="openCorrect(row)">申请更正</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -162,6 +166,33 @@
           </div>
         </div>
 
+        <div v-if="dt.data.amendments.length" class="changes">
+          <div class="sub-head"><b>方案修改记录</b></div>
+          <div v-for="m in dt.data.amendments" :key="m.revNo" class="small change-row">
+            <b>第 {{ m.revNo }} 版</b>：{{ m.summary }}
+            <div class="muted">原因：{{ m.reason }}（{{ m.createdBy }}，{{ fmtTime(m.createdAt) }}）</div>
+          </div>
+        </div>
+
+        <div v-if="dt.data.corrections.length" class="changes">
+          <div class="sub-head"><b>结果更正</b><span class="muted small">原结果保留在这里，批准后才改为新结果</span></div>
+          <el-table :data="dt.data.corrections" size="small">
+            <el-table-column label="时间点 · 项目" min-width="130"><template #default="{ row }">{{ row.pullLabel }} · {{ row.testName }}</template></el-table-column>
+            <el-table-column label="原结果 → 更正为" min-width="190"><template #default="{ row }">{{ corrText(row, 'old') }} → <b>{{ corrText(row, 'new') }}</b></template></el-table-column>
+            <el-table-column label="原因" min-width="170"><template #default="{ row }">{{ row.reason }}<div class="muted small">{{ row.requestedBy }} 申请</div></template></el-table-column>
+            <el-table-column label="状态" width="170">
+              <template #default="{ row }">
+                <StatusTag :status="row.status" :label="row.statusLabel" />
+                <div v-if="row.decidedBy" class="muted small">{{ row.decidedBy }}<template v-if="row.decideNote">：{{ row.decideNote }}</template></div>
+                <div v-if="isQso && row.status === 'PENDING'">
+                  <el-button size="small" text type="primary" @click="openCorrApprove(row)">批准</el-button>
+                  <el-button size="small" text @click="rejectCorr(row)">驳回</el-button>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
         <div v-if="dt.data.conclusion" class="conclusion">
           <b>结论</b>（支持保质期 {{ dt.data.study.supportedMonths }} 个月）：{{ dt.data.conclusion }}
           <div class="muted small">{{ dt.data.study.submittedBy }} 提交<template v-if="dt.data.study.signedBy">，{{ dt.data.study.signedBy }} 签批于 {{ fmtTime(dt.data.study.signedAt) }}</template></div>
@@ -173,6 +204,7 @@
         <template v-if="dt.data">
           <el-button text @click="printReport">打印报告</el-button>
           <el-button v-if="canRecord && dt.data.study.status === 'ACTIVE'" text @click="noteAction('cancel', '取消试验', '取消后不再提醒，已有的结果会保留。')">取消试验</el-button>
+          <el-button v-if="canRecord && dt.data.study.status === 'ACTIVE'" @click="openAmend">修改方案</el-button>
           <el-button v-if="isQso && dt.data.study.status === 'REVIEW'" text @click="noteAction('reject', '退回结论', '写明退回原因，退回后可以重写。')">退回</el-button>
           <el-button v-if="isQso && dt.data.study.status === 'APPROVED'" text @click="noteAction('void', '作废结论', '作废后保质期依据随之失效，记录会保留。')">作废</el-button>
           <el-button v-if="canRecord && dt.data.study.status === 'ACTIVE'" type="primary" :disabled="!canConclude" @click="openConclude">写结论</el-button>
@@ -202,11 +234,96 @@
         </div>
         <el-alert v-if="anyFailed" type="error" :closable="false" show-icon title="有不合格项，保存后会自动生成重大偏差，请在备注里写明现场情况。" />
         <el-form-item :label="noteLabel" style="margin-top:12px"><el-input id="st-result-note" v-model="rc.note" type="textarea" :rows="2" maxlength="500" /></el-form-item>
-        <p class="muted small">结果提交后不能改，请核对后再保存。</p>
+        <p class="muted small">结果提交后不能直接改，录错了要申请更正、由另一位质量安全负责人批准，请核对后再保存。</p>
       </el-form>
       <template #footer>
         <el-button @click="rc.visible = false">取消</el-button>
         <el-button type="primary" :loading="rc.saving" @click="submitRecord">保存结果</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 修改方案 -->
+    <el-dialog v-model="am.visible" title="修改方案" width="720px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <p class="muted small" style="margin-top:0">只能加时间点、取消还没做的时间点、加检测项目。已做的时间点和已有项目的限度不能改；要改限度请加一个新名称的项目。每次修改记一版。</p>
+        <div class="sub-head"><b>加时间点</b><el-button size="small" text @click="am.timepoints.push({ months: 0, days: 0 })">加一个时间点</el-button></div>
+        <div v-for="(t, i) in am.timepoints" :key="i" class="row-inputs time-row">
+          <el-input-number v-model="t.months" :min="0" :max="120" :precision="0" controls-position="right" :aria-label="`新时间点 ${i + 1} 的月数`" />
+          <span class="muted small">月</span>
+          <el-input-number v-model="t.days" :min="0" :max="3650" :precision="0" controls-position="right" :aria-label="`新时间点 ${i + 1} 的天数`" />
+          <span class="muted small">天</span>
+          <el-button size="small" text @click="am.timepoints.splice(i, 1)">删除</el-button>
+        </div>
+        <template v-if="pendingPulls.length">
+          <div class="sub-head"><b>取消还没做的时间点</b></div>
+          <el-checkbox-group v-model="am.cancel" class="cancel-list">
+            <el-checkbox v-for="p in pendingPulls" :key="p.id" :value="p.id">{{ p.label }}（计划 {{ p.dueDate }}）</el-checkbox>
+          </el-checkbox-group>
+        </template>
+        <div class="sub-head"><b>加检测项目</b><el-button size="small" text @click="am.tests.push(blankTest())">加一个项目</el-button></div>
+        <div v-for="(t, i) in am.tests" :key="i" class="row-inputs test-row">
+          <el-input v-model="t.name" maxlength="60" placeholder="项目" :aria-label="`新项目 ${i + 1} 的名称`" />
+          <el-input v-model="t.unit" maxlength="20" placeholder="单位" :aria-label="`新项目 ${i + 1} 的单位`" />
+          <el-input-number v-model="t.minValue" :controls="false" placeholder="下限" :aria-label="`新项目 ${i + 1} 的下限`" />
+          <el-input-number v-model="t.maxValue" :controls="false" placeholder="上限" :aria-label="`新项目 ${i + 1} 的上限`" />
+          <el-input v-model="t.criteria" maxlength="200" placeholder="判定标准（选填）" :aria-label="`新项目 ${i + 1} 的判定标准`" />
+          <el-button size="small" text @click="am.tests.splice(i, 1)">删除</el-button>
+        </div>
+        <el-form-item label="修改原因" style="margin-top:12px"><el-input id="st-amend-reason" v-model="am.reason" type="textarea" :rows="2" maxlength="300" placeholder="如：延长到 36 个月；3 个月样品不足" /></el-form-item>
+        <el-form-item label="签批密码（本人登录密码）"><el-input id="st-amend-password" v-model="am.password" type="password" show-password autocomplete="current-password" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="am.visible = false">取消</el-button>
+        <el-button type="primary" :loading="am.saving" @click="submitAmend">保存修改</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 申请更正 -->
+    <el-dialog v-model="co.visible" :title="`申请更正：${co.pull?.label || ''}`" width="560px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="检测项目">
+          <el-select id="st-co-test" v-model="co.testId" placeholder="选择要更正的项目" style="width:100%" @change="onCoTest">
+            <el-option v-for="t in coTests" :key="t.id" :value="t.id" :label="t.name" />
+          </el-select>
+        </el-form-item>
+        <template v-if="coTest">
+          <p class="small">原结果：<b>{{ shown(resultOf(co.pull, coTest), coTest) }}</b>{{ resultOf(co.pull, coTest).passed ? '（合格）' : '（不合格）' }} <span class="muted">{{ limitText(coTest) }}</span></p>
+          <div class="result-line">
+            <div class="result-name"><b>更正为</b></div>
+            <template v-if="coTest.judgedBySystem">
+              <el-input-number id="st-co-value" v-model="co.value" :controls="false" :aria-label="`${coTest.name}更正后的实测值`" />
+              <el-tag v-if="co.value != null" :type="coFailed ? 'danger' : 'success'" size="small" disable-transitions>{{ coFailed ? '超限' : '合格' }}</el-tag>
+            </template>
+            <template v-else>
+              <el-input v-model="co.text" maxlength="200" placeholder="结果" :aria-label="`${coTest.name}更正后的结果`" class="result-text" />
+              <el-radio-group v-model="co.passed" :aria-label="`${coTest.name}更正后是否合格`">
+                <el-radio-button :value="true">合格</el-radio-button>
+                <el-radio-button :value="false">不合格</el-radio-button>
+              </el-radio-group>
+            </template>
+          </div>
+          <el-alert v-if="coFailed && resultOf(co.pull, coTest).passed" type="warning" :closable="false" show-icon title="更正后不合格，批准后会生成重大偏差（这个时间点已有偏差的不再生成）。" />
+        </template>
+        <el-form-item label="更正原因" style="margin-top:12px"><el-input id="st-co-reason" v-model="co.reason" type="textarea" :rows="2" maxlength="300" placeholder="如：原始记录是 7.5，录入时抄错" /></el-form-item>
+        <p class="muted small">提交后由另一位质量安全负责人批准才生效，原结果会保留。</p>
+      </el-form>
+      <template #footer>
+        <el-button @click="co.visible = false">取消</el-button>
+        <el-button type="primary" :loading="co.saving" @click="submitCorrect">提交更正</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 批准更正 -->
+    <el-dialog v-model="ca.visible" title="批准结果更正" width="480px" :close-on-click-modal="false">
+      <el-form v-if="ca.row" label-position="top" @submit.prevent>
+        <p style="margin-top:0">{{ ca.row.pullLabel }} · {{ ca.row.testName }}：{{ corrText(ca.row, 'old') }} → <b>{{ corrText(ca.row, 'new') }}</b></p>
+        <p class="small">原因：{{ ca.row.reason }}（{{ ca.row.requestedBy }} 申请）</p>
+        <p v-if="ca.row.requestedBy === auth.user?.username" class="late small">这是您申请的更正，要由另一位质量安全负责人批准。</p>
+        <el-form-item label="签批密码"><el-input id="st-co-password" v-model="ca.password" type="password" show-password autocomplete="current-password" @keydown.enter.prevent="submitCorrApprove" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="ca.visible = false">取消</el-button>
+        <el-button type="primary" :loading="ca.saving" @click="submitCorrApprove">批准</el-button>
       </template>
     </el-dialog>
 
@@ -486,6 +603,93 @@ async function submitApprove() {
   }
 }
 
+// 方案修改
+const am = reactive({ visible: false, saving: false, timepoints: [], cancel: [], tests: [], reason: '', password: '' })
+const pendingPulls = computed(() => (dt.data?.pulls || []).filter((p) => p.status === 'PENDING'))
+function openAmend() {
+  Object.assign(am, { visible: true, saving: false, timepoints: [], cancel: [], tests: [], reason: '', password: '' })
+}
+async function submitAmend() {
+  const tests = am.tests.filter((t) => t.name.trim())
+  if (!am.timepoints.length && !am.cancel.length && !tests.length) return ElMessage.warning('请加时间点、选要取消的时间点或加检测项目')
+  if (!am.reason.trim()) return ElMessage.warning('请写明修改原因')
+  if (!am.password) return ElMessage.warning('请输入签批密码')
+  am.saving = true
+  try {
+    const d = await http.post(`/stability/studies/${dt.data.study.id}/amend`, {
+      reason: am.reason, password: am.password, addTimepoints: am.timepoints, cancelPullIds: am.cancel,
+      addTests: tests.map((t) => ({ name: t.name, unit: t.unit, minValue: t.minValue ?? null, maxValue: t.maxValue ?? null, criteria: t.criteria }))
+    })
+    ElMessage.success(`方案已改为第 ${d.revNo} 版`)
+    am.visible = false
+    applyDetail(d)
+  } finally {
+    am.saving = false
+  }
+}
+
+// 结果更正
+const co = reactive({ visible: false, saving: false, pull: null, testId: null, value: undefined, text: '', passed: null, reason: '' })
+const coTests = computed(() => (co.pull && dt.data ? dt.data.tests.filter((t) => resultOf(co.pull, t)) : []))
+const coTest = computed(() => coTests.value.find((t) => t.id === co.testId) || null)
+const coFailed = computed(() => !!coTest.value && lineFailed({ test: coTest.value, value: co.value, passed: co.passed }))
+function openCorrect(pull) {
+  Object.assign(co, { visible: true, saving: false, pull, testId: null, value: undefined, text: '', passed: null, reason: '' })
+}
+function onCoTest() {
+  Object.assign(co, { value: undefined, text: '', passed: null })
+}
+async function submitCorrect() {
+  if (!coTest.value) return ElMessage.warning('请选择要更正的项目')
+  if (coTest.value.judgedBySystem && co.value == null) return ElMessage.warning('请填写更正后的实测值')
+  if (!coTest.value.judgedBySystem && (!co.text.trim() || co.passed === null)) return ElMessage.warning('请填写更正后的结果并判定是否合格')
+  if (!co.reason.trim()) return ElMessage.warning('请写明更正原因')
+  co.saving = true
+  try {
+    const d = await http.post(`/stability/studies/${dt.data.study.id}/pulls/${co.pull.id}/corrections`, {
+      testId: co.testId, value: co.value ?? null, text: co.text, passed: co.passed, reason: co.reason
+    })
+    ElMessage.success('更正已提交，等待质量安全负责人批准')
+    co.visible = false
+    applyDetail(d)
+  } finally {
+    co.saving = false
+  }
+}
+function corrText(c, which) {
+  const t = { unit: c.unit }
+  const v = c[`${which}Value`]
+  const text = [v != null ? withUnit(v, t) : '', c[`${which}Text`] || ''].filter(Boolean).join(' ')
+  return `${text}${c[`${which}Passed`] ? '（合格）' : '（不合格）'}`
+}
+const ca = reactive({ visible: false, saving: false, row: null, password: '' })
+function openCorrApprove(row) {
+  Object.assign(ca, { visible: true, saving: false, row, password: '' })
+}
+async function submitCorrApprove() {
+  if (!ca.password) return ElMessage.warning('请输入签批密码')
+  ca.saving = true
+  try {
+    const d = await http.post(`/stability/corrections/${ca.row.id}/approve`, { password: ca.password })
+    const pull = d.pulls.find((p) => p.id === ca.row.pullId)
+    ElMessage[pull?.deviationNo && !ca.row.newPassed ? 'warning' : 'success'](pull?.deviationNo && !ca.row.newPassed ? `已批准更正，结果不合格，偏差 ${pull.deviationNo}` : '已批准更正')
+    ca.visible = false
+    applyDetail(d)
+  } finally {
+    ca.saving = false
+  }
+}
+async function rejectCorr(row) {
+  let note
+  try {
+    note = (await ElMessageBox.prompt('写明驳回原因，原结果不变。', '驳回更正', { confirmButtonText: '驳回', cancelButtonText: '不了', inputValidator: (v) => !!v?.trim() || '请写明原因' })).value
+  } catch {
+    return
+  }
+  applyDetail(await http.post(`/stability/corrections/${row.id}/reject`, { note }))
+  ElMessage.success('已驳回更正')
+}
+
 async function noteAction(action, title, hint) {
   let note
   try {
@@ -511,6 +715,9 @@ async function noteAction(action, title, hint) {
 .test-row > :nth-child(5) { flex: 2 1 150px; }
 .head-limit { font-weight: 400; white-space: normal; line-height: 1.3; }
 .conclusion { margin-top: 12px; line-height: 1.7; }
+.changes { margin-top: 12px; }
+.change-row { padding: 4px 0; line-height: 1.6; }
+.cancel-list { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 8px; }
 .trends { margin-top: 12px; }
 .trend { margin-bottom: 8px; }
 .trend-svg { width: 100%; height: auto; max-height: 170px; display: block; }

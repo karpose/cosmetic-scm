@@ -23,13 +23,14 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 内部岗位都能看。登记方案给主数据和质量，录结果和写结论给质量，签批、退回、作废只给 QSO。 */
+/** 内部岗位都能看。登记方案给主数据和质量，录结果、写结论、修改方案、申请更正给质量，签批、退回、作废、审批更正只给 QSO。 */
 @RestController
 @RequestMapping("/api/stability")
 @RequiredArgsConstructor
 public class StabilityController {
 
     private final StabilityService stability;
+    private final StabilityChangeService changes;
 
     @GetMapping("/studies")
     public List<StudyRow> list() {
@@ -92,5 +93,29 @@ public class StabilityController {
     @PreAuthorize("hasRole('QSO')")
     public StudyDetail voidStudy(@PathVariable Long id, @Valid @RequestBody NoteReq req) {
         return stability.voidStudy(id, req);
+    }
+
+    @PostMapping("/studies/{id}/amend")
+    @PreAuthorize("hasAnyRole('QA','QSO')")
+    public StudyDetail amend(@PathVariable Long id, @Valid @RequestBody StabilityChangeService.AmendReq req) {
+        return changes.amend(id, req);
+    }
+
+    @PostMapping("/studies/{id}/pulls/{pullId}/corrections")
+    @PreAuthorize("hasAnyRole('QA','QSO')")
+    public StudyDetail requestCorrection(@PathVariable Long id, @PathVariable Long pullId, @Valid @RequestBody StabilityChangeService.CorrectReq req) {
+        return changes.requestCorrection(id, pullId, req);
+    }
+
+    @PostMapping("/corrections/{correctionId}/approve")
+    @PreAuthorize("hasRole('QSO')")
+    public StudyDetail approveCorrection(@PathVariable Long correctionId, @Valid @RequestBody StabilityChangeService.DecideReq req) {
+        return changes.approveCorrection(correctionId, req);
+    }
+
+    @PostMapping("/corrections/{correctionId}/reject")
+    @PreAuthorize("hasRole('QSO')")
+    public StudyDetail rejectCorrection(@PathVariable Long correctionId, @Valid @RequestBody StabilityChangeService.NoteReq req) {
+        return changes.rejectCorrection(correctionId, req);
     }
 }
