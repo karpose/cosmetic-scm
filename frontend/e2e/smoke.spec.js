@@ -1520,6 +1520,11 @@ test('质量标准：新建和修订、QSO 签批；有标准的成品要先录�
   await expect(rel.locator('#rel-report')).toHaveValue(/^QI-/)
   await expect(rel.getByRole('button', { name: '签批', exact: true })).toBeEnabled()
   await rel.getByRole('button', { name: '取消' }).click()
+  // 检验结果导出
+  await page.goto('/specs')
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: '导出检验结果' }).click()
+  expect((await download).suggestedFilename()).toMatch(/^批次检验结果-.*\.xlsx$/)
 })
 
 test('新品立项：申请、管理员批准、关联成品、记录试制；上市检查没通过不能提交', async ({ page }) => {
@@ -1560,7 +1565,8 @@ test('新品立项：申请、管理员批准、关联成品、记录试制；�
   await dt.getByRole('button', { name: '关联成品' }).click()
   await toast(page, '已关联成品')
   // 7 项检查逐项显示；精华液有生效配方，稳定性试验还没结论
-  await expect(dt.locator('.check-row')).toHaveCount(7)
+  await expect(dt.locator('.check-row')).toHaveCount(8)
+  await expect(dt.locator('.check-row').filter({ hasText: '包材设计稿' }).getByText('未通过')).toBeVisible()
   await expect(dt.locator('.check-row').filter({ hasText: '生效配方' }).getByText('通过', { exact: true })).toBeVisible()
   await expect(dt.locator('.check-row').filter({ hasText: '稳定性依据' }).getByText('未通过')).toBeVisible()
   await expect(dt.getByRole('button', { name: '提交上市' })).toBeDisabled()

@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.cosmetic.scm.audit.AuditService;
@@ -56,6 +57,9 @@ public class NpdService {
     private final ComplianceService compliance;
     private final StabilityService stability;
     private final QualitySpecService specs;
+    private final LabelArtworkRepository artworks;
+    private final ArtworkService artworkService;
+    private final com.cosmetic.scm.master.MasterService master;
     private final MasterLookup lookup;
     private final SignatureService signature;
     private final DocNoService docNo;
@@ -301,6 +305,7 @@ public class NpdService {
         ComplianceService.ProductStatus cs = compliance.statuses().stream().filter(s -> s.fgItemId().equals(fgId)).findFirst().orElse(null);
         boolean docsOk = cs != null && cs.complete();
         out.add(new Check("安全评估和标签", docsOk, docsOk ? "当前配方版本已签批" : "当前配方版本的安全评估或标签还没签批", "/compliance"));
+        out.add(artworkCheck(eff.orElse(null)));
         StabilityService.ProductCoverage sc = stability.coverage().stream().filter(c -> c.fgItemId().equals(fgId)).findFirst().orElse(null);
         boolean stabOk = sc != null && "OK".equals(sc.state());
         out.add(new Check("稳定性依据", stabOk, stabOk ? "支持 " + sc.supportedMonths() + " 个月" : "当前配方版本没有足够的已签批结论", "/stability?tab=products"));
@@ -311,6 +316,33 @@ public class NpdService {
                 .anyMatch(t -> t.getKind() == TrialKind.PILOT && t.getResult() == TrialResult.PASS && effId.equals(t.getFormulaVersionId()));
         out.add(new Check("中试通过", pilot, pilot ? "当前配方版本已有中试通过" : "要有一次按当前生效配方版本做的中试，结论为通过", null));
         return out;
+    }
+
+    /**
+     * 包材设计稿：系统不知道哪些包材要印刷，所以要求生效配方里至少一个包材有现行设计稿，已批准的设计稿都不能是配方变了要重新评审的。
+     * 没有设计稿的包材（瓶盖、泵头之类）不管。
+     */
+    private Check artworkCheck(FormulaVersion eff) {
+        if (eff == null) {
+            return new Check("包材设计稿", false, "先要有生效配方", "/artworks");
+        }
+        Map<Long, Item> items = lookup.itemMap();
+        Set<Long> pks = master.versionLines(eff.getId()).stream().map(com.cosmetic.scm.master.BomLine::getItemId)
+                .filter(id -> items.get(id).getItemType() == com.cosmetic.scm.domain.ItemType.PK).collect(Collectors.toSet());
+        if (pks.isEmpty()) {
+            return new Check("包材设计稿", false, "生效配方里没有包材", "/artworks");
+        }
+        List<ArtworkService.ArtworkView> approved = artworkService.viewAll(artworks.findByStatusInOrderById(List.of(com.cosmetic.scm.domain.ArtworkStatus.APPROVED)).stream()
+                .filter(a -> pks.contains(a.getPkItemId())).toList());
+        List<String> stale = approved.stream().filter(ArtworkService.ArtworkView::stale).map(ArtworkService.ArtworkView::pkName).toList();
+        List<String> current = approved.stream().filter(a -> !a.stale()).map(a -> a.pkName() + " 第 " + a.versionNo() + " 版").toList();
+        if (!stale.isEmpty()) {
+            return new Check("包材设计稿", false, String.join("、", stale) + " 的设计稿要按新配方重新评审", "/artworks");
+        }
+        if (current.isEmpty()) {
+            return new Check("包材设计稿", false, "配方里的包材还没有已批准的设计稿", "/artworks");
+        }
+        return new Check("包材设计稿", true, String.join("、", current) + " 已批准", "/artworks");
     }
 
     private void requireReady(NpdProject p) {

@@ -105,6 +105,11 @@ public class QualitySpecService {
     }
 
     /** 放行弹窗用：生效标准、这个批次的检验记录，以及现在放不了行的原因（能放行时为空）。 */
+    /** 检验结果导出：每次检验的每个项目一行。 */
+    public record ExportRow(String inspectionNo, String batchNo, String itemCode, String itemName, String spec, LocalDate inspectedDate, String inspector, String testName,
+                            String method, String limits, String result, String judgement, String conclusion, String status, String voidReason, String deviationNo, String note) {
+    }
+
     public record Panel(SpecView spec, List<InspectionView> inspections, String blocker) {
     }
 
@@ -385,5 +390,43 @@ public class QualitySpecService {
                     i.getStatus(), i.getStatus().getLabel(), i.getVoidReason(), i.getVoidedBy(), i.getDeviationId(), devNos.get(i.getDeviationId()), i.getCreatedAt(),
                     byInspection.getOrDefault(i.getId(), List.of()).stream().map(r -> new ResultView(r.getSpecLineId(), r.getValueNum(), r.getValueText(), r.isPassed())).toList());
         }).toList();
+    }
+
+    /** 全部检验结果，导出用；from、to 按检验日期过滤，都可以为空。不用页面的查询。 */
+    @Transactional(readOnly = true)
+    public List<ExportRow> exportRows(LocalDate from, LocalDate to) {
+        List<BatchInspection> all = inspections.findAllByOrderByIdAsc().stream()
+                .filter(i -> (from == null || !i.getInspectedDate().isBefore(from)) && (to == null || !i.getInspectedDate().isAfter(to))).toList();
+        if (all.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, QualitySpec> specMap = new HashMap<>();
+        specs.findAllById(all.stream().map(BatchInspection::getSpecId).distinct().toList()).forEach(x -> specMap.put(x.getId(), x));
+        Map<Long, List<QualitySpecLine>> linesBySpec = lines.findBySpecIdIn(specMap.keySet()).stream().collect(Collectors.groupingBy(QualitySpecLine::getSpecId));
+        Map<Long, List<BatchInspectionResult>> resultsBy = results.findByInspectionIdIn(all.stream().map(BatchInspection::getId).toList()).stream()
+                .collect(Collectors.groupingBy(BatchInspectionResult::getInspectionId));
+        Map<Long, Batch> batchMap = new HashMap<>();
+        batches.findAllById(all.stream().map(BatchInspection::getBatchId).distinct().toList()).forEach(b -> batchMap.put(b.getId(), b));
+        Map<Long, String> devNos = new HashMap<>();
+        deviations.findAllById(all.stream().map(BatchInspection::getDeviationId).filter(java.util.Objects::nonNull).distinct().toList())
+                .forEach(d -> devNos.put(d.getId(), d.getDeviationNo()));
+        Map<Long, Item> items = lookup.itemMap();
+        List<ExportRow> out = new ArrayList<>();
+        for (BatchInspection i : all) {
+            Batch b = batchMap.get(i.getBatchId());
+            Item item = items.get(b.getItemId());
+            QualitySpec sp = specMap.get(i.getSpecId());
+            Map<Long, BatchInspectionResult> rs = resultsBy.getOrDefault(i.getId(), List.of()).stream().collect(Collectors.toMap(BatchInspectionResult::getSpecLineId, r -> r, (x, y) -> x));
+            for (QualitySpecLine l : linesBySpec.getOrDefault(sp.getId(), List.of()).stream().sorted(java.util.Comparator.comparing(QualitySpecLine::getLineNo)).toList()) {
+                BatchInspectionResult r = rs.get(l.getId());
+                String limits = SpecLimit.text(l.getMinValue(), l.getMaxValue(), l.getUnit());
+                String shown = r == null ? null : ((r.getValueNum() == null ? "" : r.getValueNum().stripTrailingZeros().toPlainString() + (l.getUnit() == null ? "" : " " + l.getUnit()))
+                        + (r.getValueText() == null ? "" : (r.getValueNum() == null ? "" : " ") + r.getValueText())).trim();
+                out.add(new ExportRow(i.getInspectionNo(), b.getBatchNo(), item.getCode(), item.getName(), sp.getSpecNo() + " V" + sp.getVersionNo(), i.getInspectedDate(),
+                        i.getInspector(), l.getName(), l.getMethod(), limits.isEmpty() ? l.getCriteria() : limits, shown, r == null ? null : r.isPassed() ? "合格" : "不合格",
+                        i.isPassed() ? "合格" : "不合格", i.getStatus().getLabel(), i.getVoidReason(), devNos.get(i.getDeviationId()), i.getNote()));
+            }
+        }
+        return out;
     }
 }

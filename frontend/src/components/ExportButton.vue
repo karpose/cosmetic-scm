@@ -1,5 +1,5 @@
 <template>
-  <el-button :icon="Download" :loading="busy" @click="run">导出 Excel</el-button>
+  <el-button :icon="Download" :loading="busy" @click="run">{{ label }}</el-button>
 </template>
 
 <script setup>
@@ -8,7 +8,7 @@ import { Download } from '@element-plus/icons-vue'
 import http, { LONG_TIMEOUT } from '../api'
 
 // 导出在服务端生成，是全部数据，不受页面筛选、分页和“最近 300 条”影响；每次导出都写审计日志
-const props = defineProps({ report: { type: String, required: true }, params: { type: Object, default: () => ({}) } })
+const props = defineProps({ report: { type: String, required: true }, params: { type: Object, default: () => ({}) }, label: { type: String, default: '导出 Excel' } })
 const busy = ref(false)
 
 async function run() {
