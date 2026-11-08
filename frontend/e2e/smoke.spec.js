@@ -1277,6 +1277,28 @@ test('合规资料：登记、上传、QSO 签批；全成分表；导入和停�
   await expect(rule).toContainText('已停用')
 })
 
+test('稳定性试验报告打印页：结果按时间点排列，未签批的标明仅供参考', async ({ page }) => {
+  await login(page, 'qa1')
+  await page.goto('/stability')
+  // 示例：精华液长期试验做完了起始和 3 个月，6 个月的还没到
+  await page.locator('.el-table__row').filter({ hasText: '长期' }).first().getByRole('link').click()
+  const dt = page.getByRole('dialog', { name: /^试验 ST/ })
+  const no = (await dt.locator('.el-dialog__title').textContent()).replace('试验 ', '').trim()
+  await dt.getByRole('button', { name: '打印报告' }).click()
+  await expect(page).toHaveURL(/\/stability-report\?id=\d+/)
+  const doc = page.locator('article.doc')
+  await expect(doc.getByRole('heading', { name: '稳定性试验报告' })).toBeVisible()
+  await expect(doc.getByText('试验进行中，结论未签批，仅供内部参考')).toBeVisible()
+  await expect(doc.getByText(no)).toBeVisible()
+  const results = doc.locator('table.results')
+  await expect(results.locator('thead th')).toHaveText(['检测项目', '限度', '起始', '3 个月', '6 个月'])
+  await expect(results.locator('tbody tr').filter({ hasText: 'pH' }).locator('td')).toHaveText(['pH', '5 ~ 7', '6.1', '6', '—'])
+  await expect(doc.getByText('未写结论')).toBeVisible()
+  await expect(page.getByRole('button', { name: '打印' })).toBeEnabled()
+  await page.getByRole('button', { name: '返回' }).click()
+  await expect(page).toHaveURL(/\/stability/)
+})
+
 test('稳定性试验：登记方案、录结果、超限生成偏差、写结论、QSO 签批', async ({ page }) => {
   test.setTimeout(240_000)
   await login(page, 'qa1')
