@@ -136,6 +136,63 @@ public class StabilityService {
     public record DuePull(Long studyId, String studyNo, String fgName, String fgCode, String label, LocalDate dueDate) {
     }
 
+    /** 导出的一行：一个时间点的一个检测项目；没检测的时间点（待取样、未取样）一行。 */
+    public record ExportRow(String studyNo, String fgCode, String fgName, Integer versionNo, String sample, String studyType, String condition, LocalDate startDate,
+                            String status, Integer supportedMonths, String pullLabel, LocalDate dueDate, String pullStatus, LocalDate doneDate, String testedBy,
+                            String testName, String limits, String result, String judgement, String deviationNo, String note) {
+    }
+
+    /** 全部试验的结果，导出用。不用页面的前 300 条查询。 */
+    @Transactional(readOnly = true)
+    public List<ExportRow> exportRows() {
+        List<StabilityStudy> all = studies.findAllByOrderByIdAsc();
+        if (all.isEmpty()) {
+            return List.of();
+        }
+        List<Long> ids = all.stream().map(StabilityStudy::getId).toList();
+        Map<Long, List<StabilityPull>> pullsBy = pulls.findByStudyIdIn(ids).stream().collect(Collectors.groupingBy(StabilityPull::getStudyId));
+        Map<Long, List<StabilityTest>> testsBy = tests.findByStudyIdIn(ids).stream().collect(Collectors.groupingBy(StabilityTest::getStudyId));
+        List<Long> pullIds = pullsBy.values().stream().flatMap(List::stream).map(StabilityPull::getId).toList();
+        Map<Long, Map<Long, StabilityResult>> resultsBy = new HashMap<>();
+        if (!pullIds.isEmpty()) {
+            results.findByPullIdIn(pullIds).forEach(r -> resultsBy.computeIfAbsent(r.getPullId(), k -> new HashMap<>()).put(r.getTestId(), r));
+        }
+        Map<Long, String> devNos = new HashMap<>();
+        deviations.findAllById(pullsBy.values().stream().flatMap(List::stream).map(StabilityPull::getDeviationId).filter(java.util.Objects::nonNull).distinct().toList())
+                .forEach(d -> devNos.put(d.getId(), d.getDeviationNo()));
+        Map<Long, Integer> versionNos = new HashMap<>();
+        versions.findAllById(all.stream().map(StabilityStudy::getFormulaVersionId).distinct().toList()).forEach(v -> versionNos.put(v.getId(), v.getVersionNo()));
+        Map<Long, String> batchNos = new HashMap<>();
+        batches.findAllById(all.stream().map(StabilityStudy::getBatchId).filter(java.util.Objects::nonNull).distinct().toList()).forEach(b -> batchNos.put(b.getId(), b.getBatchNo()));
+        Map<Long, Item> items = lookup.itemMap();
+        List<ExportRow> out = new ArrayList<>();
+        for (StabilityStudy s : all) {
+            Item fg = items.get(s.getFgItemId());
+            String sample = s.getBatchId() != null ? batchNos.get(s.getBatchId()) : s.getSampleRef();
+            List<StabilityTest> testList = testsBy.getOrDefault(s.getId(), List.of()).stream().sorted(Comparator.comparing(StabilityTest::getLineNo)).toList();
+            List<StabilityPull> pullList = pullsBy.getOrDefault(s.getId(), List.of()).stream().sorted(Comparator.comparing(StabilityPull::getDueDate).thenComparing(StabilityPull::getId)).toList();
+            for (StabilityPull p : pullList) {
+                Map<Long, StabilityResult> rs = resultsBy.getOrDefault(p.getId(), Map.of());
+                String note = p.getStatus() == StabilityPullStatus.SKIPPED ? p.getSkipReason() : p.getNote();
+                if (rs.isEmpty()) {
+                    out.add(new ExportRow(s.getStudyNo(), fg.getCode(), fg.getName(), versionNos.get(s.getFormulaVersionId()), sample, s.getStudyType().getLabel(), s.getConditionText(),
+                            s.getStartDate(), s.getStatus().getLabel(), s.getSupportedMonths(), p.getLabel(), p.getDueDate(), p.getStatus().getLabel(), p.getDoneDate(), p.getTestedBy(),
+                            null, null, null, null, devNos.get(p.getDeviationId()), note));
+                    continue;
+                }
+                for (StabilityTest t : testList) {
+                    StabilityResult r = rs.get(t.getId());
+                    String shown = r == null ? null : ((r.getValueNum() == null ? "" : plain(r.getValueNum()) + (t.getUnit() == null ? "" : " " + t.getUnit()))
+                            + (r.getValueText() == null ? "" : (r.getValueNum() == null ? "" : " ") + r.getValueText())).trim();
+                    out.add(new ExportRow(s.getStudyNo(), fg.getCode(), fg.getName(), versionNos.get(s.getFormulaVersionId()), sample, s.getStudyType().getLabel(), s.getConditionText(),
+                            s.getStartDate(), s.getStatus().getLabel(), s.getSupportedMonths(), p.getLabel(), p.getDueDate(), p.getStatus().getLabel(), p.getDoneDate(), p.getTestedBy(),
+                            t.getName(), limitsOf(t).isEmpty() ? t.getCriteria() : limitsOf(t), shown, r == null ? null : r.isPassed() ? "合格" : "不合格", devNos.get(p.getDeviationId()), note));
+                }
+            }
+        }
+        return out;
+    }
+
     @Transactional(readOnly = true)
     public List<StudyRow> list() {
         return rows(studies.findTop300ByOrderByIdDesc());
