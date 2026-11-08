@@ -64,7 +64,7 @@ cp .env.example .env && docker compose up -d --build
 - 质量标准（`QualitySpecService`）：按物料分版本，QSO 签批生效，提交人不能签；同一物料只能有一个待签批，所以提交先锁物料行（事务第一句）。有生效标准的物料，放行前最近一次有效检验必须合格（`blocker`，物料检验放行和上市放行都调用），没有标准的照旧。检验录入、作废都先锁批次，所以接口路径带批次 id；放行也锁批次，两边互斥。不合格生成重大偏差（`DeviationService.createForInspection`）。判定共用 `domain/rules/SpecLimit`。期初导入不检查。
 - 新品立项（`NpdService`）：上市检查 `checks` 不另存，每次都从配方、备案、`ComplianceService`、`StabilityService`、`QualitySpecService` 实时查，批准上市时再查一遍。一个成品只能属于一个进行中或已上市的项目，所以关联成品先锁物料行（事务第一句）。批准上市只是记录，不改成品和库存。立项由管理员批准（不要密码），上市由 QSO 签批。没有金额字段。
 - 受控文件（`DocControlService`）和变更控制（`ChangeService`）：写操作先锁文件或变更行（事务第一句），所以签批修订、完成行动的接口路径要带文件或变更 id。修订没有附件（`OwnerType.DOC_REVISION`）不能签批；现行版本按生效日期算，不存状态。已读确认（`doc_ack`）按 `controlled_doc.train_roles` 算应确认的人，每人每版一次，确认也先锁文件。变更关闭要求行动全部完成、关联的配方版本已签批或放弃，申请人不能批准和关闭。配方草稿可关联实施中的配方或原料变更（`formula_version.change_id`），开关 `scm.change.require-for-formula` 打开后必须关联，默认关闭；关联时 `createDraft` 先锁变更再锁成品，和关闭变更互斥。供应商、标签等操作不联动。
-- 标签设计稿（`ArtworkService`）：按包材分版本，记提交时的生效配方版本；提交先锁包材行（同一包材只能一版待签批）。批准要 QSO、不是提交人、评审清单全勾、有附件（`OwnerType.LABEL_ARTWORK`），且提交后配方没变；配方变了已批准的显示要重新评审。不拦包材采购和收货。
+- 标签设计稿（`ArtworkService`）：按包材分版本，记提交时的生效配方版本；提交先锁包材行（同一包材只能一版待签批）。批准要 QSO、不是提交人、评审清单全勾、有附件（`OwnerType.LABEL_ARTWORK`），且提交后配方没变；配方变了已批准的显示要重新评审。包材物料检验放行时（`QualityService.checkArtwork`）有现行设计稿就要确认印刷一致（`MaterialDecisionReq.artworkConfirmed`），设计稿要重新评审的不能放行；不拦采购和收货。
 - 附件只增不删，存储用 `CREATE_NEW` 不覆盖；上传校验白名单扩展名和文件头，记录 SHA-256，下载时重新核对。文件在 `scm.storage.dir`（Docker 里是 `files-data` 卷），数据库只存元数据。受托厂上传走 `/api/portal/oem/orders/{moId}/attachments`，只能传本厂未完工的单子。受托厂能看到内部传到本单的附件，这是用户确认过的，不是漏洞。
 - `spring.servlet.multipart` 的上限必须高于 nginx 的 `client_max_body_size`（现在 30 MB 对 25 MB）。业务上限（20 MB）在 `AttachmentService` 判断。反过来配置会让后端没读完请求体就回错误，和 nginx 互相等待到超时。
 - 金额是标准成本估值：`MasterService.unitCosts()` 优先用标准成本，成品退回 BOM 物料成本；没成本的物料不计入，并显示数量提示。不要当账面成本用。
@@ -100,7 +100,7 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-08）
 
-- 后端 `mvn clean test` 199 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 63 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 15 项全部通过；GitHub Actions 在 PR 上跑这四项。
+- 后端 `mvn clean test` 200 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 64 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 15 项全部通过；GitHub Actions 在 PR 上跑这四项。
   - 后端测试类共用一个内存库，CI 上测试类的执行顺序不固定。断言示例数据刚写完时的状态（如待检正好 1 批），或者会留下影响全局检查的数据（如没有配方的成品）的测试类，要用 `@TestPropertySource` 换一个单独的库（见 `MainLineIntegrationTest`）。main 曾因此失败。改测试后用 `-Dsurefire.runOrder=reversealphabetical` 和 `random` 各跑一遍。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。

@@ -27,6 +27,12 @@ public class ArtworkController {
         return artworks.list();
     }
 
+    /** 包材现行的设计稿，没有时返回 204。放行包材时核对用。 */
+    @GetMapping("/current/{pkItemId}")
+    public org.springframework.http.ResponseEntity<ArtworkService.ArtworkView> current(@PathVariable Long pkItemId) {
+        return artworks.current(pkItemId).map(org.springframework.http.ResponseEntity::ok).orElse(org.springframework.http.ResponseEntity.noContent().build());
+    }
+
     @PostMapping
     @PreAuthorize("hasAnyRole('MASTER_DATA','QA','QSO')")
     public ArtworkService.ArtworkView create(@Valid @RequestBody ArtworkService.CreateReq req) {

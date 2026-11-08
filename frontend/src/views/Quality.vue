@@ -85,6 +85,12 @@
         <el-descriptions-item label="数量">{{ fmtQty(qc.batch.qtyIn) }} {{ qc.batch.unit }}</el-descriptions-item>
       </el-descriptions>
       <InspectionPanel v-if="qc.batch" :batch-id="qc.batch.id" :batch-no="qc.batch.batchNo" :can-record="canQc" :can-void="canRelease" @loaded="onQcPanel" />
+      <el-alert v-if="qc.artwork && qc.artwork.stale" type="error" :closable="false" show-icon style="margin-top:12px"
+                :title="`设计稿 ${qc.artwork.artworkNo} 对应的成品配方已变，要先重新评审设计稿，这批包材不能放行（可以拒收）`" />
+      <div v-else-if="qc.artwork" class="artwork-check">
+        <el-checkbox id="qc-artwork" v-model="qc.artworkConfirmed">印刷内容与已批准的设计稿 {{ qc.artwork.artworkNo }} 第 {{ qc.artwork.versionNo }} 版一致</el-checkbox>
+        <router-link to="/artworks" class="small">查看设计稿</router-link>
+      </div>
       <AttachmentList v-if="qc.batch" style="margin-top:12px" owner-type="BATCH" :owner-id="qc.batch.id" :can-upload="auth.canAttach()"
                       title="供应商 COA / 检验报告" empty-text="还没有上传 COA 或检验报告" />
       <el-form label-position="top" style="margin-top:12px" @submit.prevent>
@@ -100,7 +106,7 @@
       </el-form>
       <template #footer>
         <el-button @click="qc.visible = false">取消</el-button>
-        <el-button type="primary" :loading="qc.saving" :disabled="!qc.panel || (qc.decision === 'RELEASED' && !!qc.panel.blocker)" @click="submitQc">签批</el-button>
+        <el-button type="primary" :loading="qc.saving" :disabled="!qc.panel || qc.artwork === undefined || (qc.decision === 'RELEASED' && (!!qc.panel.blocker || artworkBlocks))" @click="submitQc">签批</el-button>
       </template>
     </el-dialog>
 
@@ -173,6 +179,7 @@ import AttachmentList from '../components/AttachmentList.vue'
 import InspectionPanel from '../components/InspectionPanel.vue'
 import { useAuth } from '../stores/auth'
 import { fmtDate, fmtQty, fmtTime } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 
 const auth = useAuth()
 const loading = ref(false)
@@ -180,7 +187,19 @@ const q = reactive({ quarantine: [], pendingRelease: [], frozen: [], recent: [] 
 const canQc = computed(() => auth.hasAny('QA', 'QSO'))
 const canRelease = computed(() => auth.hasAny('QSO'))
 
-const qc = reactive({ visible: false, saving: false, batch: null, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '' })
+const qc = reactive({ visible: false, saving: false, batch: null, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '', artwork: undefined, artworkConfirmed: false })
+// 包材有已批准的设计稿时要确认印刷内容；设计稿读完之前不能签批
+const artworkBlocks = computed(() => !!qc.artwork && (qc.artwork.stale || !qc.artworkConfirmed))
+const artworkReq = latestOnly()
+async function loadArtwork(batch) {
+  const current = artworkReq()
+  if (batch.itemType !== 'PK') {
+    qc.artwork = null
+    return
+  }
+  const a = await http.get(`/artworks/current/${batch.itemId}`)
+  if (current()) qc.artwork = a || null
+}
 const rel = reactive({
   visible: false, saving: false, batch: null, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '',
   oemReleaseReviewed: false, inspectionPassed: false, recordsComplete: false, consistentWithFiling: false,
@@ -213,7 +232,8 @@ async function load() {
 }
 
 function openQc(batch) {
-  Object.assign(qc, { visible: true, batch, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '' })
+  Object.assign(qc, { visible: true, batch, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '', artwork: undefined, artworkConfirmed: false })
+  loadArtwork(batch)
 }
 
 async function submitQc() {
@@ -221,7 +241,7 @@ async function submitQc() {
   qc.saving = true
   try {
     await http.post(`/quality/batches/${qc.batch.id}/material-decision`, {
-      decision: qc.decision, reportNo: qc.reportNo, note: qc.note, password: qc.password
+      decision: qc.decision, reportNo: qc.reportNo, note: qc.note, password: qc.password, artworkConfirmed: qc.artworkConfirmed
     })
     ElMessage.success(qc.decision === 'RELEASED' ? '已放行，可用于发料' : '已判定不合格')
     qc.visible = false
@@ -275,4 +295,5 @@ onMounted(load)
 
 <style scoped>
 .checks { display: grid; gap: 4px; }
+.artwork-check { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 12px; padding: 8px 12px; border-radius: 12px; background: var(--lg-tint); }
 </style>
