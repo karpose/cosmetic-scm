@@ -1500,8 +1500,28 @@ test('受控文件：没有文件不能签批，上传后 QSO 签批成为现行
   await toast(page, '已签批')
   await expect(dt.getByText('现行', { exact: true })).toBeVisible()
   await expect(dt.getByRole('button', { name: '出新版' })).toBeVisible()
+  // 设需要确认的岗位：生产计划
+  await dt.locator('.roles-row').getByRole('button', { name: '修改' }).click()
+  await dt.locator('.roles-row .el-select').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: '生产计划' }).click()
+  await page.keyboard.press('Escape')
+  await dt.locator('.roles-row').getByRole('button', { name: '保存' }).click()
+  await toast(page, '已修改确认岗位')
+  await expect(dt.getByText('已读确认 0 / 1')).toBeVisible()
   await dt.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(page.locator('.el-table__row').filter({ hasText: 'SOP-QA-001' })).toContainText('第 1 版')
+
+  // 生产计划岗位的人：待我确认 → 打开确认
+  await login(page, 'prod1')
+  await page.goto('/docs')
+  const mine = page.locator('.mine')
+  await expect(mine).toContainText('SOP-QA-001')
+  await mine.getByRole('link', { name: 'SOP-QA-001' }).click()
+  await dt.getByRole('button', { name: /我已阅读并理解第 1 版/ }).click()
+  await toast(page, '已确认')
+  await expect(dt.getByText('已读确认 1 / 1')).toBeVisible()
+  await dt.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(page.locator('.mine')).toHaveCount(0)
 })
 
 test('变更控制：评估生成行动项、QSO 批准、负责人完成、QSO 关闭', async ({ page }) => {
@@ -1551,6 +1571,26 @@ test('发起配方变更：可以关联实施中的变更，选项读完前不�
   await expect(dr.getByText('关联的变更（选填）')).toBeVisible()
   await expect(dr.getByRole('button', { name: '保存草稿' })).toBeEnabled()
   await dr.getByRole('button', { name: '取消' }).click()
+})
+
+test('标签设计稿：对照成分表逐项评审，上传文件后 QSO 批准', async ({ page }) => {
+  await login(page, 'qso1')
+  await page.goto('/artworks')
+  await page.locator('.el-table__row').filter({ hasText: 'PK-JAR-003' }).getByRole('button', { name: '详情' }).click()
+  const dt = page.getByRole('dialog', { name: /^设计稿 LA/ })
+  await expect(dt.getByText('角鲨烷').first()).toBeVisible()
+  await expect(dt.getByRole('button', { name: '批准', exact: true })).toBeDisabled()
+  for (const label of ['全成分表与生效配方一致', '备案或注册编号正确', '净含量正确', '使用方法完整', '警示用语完整', '注册人和生产企业信息正确', '批号和限期使用日期的位置已留出']) {
+    await dt.getByText(label).click()
+  }
+  await dt.locator('#aw-password').fill(DEMO)
+  await dt.getByRole('button', { name: '批准', exact: true }).click()
+  await toast(page, '还没有上传设计稿文件')
+  await dt.locator('input[type=file]').setInputFiles(pdfFile('面霜瓶设计稿-v1.pdf'))
+  await toast(page, '已上传')
+  await dt.getByRole('button', { name: '批准', exact: true }).click()
+  await toast(page, '已批准')
+  await expect(dt.getByText('已批准').first()).toBeVisible()
 })
 
 test('供应商账号可以填邮箱接收提醒，提醒页列出会发给谁', async ({ page }) => {
@@ -1707,7 +1747,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/changes', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页

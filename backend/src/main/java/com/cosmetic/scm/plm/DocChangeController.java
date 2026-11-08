@@ -34,6 +34,23 @@ public class DocChangeController {
         return docs.list();
     }
 
+    @GetMapping("/docs/my-pending")
+    public List<DocControlService.MyAck> myPending() {
+        return docs.myPending();
+    }
+
+    @PostMapping("/docs/{id}/train-roles")
+    @PreAuthorize("hasAnyRole('QA','QSO')")
+    public DocControlService.DocDetail trainRoles(@PathVariable Long id, @Valid @RequestBody DocControlService.RolesReq req) {
+        return docs.setTrainRoles(id, req);
+    }
+
+    @PostMapping("/docs/{id}/revisions/{revId}/ack")
+    @PreAuthorize("hasAnyRole('ADMIN','MASTER_DATA','PURCHASE','WAREHOUSE','PRODUCTION','QA','QSO','SALES','FINANCE','VIEWER')")
+    public DocControlService.DocDetail ack(@PathVariable Long id, @PathVariable Long revId) {
+        return docs.ack(id, revId);
+    }
+
     @GetMapping("/docs/{id}")
     public DocControlService.DocDetail doc(@PathVariable Long id) {
         return docs.detail(id);
