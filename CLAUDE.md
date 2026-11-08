@@ -33,7 +33,7 @@ cp .env.example .env && docker compose up -d --build
 ## 架构
 
 - 后端 `backend/src/main/java/com/cosmetic/scm/`，按业务模块分包：master、purchase、inventory（含库存作业 StockOps、扫码 ScanService）、production、quality、sales、salesreturn、complaint、recall、oemportal、supplierportal、sourcing、settlement、supplierreturn、dealer、integration、planning、serial、analytics、attachment、plm、qms、mes、report、notify、trace、dashboard、audit、security、demo。跨模块只通过 Repository 读写，服务之间不互相注入，避免循环依赖。
-- `domain/rules/` 是纯 Java 业务规则（FefoAllocator、ShelfLife、FormulaCompliance、FormulaDiff、Replenishment、DemandForecast、SpecLimit），不依赖框架，有单元测试。新的计算规则优先放这里。
+- `domain/rules/` 是纯 Java 业务规则（FefoAllocator、ShelfLife、FormulaCompliance、FormulaDiff、Replenishment、DemandForecast、SpecLimit、CasNumber），不依赖框架，有单元测试。新的计算规则优先放这里。
 - 实体之间只用 Long 外键字段，不用 JPA 关联映射；列表视图通过 `MasterLookup` 一次载入主数据 Map 再组装 record 视图。
 - 表结构只由 Flyway 管理（`ddl-auto: none`）。改表新增 `V{n}__xxx.sql`，**绝不修改已有迁移脚本**。SQL 需同时兼容 MySQL 8 和 H2 MySQL 模式。
 - 前端 `frontend/src/`：Vue 3 `<script setup>` + Element Plus，JavaScript（非 TS）。接口统一走 `src/api.js`（自动带 JWT，错误统一 `ElMessage` 提示，`{ silent: true }` 可静默）。主数据下拉用 `utils/refdata.js` 的 `useRefData()`；弹窗要用它设默认值时先 `await rd.ready()`，否则网络慢时默认值一直是空的。查询条件会变的请求（切换仓库、单据、批号）用 `utils/latest.js` 的 `latestOnly()`，先发的请求可能晚回来：盘点表曾因此显示 A 仓、提交成 B 仓。弹窗打开后才异步带出的数据（如可退批次）到手之前，提交按钮要禁用，否则点了只提示“请至少填一行”，响应回来又自动填上。带 `:loading` 的提交按钮加载中是禁用的，浏览器这时不响应回车，要在输入框上处理 `@keydown.enter.prevent`。上传、下载和导入用 `LONG_TIMEOUT`，默认 30 秒传不完大附件。`router.onError` 处理升级后旧页面懒加载失败（自动刷新一次）。列表筛选 + 分页统一用 `utils/table.js` 的 `usePaged()` 和 `components/ListPager.vue`，加载失败用 `LoadError.vue`。
@@ -44,7 +44,7 @@ cp .env.example .env && docker compose up -d --build
 ## 必须保持的规则
 
 - 库存只能通过 `InventoryService.change/consume` 修改：行锁 + 不允许负数 + 每次写 `stock_txn` 流水。
-- 所有业务写操作在一个 `@Transactional` 方法里完成，并在同一事务里调用 `AuditService.log`。审计日志只增不改，不提供修改 / 删除接口。修改主数据和账号要记录修改前后的值（`common/FieldDiff`），只记“修改了物料”事后查不出改了什么。新字段记得加进 `itemFields` / `partnerFields` / `userFields`。
+- 所有业务写操作在一个 `@Transactional` 方法里完成，并在同一事务里调用 `AuditService.log`。审计日志只增不改，不提供修改 / 删除接口。修改主数据和账号要记录修改前后的值（`common/FieldDiff`），只记“修改了物料”事后查不出改了什么。新字段记得加进 `itemFields` / `partnerFields` / `userFields`（物料 CAS 号已加）。
 - 盘点只能调整该仓已有记录的批次（`InventoryService.adjustTo`），没有记录的不按账面 0 算盘盈，否则错仓提交会凭空多出库存。
 - 单号、批号由 `DocNoService.next(prefix, date)` 生成（必须在事务内）。
 - FEFO 分配只取 `RELEASED` 批次；出库时再次确认批次状态（防止分配后被冻结）。退货隔离区（`WarehouseKind.RETURN`）的库存永远不参与分配，只能走退货处置。
@@ -59,7 +59,7 @@ cp .env.example .env && docker compose up -d --build
 - 供应商门户（`supplierportal`）：准时率按 `first_promised_date` 算，这个字段写入后不能再改，否则改一次交期就能把迟到变成准时。没承诺过的按采购期望日，都没有的不计。送货通知只是预告，库存和批次只由 `PurchaseService.receive` 生成。供应商只能看本单位账号上传的文件（内部传到单据和单位上的审核报告不开放）；新增这类接口时，锁必须是事务第一句，所以先 `lockById` 再判断归属。供应商提醒在 `NotifyService.supplierDigests`，内容只能有本单位的事，只走定时任务，`sendNow` 不发给供应商（管理员点测试不该打扰外部单位），也不受内部有没有待办影响。评分 `SupplierScore` 只作展示，不进下单判断，也不给供应商看；权重是默认值，要质量部确认。
 - 询价比价（`sourcing`）：开标前接口不能返回价格，审计也不能记价格（不是只在页面上藏）。定标人不能是询价人，要签批。对账结算（`settlement`）：只结算 `RELEASED` 的来料批次；可结算批次是算出来的，所以生成对账单先锁供应商行，且必须是事务第一句，否则同一批次会结算两次。发票金额要和合计完全一致，审批人不能是制单人。单价和金额只给 ADMIN、PURCHASE、FINANCE（`PriceAccess`）：`PoLineView` 按角色隐藏；审计里带金额的用 `AuditService.logMoney`，读取时遮盖、搜索也不匹配，遮盖返回副本，不能改实体；总览所有内部岗位都能看，待办文字不能带金额。`SourcingSettlementTest.pricesAndAmountsDoNotLeakToOtherInternalRoles` 会扫所有 GET 接口，曾查出 59 处泄露，新接口自动被扫到。生成对账单后批次不再是放行状态的，不能审批和付款。这些都是默认规则，清单在 `docs/SRM-默认规则.md`，改规则时同步更新。
 - 退供（`supplierreturn`）：质量签批时才扣库存，流水类型 `RETURN_OUT`（`txn_type` 列只有 12 位，枚举名不能再长）。发起时先锁批次，额度 = 在库 - 待签批。对账的规则在 `SettlementService.unbilled`：结算前退的减数量，结算后退的生成负数冲减行（`return_id` 不为空）；算过的退货写 `settled_statement_id`，作废对账单时清空，这样既不重复也不漏。判断批次是否已结算要排除冲减行。
-- 法规目录（`RegulatoryService`）：**系统不内置法规内容，不要凭记忆往代码或迁移里写法规数据**，只能导入，来源必填。按 INCI 和别名对照（别名在 `regulated_alias`，对照键唯一；导入时整批删一次旧别名再写，`ruleOf`、`compare`、`violations` 都要查别名）。`key`：不分大小写和重音、去首尾空格（MySQL 的 `0900_ai_ci` 认为 é 和 e 相同，H2 不认为，只改一边就会把禁用条目悄悄覆盖）。导入先校验后写，不要在循环里查库（包括 `currentUser.find`、`audit.log`）：每次查询 Hibernate 都要检查全部已载入实体，曾 5000 行要 49 秒、预检也一样。`MasterService.check`、`PurchaseService`、`RfqService` 都用它，取严的。已生效配方不自动停用，走 `violations` 报紧急待办。合规资料（`ComplianceService`）对应配方版本，配方变了显示要重新评估；QSO 签批，不能是登记人。放行默认不拦，开关 `scm.compliance.require-docs-for-release`。这些默认规则在 `docs/PLM-默认规则.md`。
+- 法规目录（`RegulatoryService`）：**系统不内置法规内容，不要凭记忆往代码或迁移里写法规数据**，只能导入，来源必填。按 INCI、别名和 CAS 号对照，对上多条取最严的（`strictest`）。物料 `cas_no` 保存时用 `domain/rules/CasNumber` 校验；目录 CAS 列只取有效号写进 `regulated_cas`（不唯一）。别名在 `regulated_alias`，对照键唯一；导入时整批删一次旧别名再写，`ruleOf`、`compare`、`violations` 都要查别名）。`key`：不分大小写和重音、去首尾空格（MySQL 的 `0900_ai_ci` 认为 é 和 e 相同，H2 不认为，只改一边就会把禁用条目悄悄覆盖）。导入先校验后写，不要在循环里查库（包括 `currentUser.find`、`audit.log`）：每次查询 Hibernate 都要检查全部已载入实体，曾 5000 行要 49 秒、预检也一样。`MasterService.check`、`PurchaseService`、`RfqService` 都用它，取严的。已生效配方不自动停用，走 `violations` 报紧急待办。合规资料（`ComplianceService`）对应配方版本，配方变了显示要重新评估；QSO 签批，不能是登记人。放行默认不拦，开关 `scm.compliance.require-docs-for-release`。这些默认规则在 `docs/PLM-默认规则.md`。
 - 稳定性试验（`StabilityService`）：**条件和限度不内置**，前端预填的只是常用安排。所有写操作先锁试验行（`lockById`，事务第一句），所以录结果的接口路径要带试验 id，不能先按取样 id 查。结果提交后不能改；有上下限的由系统判定，人工填的合格不算数；不合格自动生成重大偏差挂到批次（`DeviationService.createForStudy`），偏差没关不能签批结论。保质期依据只看当前生效配方版本上已签批的结论。放行不拦。导出（报表 `stability`）走 `exportRows` 的全量查询。默认规则在 `docs/PLM-默认规则.md`。
 - 质量标准（`QualitySpecService`）：按物料分版本，QSO 签批生效，提交人不能签；同一物料只能有一个待签批，所以提交先锁物料行（事务第一句）。有生效标准的物料，放行前最近一次有效检验必须合格（`blocker`，物料检验放行和上市放行都调用），没有标准的照旧。检验录入、作废都先锁批次，所以接口路径带批次 id；放行也锁批次，两边互斥。不合格生成重大偏差（`DeviationService.createForInspection`）。判定共用 `domain/rules/SpecLimit`。期初导入不检查。
 - 新品立项（`NpdService`）：上市检查 `checks` 不另存，每次都从配方、备案、`ComplianceService`、`StabilityService`、`QualitySpecService` 实时查，批准上市时再查一遍。一个成品只能属于一个进行中或已上市的项目，所以关联成品先锁物料行（事务第一句）。批准上市只是记录，不改成品和库存。立项由管理员批准（不要密码），上市由 QSO 签批。没有金额字段。
@@ -76,7 +76,7 @@ cp .env.example .env && docker compose up -d --build
 - 导出在服务端生成（`ReportService` + `common/XlsxWriter`），每次写审计。单元格文本只写内联字符串，不写公式。新增报表在 `registry()` 里加一项。预测规则在 `domain/rules/DemandForecast`，历史按首次出库到上个完整月。
 - 提醒内容直接取 `DashboardService.summary()` 的待办（全部），总览页面经 `forDisplay` 每类最多显示 30 条，`todoTotal` 是全部数量。总览没有缓存（放行后待办要立刻消失），新加的待办不要把整张表读出来再过滤。新的到期规则加到总览待办就会进提醒，新的待办类型要在 `TodoRouting` 里指定岗位，否则不进个人邮件。错误信息写库前要去掉 webhook 地址（含密钥）。
 - 生产单取消（`ProductionService.cancel`）：未发料直接取消；已发料未开工退料并删除 `mfg_issue`（否则追溯会显示批次流向这张单，流水和审计保留）；开工后（`mes.started`）或受托厂已回传生产中、已申报的不能取消。新增读生产单状态的代码要想到 CANCELLED。采购单：没收货 CANCELLED，部分收货 CLOSED。
-- 主数据导入：已存在的编码，留空的格和文件里没有的列都保留原值（曾因留空把禁用原料悄悄解禁、清空标准成本），要清空到主数据页面改；预检列出每一处修改。是否类的格认不出就报错，不当成“否”。模板里新加列时，`/items`、`/partners` 的返回要有同名字段，否则留空还是会被清空。
+- 主数据导入：已存在的编码，留空的格和文件里没有的列都保留原值（曾因留空把禁用原料悄悄解禁、清空标准成本），要清空到主数据页面改；预检列出每一处修改。是否类的格认不出就报错，不当成“否”。模板里新加列时，`/items`、`/partners` 的返回要有同名字段，否则留空还是会被清空；新列放在模板最后，已经下载过旧模板的人原有各列位置不变（导入按表头名对应，旧模板照样能导），空库走查会核对模板表头，要同步改。
 - 现有库存只能走期初导入（`OpeningStockService`，来源 `SourceType.OPEN`，流水 `OPENING`），不要造采购单或生产单。已放行的批次写放行记录，成品写留样，所以只给 QSO 并要签批。行上不加 `@Valid`，缺字段要按 Excel 行号报。
 - 工序勾了“须记录设备”时，`MesService.recordStep` 用 `EquipmentService.unusableReason` 校验；校准不合格的处理在 `EquipmentService.calibrate`，设备停用并生成偏差。
 - 导出（`ReportService`）必须用 `listAll` 类查询，不能用页面的 Top300 查询；超过 `MAX_ROWS` 报错，不截断。页面列表到上限时用 `ListCapHint` 提示。
@@ -100,12 +100,12 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-08）
 
-- 后端 `mvn clean test` 201 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 64 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 15 项全部通过；GitHub Actions 在 PR 上跑这四项。
+- 后端 `mvn clean test` 204 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 65 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 15 项全部通过；GitHub Actions 在 PR 上跑这四项。
   - 后端测试类共用一个内存库，CI 上测试类的执行顺序不固定。断言示例数据刚写完时的状态（如待检正好 1 批），或者会留下影响全局检查的数据（如没有配方的成品）的测试类，要用 `@TestPropertySource` 换一个单独的库（见 `MainLineIntegrationTest`）。main 曾因此失败。改测试后用 `-Dsurefire.runOrder=reversealphabetical` 和 `random` 各跑一遍。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
   - `pom.xml` 把 Tomcat、Jackson、log4j 钉在修复了已知漏洞的版本，升 Spring Boot 时要删掉这几行。Spring MVC 6.2.19 还有两条 OSV 记录（SSE 片段渲染、XsltView），修复只在 7.x，系统没用到这两个功能。扫描脚本 `scripts/dep-scan.py`，判断过不影响的漏洞登记在 `scripts/dep-scan-allow.txt`，`dep-scan.yml` 每周跑一次（不是 PR 检查）。
-- 已完成：法规目录别名（V23 迁移）；包材放行核对设计稿；稳定性趋势和结果导出；标签设计稿评审（V22 迁移）；受控文件已读确认（V21 迁移）；配方变更关联变更控制（V20 迁移）；受控文件和变更控制（V19 迁移）；新品立项和试制（V18 迁移）；质量标准和批次检验（V17 迁移）；稳定性试验（V16 迁移）；原料法规目录、产品合规资料（V15 迁移）；退货给供应商（V14 迁移）；询价比价、对账结算、财务角色（V12、V13 迁移）；供应商门户、准时交货率和综合评分（V11 迁移）；一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。
+- 已完成：物料 CAS 号和法规目录按 CAS 对照（V24 迁移）；法规目录别名（V23 迁移）；包材放行核对设计稿；稳定性趋势和结果导出；标签设计稿评审（V22 迁移）；受控文件已读确认（V21 迁移）；配方变更关联变更控制（V20 迁移）；受控文件和变更控制（V19 迁移）；新品立项和试制（V18 迁移）；质量标准和批次检验（V17 迁移）；稳定性试验（V16 迁移）；原料法规目录、产品合规资料（V15 迁移）；退货给供应商（V14 迁移）；询价比价、对账结算、财务角色（V12、V13 迁移）；供应商门户、准时交货率和综合评分（V11 迁移）；一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。
 - Docker 部署已在本机 Colima（profile `cosmetic-scm`）上完整演练过：MySQL 8 上迁移和示例数据都正常，HTTPS、首次改密、备份恢复、数据库宕机时的健康检查都实测通过，记录见 `docs/csv/07-部署预验证记录-2026-11-03.md`（含历次升级、备份恢复、并发、容量测试和空库上线演练）。所有自动化测试都带示例数据，改动上线流程后要在空库上再走一遍。并发、死锁和 CSP 这类问题 H2 和开发服务器测不全，改到这些要到 MySQL 上跑。CSP、Permissions-Policy 和上传限制只有经过 nginx 才生效，开发服务器测不出来，改这些要走一遍 Docker。这台 Colima 没有共享宿主机目录，绑定挂载会是空目录；里面还有一套用 8088 端口的 `cosmetic-scm` 旧部署，不要动它。
 - 打印：`styles.css` 的 `@media print` 把卡片、表格的外层改成块级、不裁剪。外层只要有 `overflow: hidden` 或 flex，跨页时末尾的行会被裁掉且没有提示（120 个客户曾只印出 98 个）。Playwright 读不出 PDF 文字，改打印样式后用 PyMuPDF 数一遍行数。
 - 看板图表配色用 dataviz 参考调色板，已用校验脚本在浅色、深色下验过；图表是纯 HTML/CSS，没有引入图表库。

@@ -141,7 +141,9 @@ const SPECS = {
       { header: '净含量（g）', key: 'netG', conv: num('净含量'), example: '' },
       { header: '启用', key: 'active', conv: flag('启用', true), show: yn, example: '是' },
       { header: '标准成本（元）', key: 'stdCost', conv: num('标准成本'), example: '12' },
-      { header: '指导价（元）', key: 'listPrice', conv: num('指导价'), example: '' }
+      { header: '指导价（元）', key: 'listPrice', conv: num('指导价'), example: '' },
+      // 新列放最后：已经下载过旧模板的人，原有各列的位置不变
+      { header: 'CAS 号', key: 'casNo', conv: text, example: '' }
     ]
   },
   opening: {

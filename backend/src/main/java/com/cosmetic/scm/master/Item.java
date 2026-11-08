@@ -38,6 +38,10 @@ public class Item {
 
     private String inci;
 
+    /** CAS 号，保存时校验格式和校验位。法规目录可以按它对照。 */
+    @Column(name = "cas_no")
+    private String casNo;
+
     private BigDecimal limitPct;
 
     private boolean banned;

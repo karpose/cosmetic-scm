@@ -134,6 +134,7 @@ public class MasterService {
         m.put("名称", i.getName());
         m.put("单位", i.getUnit());
         m.put("INCI", i.getInci());
+        m.put("CAS 号", i.getCasNo());
         m.put("限用浓度上限", i.getLimitPct());
         m.put("禁用", i.isBanned());
         m.put("保质期（月）", i.getShelfMonths());
@@ -153,6 +154,12 @@ public class MasterService {
         item.setItemType(req.itemType());
         item.setUnit(req.unit().trim());
         item.setInci(blankToNull(req.inci()));
+        if (req.casNo() == null || req.casNo().isBlank()) {
+            item.setCasNo(null);
+        } else {
+            item.setCasNo(com.cosmetic.scm.domain.rules.CasNumber.normalize(req.casNo())
+                    .orElseThrow(() -> new BizException("CAS 号 " + req.casNo().trim() + " 格式或校验位不对，应为“数字-两位数字-一位校验位”，如 7732-18-5")));
+        }
         item.setLimitPct(req.itemType() == ItemType.RM ? req.limitPct() : null);
         item.setBanned(req.itemType() == ItemType.RM && req.banned());
         item.setShelfMonths(req.shelfMonths());
