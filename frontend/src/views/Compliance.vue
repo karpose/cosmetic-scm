@@ -79,7 +79,7 @@
       <el-card shadow="never" class="block" body-style="padding:0 0 8px">
         <template #header><div class="filters"><el-input v-model="rt.keyword.value" placeholder="搜索 INCI、中文名、CAS、来源" clearable /></div></template>
         <el-table :data="rt.paged.value" empty-text="还没有导入法规目录">
-          <el-table-column label="INCI" min-width="190"><template #default="{ row }">{{ row.inciName }}<div class="muted small">{{ row.cnName }} <span class="mono">{{ row.casNo }}</span></div></template></el-table-column>
+          <el-table-column label="INCI" min-width="190"><template #default="{ row }">{{ row.inciName }}<div class="muted small">{{ row.cnName }} <span class="mono">{{ row.casNo }}</span></div><div v-if="row.aliases" class="muted small">别名：{{ row.aliases }}</div></template></el-table-column>
           <el-table-column label="类别" width="90"><template #default="{ row }"><el-tag :type="row.catalog === 'BANNED' ? 'danger' : 'warning'" size="small" disable-transitions>{{ row.catalogLabel }}</el-tag></template></el-table-column>
           <el-table-column label="上限" width="90" align="right"><template #default="{ row }"><span class="mono">{{ row.maxPct != null ? `${fmtQty(row.maxPct)}%` : '—' }}</span></template></el-table-column>
           <el-table-column prop="conditions" label="条件" min-width="150" />
@@ -206,7 +206,7 @@ const loader = useLoader(async () => {
 const load = () => loader.run()
 const pt = usePaged(products, { match: textMatch('fgCode', 'fgName') })
 const dt = usePaged(docs, { pageSize: 10 })
-const rt = usePaged(rules, { match: textMatch('inciName', 'cnName', 'casNo', 'source') })
+const rt = usePaged(rules, { match: textMatch('inciName', 'cnName', 'casNo', 'source', 'aliases') })
 const incomplete = computed(() => products.value.filter((p) => p.versionId && !(p.safety === 'OK' && p.label === 'OK')).length)
 const activeRules = computed(() => rules.value.filter((r) => r.active).length)
 const withFormula = computed(() => products.value.filter((p) => p.versionId))
