@@ -61,6 +61,7 @@ public class DashboardService {
     private final com.cosmetic.scm.master.RegulatoryService regulatory;
     private final com.cosmetic.scm.plm.ComplianceService compliance;
     private final com.cosmetic.scm.plm.StabilityService stability;
+    private final com.cosmetic.scm.plm.StabilityChangeService stabilityChanges;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
     private final com.cosmetic.scm.plm.NpdService npd;
     private final com.cosmetic.scm.plm.DocControlService docControl;
@@ -260,6 +261,9 @@ public class DashboardService {
         }
         for (com.cosmetic.scm.plm.StabilityService.StudyRow s : stability.waitingConclusion()) {
             todos.add(new Todo("STABILITY_CONCLUDE", "稳定性试验待写结论", "warn", s.fgName(), s.studyNo(), "时间点都完成了，请写结论", "/stability"));
+        }
+        for (com.cosmetic.scm.plm.StabilityChangeService.PendingCorrection c : stabilityChanges.pending()) {
+            todos.add(new Todo("STABILITY_CORRECTION", "稳定性结果更正待审批", "warn", c.fgName(), c.studyNo(), c.pullLabel() + " " + c.testName() + "，" + c.requestedBy() + " 申请", "/stability"));
         }
         for (com.cosmetic.scm.plm.StabilityService.StudyRow s : stability.waitingSignature()) {
             todos.add(new Todo("STABILITY_REVIEW", "稳定性结论待签批", "warn", s.fgName(), s.studyNo(), "支持保质期 " + s.supportedMonths() + " 个月", "/stability"));

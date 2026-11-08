@@ -167,7 +167,7 @@ class StabilityStudyFlowTest {
         // 窗口内可以
         call(qa, pullUrl(d, 0, "record"), result(d, start.plusDays(StabilityService.WINDOW_DAYS), "6", true, null)).andExpect(status().isOk());
         // 提交后不能改
-        call(qa, pullUrl(d, 0, "record"), result(d, start, "6.5", true, null)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("不能改")));
+        call(qa, pullUrl(d, 0, "record"), result(d, start, "6.5", true, null)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("请申请结果更正")));
         JsonNode after = call3(qa, d, today);
         assertThat(after.get("pulls").get(1).get("passed").asBoolean()).isTrue();
         // 系统判定的项目，填“合格”不算数在下一个测试里验
@@ -382,5 +382,146 @@ class StabilityStudyFlowTest {
         s.remove("formulaVersionId");
         JsonNode ok = body(call(qa, "/api/stability/studies", s).andExpect(status().isOk()));
         call(qa, "/api/stability/studies/" + ok.get("study").get("id").asLong() + "/cancel", Map.of("note", "测试结束")).andExpect(status().isOk());
+    }
+
+    private JsonNode pullOf(JsonNode d, String label) {
+        for (JsonNode p : d.get("pulls")) {
+            if (p.get("label").asText().equals(label)) {
+                return p;
+            }
+        }
+        throw new AssertionError(label);
+    }
+
+    private Map<String, Object> amend(String reason, List<?> add, List<?> cancel, List<?> tests) {
+        return Map.of("reason", reason, "addTimepoints", add, "cancelPullIds", cancel, "addTests", tests, "password", PWD);
+    }
+
+    @Test
+    void protocolAmendmentsAddAndCancelTimepointsAndAddTestsWithAReason() throws Exception {
+        String admin = login("admin", "Admin@123456");
+        String qa = login("qa1");
+        long f = product(admin, "ST-AM");
+        LocalDate start = time.today().minusMonths(1);
+        JsonNode d = create(qa, f, start, 0, 1, 3);
+        d = body(call(qa, pullUrl(d, 0, "record"), result(d, start, "6", true, null)).andExpect(status().isOk()));
+        String url = studyUrl(d, "amend");
+        long done = pullOf(d, "起始").get("id").asLong();
+        long three = pullOf(d, "3 个月").get("id").asLong();
+
+        call(login("prod1"), url, amend("改", List.of(Map.of("months", 6, "days", 0)), List.of(), List.of())).andExpect(status().isForbidden());
+        call(qa, url, amend("改", List.of(), List.of(), List.of())).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("没有要修改的内容")));
+        call(qa, url, amend("改", List.of(), List.of(done), List.of())).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("只有还没做的时间点能取消")));
+        call(qa, url, amend("改", List.of(Map.of("months", 1, "days", 0)), List.of(), List.of())).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("已经在方案里了")));
+        call(qa, url, amend("改", List.of(), List.of(), List.of(Map.of("name", "pH", "minValue", 4)))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("要改限度请加一个新名称的项目")));
+        call(qa, url, amend("改", List.of(), List.of(), List.of(Map.of("name", "粘度", "minValue", 9, "maxValue", 1)))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("下限大于上限")));
+        // 取消掉的时间点可以重新加回来，在方案里的不行
+        d = body(call(qa, url, amend("客户要求延长到 6 个月，3 个月样品不足", List.of(Map.of("months", 6, "days", 0)), List.of(three),
+                List.of(Map.of("name", "粘度", "unit", "mPa·s", "minValue", 1000, "maxValue", 5000)))).andExpect(status().isOk()));
+        assertThat(d.get("revNo").asInt()).isEqualTo(1);
+        String summary = d.get("amendments").get(0).get("summary").asText();
+        assertThat(summary).contains("加时间点：6 个月").contains("取消时间点：3 个月").contains("加检测项目：粘度（1000 ~ 5000 mPa·s）");
+        assertThat(d.get("amendments").get(0).get("createdBy").asText()).isEqualTo("qa1");
+        JsonNode cancelled = pullOf(d, "3 个月");
+        assertThat(cancelled.get("status").asText()).isEqualTo("CANCELLED");
+        assertThat(cancelled.get("skipReason").asText()).startsWith("方案第 1 版取消：客户要求");
+        assertThat(d.get("tests").size()).isEqualTo(3);
+        assertThat(d.get("study").get("pullsTotal").asInt()).isEqualTo(4);
+        // 取消的时间点不能再录结果；新加的项目之后每个时间点都要做
+        call(qa, "/api/stability/studies/" + d.get("study").get("id").asLong() + "/pulls/" + three + "/record", result(d, time.today(), "6", true, null))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("方案取消")));
+        long one = pullOf(d, "1 个月").get("id").asLong();
+        call(qa, "/api/stability/studies/" + d.get("study").get("id").asLong() + "/pulls/" + one + "/record", result(d, time.today(), "6", true, null))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("请填写“粘度”的结果")));
+
+        // 都取消掉也可以，已做的时间点还在；取消的不挡写结论
+        long six = pullOf(d, "6 个月").get("id").asLong();
+        d = body(call(qa, url, amend("样品用完", List.of(), List.of(one, six), List.of())).andExpect(status().isOk()));
+        assertThat(d.get("revNo").asInt()).isEqualTo(2);
+        body(call(qa, studyUrl(d, "conclude"), Map.of("conclusion", "只做了起始", "supportedMonths", 0)).andExpect(status().isOk()));
+        call(qa, url, amend("再改", List.of(Map.of("months", 9, "days", 0)), List.of(), List.of())).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("不能修改方案")));
+        assertThat(read(admin, "/api/audit?q=" + d.get("study").get("studyNo").asText()).toString()).contains("修改稳定性方案").contains("第 1 版").contains("客户要求延长到 6 个月");
+    }
+
+    private Map<String, Object> correct(JsonNode d, int test, String value, String text, Boolean passed, String reason) {
+        Map<String, Object> m = new HashMap<>(Map.of("testId", d.get("tests").get(test).get("id").asLong(), "reason", reason));
+        if (value != null) {
+            m.put("value", new BigDecimal(value));
+        }
+        if (text != null) {
+            m.put("text", text);
+        }
+        if (passed != null) {
+            m.put("passed", passed);
+        }
+        return m;
+    }
+
+    @Test
+    void correctionsNeedAnotherQsoKeepTheOriginalAndReJudge() throws Exception {
+        String admin = login("admin", "Admin@123456");
+        String qa = login("qa1");
+        String qso = login("qso1");
+        long f = product(admin, "ST-CR");
+        LocalDate start = time.today().minusMonths(1);
+        JsonNode d = create(qa, f, start, 0, 1);
+        d = body(call(qa, pullUrl(d, 0, "record"), result(d, start, "6", true, null)).andExpect(status().isOk()));
+        d = body(call(qa, pullUrl(d, 1, "record"), result(d, time.today(), "6.5", true, null)).andExpect(status().isOk()));
+        String first = pullUrl(d, 0, "corrections");
+        String second = pullUrl(d, 1, "corrections");
+
+        call(login("sales1"), first, correct(d, 1, "7.5", null, null, "抄错")).andExpect(status().isForbidden());
+        call(qa, first, correct(d, 1, "6.0", null, null, "抄错")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("和原来的结果一样")));
+        call(qa, first, correct(d, 1, null, null, null, "抄错")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("请填写实测数值")));
+        call(qa, first, correct(d, 1, "7.5", null, null, " ")).andExpect(status().isBadRequest());
+        d = body(call(qa, first, correct(d, 1, "7.5", null, null, "原始记录是 7.5，录入时抄错")).andExpect(status().isOk()));
+        JsonNode c = d.get("corrections").get(0);
+        assertThat(c.get("status").asText()).isEqualTo("PENDING");
+        assertThat(c.get("oldValue").decimalValue()).isEqualByComparingTo("6");
+        assertThat(c.get("newPassed").asBoolean()).isFalse();
+        // 结果还没变
+        assertThat(d.get("pulls").get(0).get("passed").asBoolean()).isTrue();
+        call(qa, first, correct(d, 1, "7.4", null, null, "再改")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("已有一个更正待审批")));
+        call(qa, studyUrl(d, "conclude"), Map.of("conclusion", "结论", "supportedMonths", 1)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("有结果更正待审批")));
+        assertThat(read(qso, "/api/dashboard").toString()).contains("稳定性结果更正待审批");
+
+        // 申请人本人不能批；QA 不能审批
+        String approve = "/api/stability/corrections/" + c.get("id").asLong() + "/approve";
+        call(qa, approve, Map.of("password", PWD)).andExpect(status().isForbidden());
+        JsonNode own = body(call(qso, second, correct(d, 0, null, "轻微变色", false, "复看留样有变色")).andExpect(status().isOk())).get("corrections").get(1);
+        call(qso, "/api/stability/corrections/" + own.get("id").asLong() + "/approve", Map.of("password", PWD)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("批准人不能是申请人")));
+        body(call(qso, "/api/stability/corrections/" + own.get("id").asLong() + "/reject", Map.of("note", "要另一位复核")).andExpect(status().isOk()));
+        call(qso, "/api/stability/corrections/" + own.get("id").asLong() + "/reject", Map.of("note", "再驳回")).andExpect(status().isBadRequest());
+
+        // 批准：结果改为新值，按新值判定，改成不合格的生成偏差；原值留在更正记录里
+        d = body(call(qso, approve, Map.of("password", PWD)).andExpect(status().isOk()));
+        JsonNode r = d.get("pulls").get(0).get("results").get(1);
+        assertThat(r.get("value").decimalValue()).isEqualByComparingTo("7.5");
+        assertThat(r.get("passed").asBoolean()).isFalse();
+        assertThat(r.get("corrected").asBoolean()).isTrue();
+        assertThat(d.get("pulls").get(0).get("passed").asBoolean()).isFalse();
+        assertThat(d.get("pulls").get(0).get("deviationNo").asText()).startsWith("DV");
+        assertThat(d.get("corrections").get(0).get("status").asText()).isEqualTo("APPROVED");
+        assertThat(d.get("corrections").get(0).get("decidedBy").asText()).isEqualTo("qso1");
+        assertThat(d.get("study").get("failed").asInt()).isEqualTo(1);
+        call(qso, approve, Map.of("password", PWD)).andExpect(status().isBadRequest());
+        assertThat(read(admin, "/api/audit?q=" + d.get("study").get("studyNo").asText()).toString()).contains("批准稳定性结果更正").contains("6（合格） 改为 7.5（不合格）");
+
+        // 合格改合格：不生成偏差
+        long c2 = body(call(qa, second, correct(d, 1, "6.6", null, null, "仪器校准后复测")).andExpect(status().isOk())).get("corrections").get(2).get("id").asLong();
+        d = body(call(qso, "/api/stability/corrections/" + c2 + "/approve", Map.of("password", PWD)).andExpect(status().isOk()));
+        assertThat(d.get("pulls").get(1).get("deviationNo").isNull()).isTrue();
+
+        // 结论待签批时不能更正，退回后可以；取消试验时待审批的更正一并驳回
+        d = body(call(qa, studyUrl(d, "conclude"), Map.of("conclusion", "结论", "supportedMonths", 1)).andExpect(status().isOk()));
+        call(qa, second, correct(d, 1, "6.7", null, null, "复测")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("先请质量安全负责人退回结论")));
+        body(call(qso, studyUrl(d, "reject"), Map.of("note", "要更正")).andExpect(status().isOk()));
+        body(call(qa, second, correct(d, 1, "6.7", null, null, "复测")).andExpect(status().isOk()));
+        d = body(call(qa, studyUrl(d, "cancel"), Map.of("note", "不做了")).andExpect(status().isOk()));
+        JsonNode last = d.get("corrections").get(3);
+        assertThat(last.get("status").asText()).isEqualTo("REJECTED");
+        assertThat(last.get("decideNote").asText()).isEqualTo("试验已取消");
     }
 }

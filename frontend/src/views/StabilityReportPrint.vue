@@ -15,7 +15,7 @@
           <tr><th>产品</th><td>{{ s.fgName }}（{{ s.fgCode }}）</td><th>配方版本</th><td>V{{ s.versionNo ?? '—' }}</td></tr>
           <tr><th>试验类型</th><td>{{ s.studyTypeLabel }}</td><th>储存条件</th><td>{{ s.condition }}</td></tr>
           <tr><th>样品</th><td>{{ s.batchNo ? `批号 ${s.batchNo}` : (s.sampleRef || '—') }}</td><th>开始日期</th><td>{{ s.startDate }}</td></tr>
-          <tr><th>登记人</th><td>{{ s.createdBy }}</td><th>时间点</th><td>共 {{ s.pullsTotal }} 个，已完成 {{ done }} 个，未取样 {{ skipped }} 个</td></tr>
+          <tr><th>登记人</th><td>{{ s.createdBy }}</td><th>时间点</th><td>共 {{ s.pullsTotal }} 个，已完成 {{ done }} 个，未取样 {{ skipped }} 个<template v-if="cancelled">，方案取消 {{ cancelled }} 个</template></td></tr>
         </tbody>
       </table>
 
@@ -31,8 +31,8 @@
               <td>{{ t.name }}<template v-if="t.unit">（{{ t.unit }}）</template></td>
               <td>{{ limitText(t) || '—' }}</td>
               <td v-for="p in g" :key="p.id" :class="{ bad: resultOf(p, t) && !resultOf(p, t).passed }">
-                <template v-if="resultOf(p, t)">{{ shown(resultOf(p, t)) }}<template v-if="!resultOf(p, t).passed">（不合格）</template></template>
-                <template v-else>{{ p.status === 'SKIPPED' ? '未取样' : '—' }}</template>
+                <template v-if="resultOf(p, t)">{{ shown(resultOf(p, t)) }}<template v-if="!resultOf(p, t).passed">（不合格）</template><template v-if="resultOf(p, t).corrected"> *</template></template>
+                <template v-else>{{ p.status === 'SKIPPED' ? '未取样' : p.status === 'CANCELLED' ? '方案取消' : '—' }}</template>
               </td>
               <td v-for="n in padOf(g)" :key="`pad${n}`" class="pad"></td>
             </tr>
@@ -40,6 +40,8 @@
           </tbody>
         </table>
       </template>
+
+      <p v-if="hasCorrected" class="foot" style="margin-top:4px">* 结果经过更正，原结果见下方“结果更正”。</p>
 
       <h2>取样记录</h2>
       <table>
@@ -56,6 +58,30 @@
           </tr>
         </tbody>
       </table>
+
+      <template v-if="d.amendments.length">
+        <h2>方案修改（现为第 {{ d.revNo }} 版）</h2>
+        <table>
+          <thead><tr><th style="width:8%">版本</th><th>修改内容</th><th style="width:28%">原因</th><th style="width:18%">修改人 / 时间</th></tr></thead>
+          <tbody>
+            <tr v-for="m in d.amendments" :key="m.revNo"><td>第 {{ m.revNo }} 版</td><td>{{ m.summary }}</td><td>{{ m.reason }}</td><td>{{ m.createdBy }} / {{ fmtTime(m.createdAt) }}</td></tr>
+          </tbody>
+        </table>
+      </template>
+
+      <template v-if="d.corrections.length">
+        <h2>结果更正</h2>
+        <table>
+          <thead><tr><th>时间点 · 项目</th><th>原结果</th><th>更正为</th><th>原因</th><th>申请人</th><th>状态 / 审批人</th></tr></thead>
+          <tbody>
+            <tr v-for="c in d.corrections" :key="c.id">
+              <td>{{ c.pullLabel }} · {{ c.testName }}</td><td>{{ corrText(c, 'old') }}</td><td>{{ corrText(c, 'new') }}</td><td>{{ c.reason }}</td>
+              <td>{{ c.requestedBy }} / {{ fmtTime(c.requestedAt) }}</td>
+              <td>{{ c.statusLabel }}<template v-if="c.decidedBy"> / {{ c.decidedBy }} {{ fmtTime(c.decidedAt) }}</template><template v-if="c.decideNote">：{{ c.decideNote }}</template></td>
+            </tr>
+          </tbody>
+        </table>
+      </template>
 
       <h2>结论</h2>
       <table class="meta">
@@ -96,6 +122,7 @@ const groups = computed(() => {
 })
 // 分了几张表时，最后一张补空列，和前面的表列宽对齐
 const padOf = (g) => (groups.value.length > 1 ? PER_TABLE - g.length : 0)
+const cancelled = computed(() => d.value.pulls.filter((p) => p.status === 'CANCELLED').length)
 const skipped = computed(() => d.value.pulls.filter((p) => p.status === 'SKIPPED').length)
 // 只有已签批的报告能当保质期依据；其他状态打印出来要一眼看出不能用
 const draftText = computed(() => ({
@@ -121,8 +148,15 @@ function limitText(t) {
   if (t.maxValue != null) return `≤ ${withUnit(t.maxValue, t)}`
   return t.criteria || ''
 }
+const hasCorrected = computed(() => d.value.pulls.some((p) => p.results.some((r) => r.corrected)))
+function corrText(c, which) {
+  const v = c[`${which}Value`]
+  const text = [v != null ? `${fmtQty(v)}${c.unit ? ` ${c.unit}` : ''}` : '', c[`${which}Text`] || ''].filter(Boolean).join(' ')
+  return `${text}${c[`${which}Passed`] ? '（合格）' : '（不合格）'}`
+}
 function verdict(p) {
   if (p.status === 'SKIPPED') return '未取样'
+  if (p.status === 'CANCELLED') return '方案取消'
   if (p.status !== 'DONE') return '待取样'
   return p.passed === false ? '不合格' : '合格'
 }

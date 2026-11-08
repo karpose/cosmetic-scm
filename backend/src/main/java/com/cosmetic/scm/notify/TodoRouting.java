@@ -23,6 +23,7 @@ final class TodoRouting {
             Map.entry("STABILITY_CONCLUDE", QUALITY),
             Map.entry("STABILITY_REVIEW", QUALITY),
             Map.entry("STABILITY_GAP", QUALITY),
+            Map.entry("STABILITY_CORRECTION", Set.of(Role.QSO)),
             Map.entry("SPEC_REVIEW", QUALITY),
             Map.entry("NPD_PROPOSED", Set.of(Role.ADMIN)),
             Map.entry("NPD_LAUNCH", Set.of(Role.QSO)),
