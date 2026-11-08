@@ -50,7 +50,7 @@ cp .env.example .env && docker compose up -d --build
 - FEFO 分配只取 `RELEASED` 批次；出库时再次确认批次状态（防止分配后被冻结）。退货隔离区（`WarehouseKind.RETURN`）的库存永远不参与分配，只能走退货处置。
 - 成品上市放行接口只授予 `QSO` 角色（管理员也不行）；放行、拒收、冻结、解冻都通过 `SignatureService.verify` 要求再次输入密码。
 - 召回发起 / 关闭只授予 `QSO`；发起时冻结批次并按出库记录逐客户生成通知，所有客户通知后才能关闭。召回进行中不能解冻。回收进度按“发出 - 普通退货”算在外量（普通退货转可售后可能再发给别人，只看发出量永远到不了 100%）。期初批次没有发货记录也能发起召回，因为上线前可能已发出，名单要线下核对。不良反应投诉未登记上报不能关闭。报废、退货处置须 QA / QSO 签批。
-- 单据状态流转必须先锁行再判断状态（各 Repository 的 `lockById`，只在写事务里用，读事务里 FOR UPDATE 在 MySQL 上会报错）。检查和修改之间不加锁，连点按钮就会重复入库，实测过。出库和发料用 `InventoryService.allocateForUpdate`，预览用 `allocate`。库存行加锁走 `lockStock`：实体已载入时直接用锁查询，Hibernate 会因版本不同报冲突。
+- 单据状态流转必须先锁行再判断状态（各 Repository 的 `lockById`，只在写事务里用，读事务里 FOR UPDATE 在 MySQL 上会报错）。检查和修改之间不加锁，连点按钮就会重复入库，实测过。出库和发料用 `InventoryService.allocateForUpdate`，预览用 `allocate`。库存行加锁走 `lockStock`：实体已载入时直接用锁查询，Hibernate 会因版本不同报冲突。**加锁读取之前不能先把同一行读进持久化上下文**（比如先 `findById` 拿外键再 `lockById`）：锁查询会返回缓存里的旧对象，状态判断失效，MySQL 上 6 个并发签样全成功过；要外键就只查那一列（如 `ArtworkProofRepository.findArtworkIdById`）。
 - “算出来才知道能不能做”的操作（退货可退量 = 已发 - 已退、同批次只能有一个进行中的召回）没有单据可锁，要锁它们依赖的行（客户、批次），而且必须是事务里第一条语句：MySQL 可重复读下，锁之前有过普通查询，之后读不到别人刚提交的数据。出库失败回滚后另开事务写“失败”时也要重新锁并判断状态，不能盖掉同时发生的取消。
 - MySQL 的 `DATETIME` 会把小数秒四舍五入（H2 不同）。要和令牌 iat 比较的时间（`passwordChangedAt`）必须先截断到整秒，曾因此让一半用户改密后被踢出。
 - 令牌只证明身份，角色每次从数据库读（`DbJwtAuthenticationConverter`），不要往令牌里加权限判断。改密后旧令牌失效，改密接口返回新令牌。
@@ -64,7 +64,7 @@ cp .env.example .env && docker compose up -d --build
 - 质量标准（`QualitySpecService`）：按物料分版本，QSO 签批生效，提交人不能签；同一物料只能有一个待签批，所以提交先锁物料行（事务第一句）。有生效标准的物料，放行前最近一次有效检验必须合格（`blocker`，物料检验放行和上市放行都调用），没有标准的照旧。检验录入、作废都先锁批次，所以接口路径带批次 id；放行也锁批次，两边互斥。不合格生成重大偏差（`DeviationService.createForInspection`）。判定共用 `domain/rules/SpecLimit`。期初导入不检查。
 - 新品立项（`NpdService`）：上市检查 `checks` 不另存，每次都从配方、备案、`ComplianceService`、`StabilityService`、`QualitySpecService` 实时查，批准上市时再查一遍。一个成品只能属于一个进行中或已上市的项目，所以关联成品先锁物料行（事务第一句）。批准上市只是记录，不改成品和库存。立项由管理员批准（不要密码），上市由 QSO 签批。没有金额字段。
 - 受控文件（`DocControlService`）和变更控制（`ChangeService`）：写操作先锁文件或变更行（事务第一句），所以签批修订、完成行动的接口路径要带文件或变更 id。修订没有附件（`OwnerType.DOC_REVISION`）不能签批；现行版本按生效日期算，不存状态。已读确认（`doc_ack`）按 `controlled_doc.train_roles` 算应确认的人，每人每版一次，确认也先锁文件。变更关闭要求行动全部完成、关联的配方版本已签批或放弃，申请人不能批准和关闭。配方草稿可关联实施中的配方或原料变更（`formula_version.change_id`），开关 `scm.change.require-for-formula` 打开后必须关联，默认关闭；关联时 `createDraft` 先锁变更再锁成品，和关闭变更互斥。供应商、标签等操作不联动。
-- 标签设计稿（`ArtworkService`）：按包材分版本，记提交时的生效配方版本；提交先锁包材行（同一包材只能一版待签批）。批准要 QSO、不是提交人、评审清单全勾、有附件（`OwnerType.LABEL_ARTWORK`），且提交后配方没变；配方变了已批准的显示要重新评审。包材物料检验放行时（`QualityService.checkArtwork`）有现行设计稿就要确认印刷一致（`MaterialDecisionReq.artworkConfirmed`），设计稿要重新评审的不能放行；不拦采购和收货。
+- 标签设计稿（`ArtworkService`）：按包材分版本，记提交时的生效配方版本；提交先锁包材行（同一包材只能一版待签批）。批准要 QSO、不是提交人、评审清单全勾、有附件（`OwnerType.LABEL_ARTWORK`），且提交后配方没变；配方变了已批准的显示要重新评审。包材物料检验放行时（`ArtworkProofService.checkForRelease`）有现行设计稿就要确认印刷一致（`MaterialDecisionReq.artworkConfirmed`），采购收货的批次还要有这家供应商这一版的签样（`artwork_proof`，V25 迁移），设计稿要重新评审的不能放行；放行后批次记下 `artwork_id`、`proof_id`；不拦采购和收货。打样的写操作先锁设计稿行、再锁打样行，放行也锁设计稿行，和签样、作废、换版串行。
 - 附件只增不删，存储用 `CREATE_NEW` 不覆盖；上传校验白名单扩展名和文件头，记录 SHA-256，下载时重新核对。文件在 `scm.storage.dir`（Docker 里是 `files-data` 卷），数据库只存元数据。受托厂上传走 `/api/portal/oem/orders/{moId}/attachments`，只能传本厂未完工的单子。受托厂能看到内部传到本单的附件，这是用户确认过的，不是漏洞。
 - `spring.servlet.multipart` 的上限必须高于 nginx 的 `client_max_body_size`（现在 30 MB 对 25 MB）。业务上限（20 MB）在 `AttachmentService` 判断。反过来配置会让后端没读完请求体就回错误，和 nginx 互相等待到超时。
 - 金额是标准成本估值：`MasterService.unitCosts()` 优先用标准成本，成品退回 BOM 物料成本；没成本的物料不计入，并显示数量提示。不要当账面成本用。
@@ -100,12 +100,12 @@ cp .env.example .env && docker compose up -d --build
 
 ## 当前状态（2026-11-08）
 
-- 后端 `mvn clean test` 204 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 66 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 15 项全部通过；GitHub Actions 在 PR 上跑这四项。
+- 后端 `mvn clean test` 205 项全部通过；前端 `npm run build` 通过；Playwright 冒烟测试 66 项全部通过（含 axe 无障碍和手机宽度检查），空库走查 15 项全部通过；GitHub Actions 在 PR 上跑这四项。
   - 后端测试类共用一个内存库，CI 上测试类的执行顺序不固定。断言示例数据刚写完时的状态（如待检正好 1 批），或者会留下影响全局检查的数据（如没有配方的成品）的测试类，要用 `@TestPropertySource` 换一个单独的库（见 `MainLineIntegrationTest`）。main 曾因此失败。改测试后用 `-Dsurefire.runOrder=reversealphabetical` 和 `random` 各跑一遍。
   - `Item.netG` 需要显式 `@Column(name = "net_g")`：以单个大写字母结尾的字段名默认会映射错。测试配置开启了 `ddl-auto: validate`。
   - Lombok 钉在 1.18.48（旧版在 JDK 27 上编译崩溃）。Spring Boot 3.5.16。判断“某 JDK 能编译”时务必 `mvn clean`。
   - `pom.xml` 把 Tomcat、Jackson、log4j 钉在修复了已知漏洞的版本，升 Spring Boot 时要删掉这几行。Spring MVC 6.2.19 还有两条 OSV 记录（SSE 片段渲染、XsltView），修复只在 7.x，系统没用到这两个功能。扫描脚本 `scripts/dep-scan.py`，判断过不影响的漏洞登记在 `scripts/dep-scan-allow.txt`，`dep-scan.yml` 每周跑一次（不是 PR 检查）。
-- 已完成：稳定性试验报告打印页；物料 CAS 号和法规目录按 CAS 对照（V24 迁移）；法规目录别名（V23 迁移）；包材放行核对设计稿；稳定性趋势和结果导出；标签设计稿评审（V22 迁移）；受控文件已读确认（V21 迁移）；配方变更关联变更控制（V20 迁移）；受控文件和变更控制（V19 迁移）；新品立项和试制（V18 迁移）；质量标准和批次检验（V17 迁移）；稳定性试验（V16 迁移）；原料法规目录、产品合规资料（V15 迁移）；退货给供应商（V14 迁移）；询价比价、对账结算、财务角色（V12、V13 迁移）；供应商门户、准时交货率和综合评分（V11 迁移）；一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。
+- 已完成：包材打样签样和印刷批次记录（V25 迁移）；稳定性试验报告打印页；物料 CAS 号和法规目录按 CAS 对照（V24 迁移）；法规目录别名（V23 迁移）；包材放行核对设计稿；稳定性趋势和结果导出；标签设计稿评审（V22 迁移）；受控文件已读确认（V21 迁移）；配方变更关联变更控制（V20 迁移）；受控文件和变更控制（V19 迁移）；新品立项和试制（V18 迁移）；质量标准和批次检验（V17 迁移）；稳定性试验（V16 迁移）；原料法规目录、产品合规资料（V15 迁移）；退货给供应商（V14 迁移）；询价比价、对账结算、财务角色（V12、V13 迁移）；供应商门户、准时交货率和综合评分（V11 迁移）；一期主线；库存作业、销售退货、投诉与召回、主数据 CSV 导入；代工厂门户、经销商门户、电商对接骨架；登录锁定、密码策略；补货建议、一物一码、经营看板（V4 迁移）；标准成本与看板金额、附件管理（V5 迁移）；批次标签打印和扫码核对；配方版本与备案、偏差与 CAPA、供应商审核、留样台账、自产批生产记录、Excel 导出、每日提醒（V6 迁移）；单据取消和关闭、全量导出、提醒按岗位分发、账号邮箱（V7 迁移）、带季节性的需求预测；期初库存导入、设备台账与校准（V8 迁移）；配方批量导入、上线检查页；Liquid Glass 界面；HTTPS 叠加配置、自动备份 / 恢复脚本、健康检查；`docs/csv/` 验证文档包。
 - Docker 部署已在本机 Colima（profile `cosmetic-scm`）上完整演练过：MySQL 8 上迁移和示例数据都正常，HTTPS、首次改密、备份恢复、数据库宕机时的健康检查都实测通过，记录见 `docs/csv/07-部署预验证记录-2026-11-03.md`（含历次升级、备份恢复、并发、容量测试和空库上线演练）。所有自动化测试都带示例数据，改动上线流程后要在空库上再走一遍。并发、死锁和 CSP 这类问题 H2 和开发服务器测不全，改到这些要到 MySQL 上跑。CSP、Permissions-Policy 和上传限制只有经过 nginx 才生效，开发服务器测不出来，改这些要走一遍 Docker。这台 Colima 没有共享宿主机目录，绑定挂载会是空目录；里面还有一套用 8088 端口的 `cosmetic-scm` 旧部署，不要动它。
 - 打印：`styles.css` 的 `@media print` 把卡片、表格的外层改成块级、不裁剪。外层只要有 `overflow: hidden` 或 flex，跨页时末尾的行会被裁掉且没有提示（120 个客户曾只印出 98 个）。Playwright 读不出 PDF 文字，改打印样式后用 PyMuPDF 数一遍行数。
 - 看板图表配色用 dataviz 参考调色板，已用校验脚本在浅色、深色下验过；图表是纯 HTML/CSS，没有引入图表库。

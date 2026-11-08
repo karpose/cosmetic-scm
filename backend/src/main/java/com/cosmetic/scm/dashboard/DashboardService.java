@@ -66,6 +66,7 @@ public class DashboardService {
     private final com.cosmetic.scm.plm.DocControlService docControl;
     private final com.cosmetic.scm.plm.ChangeService changeControl;
     private final com.cosmetic.scm.plm.ArtworkService artworkService;
+    private final com.cosmetic.scm.plm.ArtworkProofService artworkProofs;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnRepository supplierReturns;
     private final com.cosmetic.scm.settlement.SupplierStatementRepository statementRepo;
     private final BatchRepository batches;
@@ -216,6 +217,9 @@ public class DashboardService {
         }
         for (com.cosmetic.scm.plm.ArtworkService.ArtworkView a : artworkService.stale()) {
             todos.add(new Todo("ARTWORK_STALE", "标签设计稿要重新评审", "warn", a.pkName(), a.artworkNo(), a.fgName() + " 的配方已变，成分表可能要改", "/artworks"));
+        }
+        for (com.cosmetic.scm.plm.ArtworkProofService.ProofView p : artworkProofs.pending()) {
+            todos.add(new Todo("PROOF_SIGN", "包材打样待签样", "warn", p.pkName(), p.proofNo(), p.supplierName() + " 第 " + p.roundNo() + " 次打样，设计稿第 " + p.artworkVersionNo() + " 版", "/artworks"));
         }
         for (com.cosmetic.scm.plm.DocControlService.DocRow d : docControl.ackPending()) {
             todos.add(new Todo("DOC_ACK", d.ackOverdue() ? "受控文件确认已超期" : "受控文件待确认", d.ackOverdue() ? "bad" : "info", d.title(), d.docCode(),

@@ -90,6 +90,10 @@
       <div v-else-if="qc.artwork" class="artwork-check">
         <el-checkbox id="qc-artwork" v-model="qc.artworkConfirmed">印刷内容与已批准的设计稿 {{ qc.artwork.artworkNo }} 第 {{ qc.artwork.versionNo }} 版一致</el-checkbox>
         <router-link to="/artworks" class="small">查看设计稿</router-link>
+        <div v-if="qc.proofRequired" class="small proof-line">
+          <template v-if="qc.proof">签样 <span class="mono">{{ qc.proof.proofNo }}</span>：{{ qc.proof.supplierName }} 第 {{ qc.proof.roundNo }} 次打样，{{ qc.proof.signedBy }} 签样。请对照签样核对颜色和印刷质量。</template>
+          <span v-else class="late">{{ qc.supplierName }} 还没有这一版设计稿的签样，先在“标签设计稿”里登记打样并签样，才能放行（可以拒收）。</span>
+        </div>
       </div>
       <AttachmentList v-if="qc.batch" style="margin-top:12px" owner-type="BATCH" :owner-id="qc.batch.id" :can-upload="auth.canAttach()"
                       title="供应商 COA / 检验报告" empty-text="还没有上传 COA 或检验报告" />
@@ -187,9 +191,9 @@ const q = reactive({ quarantine: [], pendingRelease: [], frozen: [], recent: [] 
 const canQc = computed(() => auth.hasAny('QA', 'QSO'))
 const canRelease = computed(() => auth.hasAny('QSO'))
 
-const qc = reactive({ visible: false, saving: false, batch: null, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '', artwork: undefined, artworkConfirmed: false })
-// 包材有已批准的设计稿时要确认印刷内容；设计稿读完之前不能签批
-const artworkBlocks = computed(() => !!qc.artwork && (qc.artwork.stale || !qc.artworkConfirmed))
+const qc = reactive({ visible: false, saving: false, batch: null, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '', artwork: undefined, artworkConfirmed: false, proof: null, proofRequired: false, supplierName: '' })
+// 包材有已批准的设计稿时要确认印刷内容，供应商收货的还要有这家供应商的签样；设计稿读完之前不能签批
+const artworkBlocks = computed(() => !!qc.artwork && (qc.artwork.stale || !qc.artworkConfirmed || (qc.proofRequired && !qc.proof)))
 const artworkReq = latestOnly()
 async function loadArtwork(batch) {
   const current = artworkReq()
@@ -197,8 +201,10 @@ async function loadArtwork(batch) {
     qc.artwork = null
     return
   }
-  const a = await http.get(`/artworks/current/${batch.itemId}`)
-  if (current()) qc.artwork = a || null
+  const c = await http.get(`/artworks/release-check/${batch.id}`)
+  if (!current()) return
+  Object.assign(qc, { proof: c?.proof || null, proofRequired: !!c?.proofRequired, supplierName: c?.supplierName || '' })
+  qc.artwork = c?.artwork || null
 }
 const rel = reactive({
   visible: false, saving: false, batch: null, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '',
@@ -232,7 +238,7 @@ async function load() {
 }
 
 function openQc(batch) {
-  Object.assign(qc, { visible: true, batch, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '', artwork: undefined, artworkConfirmed: false })
+  Object.assign(qc, { visible: true, batch, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '', artwork: undefined, artworkConfirmed: false, proof: null, proofRequired: false, supplierName: '' })
   loadArtwork(batch)
 }
 
@@ -295,5 +301,7 @@ onMounted(load)
 
 <style scoped>
 .checks { display: grid; gap: 4px; }
+.proof-line { flex-basis: 100%; }
+.proof-line .late { color: var(--el-color-danger); }
 .artwork-check { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 12px; padding: 8px 12px; border-radius: 12px; background: var(--lg-tint); }
 </style>

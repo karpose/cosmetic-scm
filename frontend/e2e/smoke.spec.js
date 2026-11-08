@@ -1624,7 +1624,8 @@ test('标签设计稿：对照成分表逐项评审，上传文件后 QSO 批准
   await expect(dt.getByText('已批准').first()).toBeVisible()
 })
 
-test('包材放行：有已批准的设计稿时要确认印刷内容一致', async ({ page }) => {
+test('包材放行：要确认印刷内容一致，供应商送来的还要有这家的签样；放行后记入印刷批次', async ({ page }) => {
+  test.setTimeout(120_000)
   await login(page, 'purchase1')
   const batchNo = await page.evaluate(async () => {
     const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
@@ -1636,18 +1637,68 @@ test('包材放行：有已批准的设计稿时要确认印刷内容一致', as
     const rc = await fetch(`/api/purchase-orders/${po.id}/receipts`, { method: 'POST', headers: h, body: JSON.stringify({ lines: [{ poLineId: po.lines[0].id, qty: 100, extBatchNo: 'E2E-JAR-1', warehouseId: wh.id }] }) }).then((r) => r.json())
     return rc.batchNos[0]
   })
+  const openRelease = async () => {
+    await page.goto('/quality')
+    await page.locator('.el-table__row').filter({ hasText: batchNo }).getByRole('button', { name: '检验放行' }).click()
+    const d = dialog(page, '物料检验放行')
+    await expect(d.getByText(/印刷内容与已批准的设计稿 LA-.* 第 1 版一致/)).toBeVisible()
+    await d.getByPlaceholder('内部检验或供应商 COA 编号').fill('COA-JAR')
+    await d.getByPlaceholder('例如：外观、气味、含量检测符合内控标准').fill('印刷清晰')
+    await d.locator('input[type=password]').fill(DEMO)
+    await expect(d.getByRole('button', { name: '签批' })).toBeDisabled()
+    await d.getByText(/印刷内容与已批准的设计稿/).click()
+    return d
+  }
+  // 明瓶包装还没有签样：勾了印刷内容也放不了
   await login(page, 'qa1')
-  await page.goto('/quality')
-  await page.locator('.el-table__row').filter({ hasText: batchNo }).getByRole('button', { name: '检验放行' }).click()
-  const d = dialog(page, '物料检验放行')
-  await expect(d.getByText(/印刷内容与已批准的设计稿 LA-.* 第 1 版一致/)).toBeVisible()
-  await d.getByPlaceholder('内部检验或供应商 COA 编号').fill('COA-JAR')
-  await d.getByPlaceholder('例如：外观、气味、含量检测符合内控标准').fill('印刷清晰')
-  await d.locator('input[type=password]').fill(DEMO)
+  let d = await openRelease()
+  await expect(d.getByText('明瓶包装（示例） 还没有这一版设计稿的签样')).toBeVisible()
   await expect(d.getByRole('button', { name: '签批' })).toBeDisabled()
-  await d.getByText(/印刷内容与已批准的设计稿/).click()
+  await d.getByRole('button', { name: '取消' }).click()
+
+  // 采购登记打样、上传样张
+  await login(page, 'purchase1')
+  await page.goto('/artworks')
+  await page.locator('.el-table__row').filter({ hasText: 'PK-JAR-003' }).getByRole('button', { name: '详情' }).click()
+  const dt = page.getByRole('dialog', { name: /^设计稿 LA/ })
+  await expect(dt.getByText('还没有打样')).toBeVisible()
+  await dt.getByRole('button', { name: '登记打样' }).click()
+  const pc = page.getByRole('dialog', { name: '登记打样' })
+  await pc.locator('#pf-supplier').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: 'SUP-MP' }).click()
+  await pc.locator('#pf-note').fill('E2E 首次打样')
+  await pc.getByRole('button', { name: '保存打样' }).click()
+  await toast(page, '请上传样张')
+  const pf = page.getByRole('dialog', { name: /^包材打样 PF/ })
+  await pf.locator('input[type=file]').setInputFiles(pdfFile('面霜瓶样张.pdf'))
+  await toast(page, '已上传')
+  // 采购不能签样
+  await expect(pf.getByRole('button', { name: '签样' })).toHaveCount(0)
+
+  // 质量逐项核对后签样
+  await login(page, 'qa1')
+  await page.goto('/artworks')
+  await page.locator('.el-table__row').filter({ hasText: 'PK-JAR-003' }).getByRole('button', { name: '详情' }).click()
+  await dt.getByRole('link', { name: /^PF/ }).click()
+  await expect(pf.getByRole('button', { name: '签样' })).toBeDisabled()
+  for (const label of ['文字和全成分表与设计稿一致', '颜色与设计稿或色卡一致', '条码、二维码能扫出且内容正确', '尺寸、刀模和出血位正确', '材质和印刷工艺符合要求', '批号和限期使用日期的喷印位置清楚']) {
+    await pf.getByText(label).click()
+  }
+  await pf.locator('#pf-password').fill(DEMO)
+  await pf.getByRole('button', { name: '签样' }).click()
+  await toast(page, '已签样')
+  await pf.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(dt.getByText('现行签样')).toBeVisible()
+  await dt.getByRole('button', { name: '关闭', exact: true }).click()
+
+  // 有签样了，可以放行；放行后设计稿详情里能看到这个批次
+  d = await openRelease()
+  await expect(d.getByText(/签样 PF-.*明瓶包装（示例） 第 1 次打样/)).toBeVisible()
   await d.getByRole('button', { name: '签批' }).click()
   await toast(page, '已放行')
+  await page.goto('/artworks')
+  await page.locator('.el-table__row').filter({ hasText: 'PK-JAR-003' }).getByRole('button', { name: '详情' }).click()
+  await expect(dt.locator('.el-table__row').filter({ hasText: batchNo })).toContainText('E2E-JAR-1')
 })
 
 test('主数据：原料的 CAS 号保存时校验校验位', async ({ page }) => {

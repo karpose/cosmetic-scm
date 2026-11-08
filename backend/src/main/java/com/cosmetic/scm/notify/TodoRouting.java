@@ -32,6 +32,7 @@ final class TodoRouting {
             Map.entry("DOC_ACK", QUALITY),
             Map.entry("ARTWORK_REVIEW", Set.of(Role.QSO)),
             Map.entry("ARTWORK_STALE", QUALITY),
+            Map.entry("PROOF_SIGN", QUALITY),
             Map.entry("CHANGE_ASSESS", QUALITY),
             Map.entry("CHANGE_APPROVE", Set.of(Role.QSO)),
             Map.entry("CHANGE_ACTION", QUALITY),

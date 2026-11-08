@@ -29,6 +29,8 @@ public interface BatchRepository extends JpaRepository<Batch, Long> {
 
     List<Batch> findTop500ByOrderByIdDesc();
 
+    List<Batch> findByArtworkIdInOrderById(Collection<Long> artworkIds);
+
     List<Batch> findAllByOrderByIdDesc();
 
     /** 已放行、还有库存的成品批次，总览判断临期用。不能取“最近 N 个”：最老的批次才最可能临期。 */

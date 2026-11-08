@@ -80,6 +80,7 @@ public class AttachmentService {
     private final com.cosmetic.scm.plm.DocRevisionRepository docRevisions;
     private final com.cosmetic.scm.plm.ChangeRequestRepository changeRequests;
     private final com.cosmetic.scm.plm.LabelArtworkRepository labelArtworks;
+    private final com.cosmetic.scm.plm.ArtworkProofRepository artworkProofs;
 
     @Value("${scm.storage.max-file-mb:20}")
     private int maxFileMb;
@@ -309,6 +310,7 @@ public class AttachmentService {
             case DOC_REVISION -> docRevisions;
             case CHANGE_REQUEST -> changeRequests;
             case LABEL_ARTWORK -> labelArtworks;
+            case ARTWORK_PROOF -> artworkProofs;
         };
     }
 

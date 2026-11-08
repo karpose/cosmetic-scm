@@ -63,4 +63,10 @@ public class Batch {
     private BatchStatus statusBeforeFreeze;
 
     private LocalDateTime createdAt;
+
+    /** 包材放行时核对的设计稿版本。 */
+    private Long artworkId;
+
+    /** 包材放行时依据的供应商签样。 */
+    private Long proofId;
 }

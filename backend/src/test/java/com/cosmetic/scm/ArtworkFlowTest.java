@@ -48,6 +48,7 @@ class ArtworkFlowTest {
     @Autowired ObjectMapper json;
     @Autowired TimeProvider time;
     @Autowired BatchRepository batches;
+    @Autowired com.cosmetic.scm.master.PartnerRepository partners;
 
     private String login(String u, String p) throws Exception {
         return json.readTree(mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
@@ -74,8 +75,12 @@ class ArtworkFlowTest {
     }
 
     private void upload(String t, long id) throws Exception {
+        upload(t, "LABEL_ARTWORK", id);
+    }
+
+    private void upload(String t, String ownerType, long id) throws Exception {
         mvc.perform(multipart("/api/attachments").file(new MockMultipartFile("file", "art.pdf", "application/pdf", "%PDF-1.4 art".getBytes(StandardCharsets.UTF_8)))
-                .param("ownerType", "LABEL_ARTWORK").param("ownerId", String.valueOf(id)).header("Authorization", "Bearer " + t)).andExpect(status().isOk());
+                .param("ownerType", ownerType).param("ownerId", String.valueOf(id)).header("Authorization", "Bearer " + t)).andExpect(status().isOk());
     }
 
     @Test
@@ -135,13 +140,19 @@ class ArtworkFlowTest {
     }
 
     private long pkBatch(long pk, String no) {
+        return pkBatch(pk, no, null);
+    }
+
+    /** supplierId 不为空时当作采购收货的批次。 */
+    private long pkBatch(long pk, String no, Long supplierId) {
         Batch b = new Batch();
         b.setBatchNo(no);
         b.setItemId(pk);
         b.setMfgDate(time.today().minusDays(5));
         b.setExpDate(time.today().plusYears(3));
         b.setStatus(BatchStatus.QUARANTINE);
-        b.setSourceType(SourceType.OPEN);
+        b.setSourceType(supplierId == null ? SourceType.OPEN : SourceType.PO);
+        b.setPartnerId(supplierId);
         b.setSourceNo("AW-TEST");
         b.setQtyIn(java.math.BigDecimal.TEN);
         b.setCreatedAt(time.now());
@@ -185,5 +196,111 @@ class ArtworkFlowTest {
         long b2 = pkBatch(pk, "AWR-B2");
         call(qa, "/api/quality/batches/" + b2 + "/material-decision", rel).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("重新评审")));
         ok(call(qa, "/api/quality/batches/" + b2 + "/material-decision", Map.of("decision", "REJECTED", "reportNo", "COA", "note", "版本不对", "password", PWD)));
+    }
+
+    private static final List<String> PROOF_ALL = List.of("TEXT", "COLOR", "CODE", "SIZE", "MATERIAL", "PRINT_AREA");
+
+    @Test
+    void printedPackagingFromASupplierNeedsItsSignedProofAndBatchesRememberTheVersion() throws Exception {
+        String admin = login("admin", "Admin@123456");
+        String qa = login("qa1", PWD);
+        String qso = login("qso1", PWD);
+        String buyer = login("purchase1", PWD);
+        long rm = item(admin, "AWP-RM", "RM");
+        long pk = item(admin, "AWP-PK", "PK");
+        long fg = item(admin, "AWP-FG", "FG");
+        mvc.perform(put("/api/boms/" + fg).header("Authorization", "Bearer " + admin).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(Map.of("lines", List.of(
+                Map.of("itemId", rm, "qtyPer", new BigDecimal("0.01"), "supplyMode", "BRAND"), Map.of("itemId", pk, "qtyPer", BigDecimal.ONE, "supplyMode", "BRAND")))))).andExpect(status().isOk());
+        long art = ok(call(qa, "/api/artworks", Map.of("pkItemId", pk, "fgItemId", fg, "changeNote", "首版"))).get("id").asLong();
+        // 没批准的设计稿不能打样
+        call(buyer, "/api/artworks/" + art + "/proofs", Map.of("supplierId", 1, "proofDate", time.today().toString())).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("只有已批准的现行版本")));
+        upload(qa, art);
+        ok(call(qso, "/api/artworks/" + art + "/approve", Map.of("checked", ALL, "password", PWD)));
+
+        var sups = partners.findAll().stream().filter(x -> x.getKind() == com.cosmetic.scm.domain.PartnerKind.SUPPLIER).toList();
+        long s1 = sups.get(0).getId();
+        long s2 = sups.get(1).getId();
+        long customer = partners.findAll().stream().filter(x -> x.getKind() == com.cosmetic.scm.domain.PartnerKind.CUSTOMER).findFirst().orElseThrow().getId();
+        String today = time.today().toString();
+        call(buyer, "/api/artworks/" + art + "/proofs", Map.of("supplierId", customer, "proofDate", today)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("不是供应商")));
+        call(buyer, "/api/artworks/" + art + "/proofs", Map.of("supplierId", s1, "proofDate", time.today().plusDays(1).toString())).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("不能晚于今天")));
+        call(login("prod1", PWD), "/api/artworks/" + art + "/proofs", Map.of("supplierId", s1, "proofDate", today)).andExpect(status().isForbidden());
+        JsonNode p1 = ok(call(buyer, "/api/artworks/" + art + "/proofs", Map.of("supplierId", s1, "proofDate", today, "note", "首次打样")));
+        assertThat(p1.get("roundNo").asInt()).isEqualTo(1);
+        assertThat(p1.get("status").asText()).isEqualTo("PENDING");
+        call(buyer, "/api/artworks/" + art + "/proofs", Map.of("supplierId", s1, "proofDate", today)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("已有一次打样待签样")));
+        assertThat(ok(mvc.perform(get("/api/dashboard").header("Authorization", "Bearer " + qa))).toString()).contains("包材打样待签样").contains(p1.get("proofNo").asText());
+
+        // 供应商收货的批次：没签样不能放行；期初导入的批次只核对印刷内容
+        Map<String, Object> rel = new java.util.HashMap<>(Map.of("decision", "RELEASED", "reportNo", "COA", "note", "合格", "password", PWD, "artworkConfirmed", true));
+        long b1 = pkBatch(pk, "AWP-B1", s1);
+        JsonNode chk = ok(mvc.perform(get("/api/artworks/release-check/" + b1).header("Authorization", "Bearer " + qa)));
+        assertThat(chk.get("proofRequired").asBoolean()).isTrue();
+        assertThat(chk.get("proof").isNull()).isTrue();
+        call(qa, "/api/quality/batches/" + b1 + "/material-decision", rel).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("还没有设计稿")))
+                .andExpect(jsonPath("$.message", containsString("的签样")));
+        long open = pkBatch(pk, "AWP-B0");
+        assertThat(ok(mvc.perform(get("/api/artworks/release-check/" + open).header("Authorization", "Bearer " + qa))).get("proofRequired").asBoolean()).isFalse();
+        ok(call(qa, "/api/quality/batches/" + open + "/material-decision", rel));
+        assertThat(batches.findById(open).orElseThrow().getArtworkId()).isEqualTo(art);
+        assertThat(batches.findById(open).orElseThrow().getProofId()).isNull();
+
+        // 签样：逐项核对、要有样张、签样人不能是登记人
+        long p1id = p1.get("id").asLong();
+        call(qa, "/api/artworks/proofs/" + p1id + "/approve", Map.of("checked", PROOF_ALL.subList(0, 5), "password", PWD)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("喷印位置")));
+        call(qa, "/api/artworks/proofs/" + p1id + "/approve", Map.of("checked", PROOF_ALL, "password", PWD)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("样张")));
+        upload(buyer, "ARTWORK_PROOF", p1id);
+        call(buyer, "/api/artworks/proofs/" + p1id + "/approve", Map.of("checked", PROOF_ALL, "password", PWD)).andExpect(status().isForbidden());
+        JsonNode signed = ok(call(qa, "/api/artworks/proofs/" + p1id + "/approve", Map.of("checked", PROOF_ALL, "password", PWD)));
+        assertThat(signed.get("status").asText()).isEqualTo("APPROVED");
+        assertThat(signed.get("current").asBoolean()).isTrue();
+
+        JsonNode p2 = ok(call(qa, "/api/artworks/" + art + "/proofs", Map.of("supplierId", s2, "proofDate", today)));
+        upload(qa, "ARTWORK_PROOF", p2.get("id").asLong());
+        call(qa, "/api/artworks/proofs/" + p2.get("id").asLong() + "/approve", Map.of("checked", PROOF_ALL, "password", PWD)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("签样人不能是登记人")));
+        ok(call(qso, "/api/artworks/proofs/" + p2.get("id").asLong() + "/reject", Map.of("note", "颜色偏红")));
+        assertThat(ok(call(qa, "/api/artworks/" + art + "/proofs", Map.of("supplierId", s2, "proofDate", today))).get("roundNo").asInt()).isEqualTo(2);
+
+        // 有签样：放行，批次记下设计稿和签样
+        ok(call(qa, "/api/quality/batches/" + b1 + "/material-decision", rel));
+        Batch released = batches.findById(b1).orElseThrow();
+        assertThat(released.getArtworkId()).isEqualTo(art);
+        assertThat(released.getProofId()).isEqualTo(p1id);
+        assertThat(ok(mvc.perform(get("/api/audit?q=AWP-B1").header("Authorization", "Bearer " + admin))).toString()).contains("签样 " + p1.get("proofNo").asText());
+        // 别家供应商的批次不能凭这份签样放行
+        call(qa, "/api/quality/batches/" + pkBatch(pk, "AWP-B2", s2) + "/material-decision", rel).andExpect(status().isBadRequest());
+
+        // 再次打样签样，上一份替代；作废后要重新签样
+        JsonNode p3 = ok(call(buyer, "/api/artworks/" + art + "/proofs", Map.of("supplierId", s1, "proofDate", today, "note", "换承印物")));
+        upload(buyer, "ARTWORK_PROOF", p3.get("id").asLong());
+        ok(call(qso, "/api/artworks/proofs/" + p3.get("id").asLong() + "/approve", Map.of("checked", PROOF_ALL, "password", PWD)));
+        JsonNode detail = ok(mvc.perform(get("/api/artworks/" + art).header("Authorization", "Bearer " + login("sales1", PWD))));
+        assertThat(detail.get("proofChecklist").size()).isEqualTo(6);
+        assertThat(detail.get("proofs").toString()).contains("\"status\":\"SUPERSEDED\"").contains("\"status\":\"REJECTED\"");
+        assertThat(detail.get("batches").toString()).contains("AWP-B1").contains("AWP-B0").contains(p1.get("proofNo").asText());
+        call(qa, "/api/artworks/proofs/" + p3.get("id").asLong() + "/void", Map.of("note", "错")).andExpect(status().isForbidden());
+        ok(call(qso, "/api/artworks/proofs/" + p3.get("id").asLong() + "/void", Map.of("note", "发现条码印错")));
+        call(qa, "/api/artworks/proofs/" + p3.get("id").asLong() + "/void", Map.of("note", "再作废")).andExpect(status().isForbidden());
+        call(qso, "/api/artworks/proofs/" + p3.get("id").asLong() + "/void", Map.of("note", "再作废")).andExpect(status().isBadRequest());
+        call(qa, "/api/quality/batches/" + pkBatch(pk, "AWP-B3", s1) + "/material-decision", rel).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("的签样")));
+
+        // 换版：旧版不能再打样，旧版的签样不再是现行；按旧版放行的批次还能查到
+        long art2 = ok(call(qa, "/api/artworks", Map.of("pkItemId", pk, "fgItemId", fg, "changeNote", "改警示用语"))).get("id").asLong();
+        upload(qa, art2);
+        ok(call(qso, "/api/artworks/" + art2 + "/approve", Map.of("checked", ALL, "password", PWD)));
+        call(buyer, "/api/artworks/" + art + "/proofs", Map.of("supplierId", s1, "proofDate", today)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("已替代")));
+        JsonNode old = ok(mvc.perform(get("/api/artworks/" + art).header("Authorization", "Bearer " + qa)));
+        assertThat(old.get("proofs").toString()).doesNotContain("\"current\":true");
+        assertThat(old.get("batches").size()).isEqualTo(2);
+        assertThat(ok(mvc.perform(get("/api/audit?q=" + p3.get("proofNo").asText()).header("Authorization", "Bearer " + admin))).toString()).contains("作废包材签样").contains("发现条码印错");
     }
 }
