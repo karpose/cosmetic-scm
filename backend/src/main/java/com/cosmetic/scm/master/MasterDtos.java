@@ -42,7 +42,12 @@ public final class MasterDtos {
             @Positive @jakarta.validation.constraints.Digits(integer = 9, fraction = 3, message = "净含量最多 9 位整数、3 位小数") BigDecimal netG,
             Boolean active,
             @DecimalMin(value = "0", message = "标准成本不能为负") @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "标准成本最多 14 位整数、4 位小数") BigDecimal stdCost,
-            @DecimalMin(value = "0", message = "指导价不能为负") @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "指导价最多 14 位整数、4 位小数") BigDecimal listPrice) {
+            @DecimalMin(value = "0", message = "指导价不能为负") @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "指导价最多 14 位整数、4 位小数") BigDecimal listPrice,
+            @Size(max = 40) String casNo) {
+        public ItemReq(String code, String name, ItemType itemType, String unit, String inci, BigDecimal limitPct, boolean banned, Integer shelfMonths,
+                       String filingNo, BigDecimal netG, Boolean active, BigDecimal stdCost, BigDecimal listPrice) {
+            this(code, name, itemType, unit, inci, limitPct, banned, shelfMonths, filingNo, netG, active, stdCost, listPrice, null);
+        }
     }
 
     public record PartnerReq(

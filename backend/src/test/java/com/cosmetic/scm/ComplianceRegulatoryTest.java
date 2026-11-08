@@ -218,6 +218,46 @@ class ComplianceRegulatoryTest {
     }
 
     @Test
+    void casNumbersAreValidatedAndMatchTheCatalogTakingTheStrictestRule() throws Exception {
+        String admin = login("admin", "Admin@123456");
+        String qa = login("qa1");
+        // 测试用的 CAS 号按校验位规则编的，不对应真实物质：1234-56-6、2345-67-7
+        Map<String, Object> bad = new HashMap<>(Map.of("code", "RG-CAS0", "name", "原料", "itemType", "RM", "unit", "kg", "banned", false, "active", true, "shelfMonths", 24, "casNo", "1234-56-7"));
+        call(admin, "/api/items", bad).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("校验位")));
+        Map<String, Object> m = new HashMap<>(Map.of("code", "RG-CAS1", "name", "原料RG-CAS1", "itemType", "RM", "unit", "kg", "banned", false, "active", true, "shelfMonths", 24, "casNo", "１２３４－５６－６"));
+        JsonNode item = body(call(admin, "/api/items", m).andExpect(status().isOk()));
+        assertThat(item.get("casNo").asText()).isEqualTo("1234-56-6");
+        long rmId = item.get("id").asLong();
+
+        // 目录：同一个 CAS 号一条限用 5%、一条禁用，取最严的；“无”只当文字
+        Map<String, Object> limit = rule("RESTRICTED", "Fake Cas Limit", "5");
+        limit.put("casNo", "1234-56-6");
+        Map<String, Object> banned = rule("BANNED", "Fake Cas Banned", null);
+        banned.put("casNo", "1234-56-6； 无");
+        JsonNode r = importRules(qa, false, List.of(limit, banned));
+        assertThat(r.get("applied").asBoolean()).isTrue();
+        long f = fg(admin, "RG-CASFG");
+        saveBom(admin, f, rmId, "0.001").andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("禁用")));
+        // 只填 CAS 号的物料不再列为对不上
+        assertThat(text(read(qa, "/api/regulatory/comparison"))).contains("RG-CAS1").doesNotContain("\"code\":\"RG-CAS1\",\"name\":\"原料RG-CAS1\",\"inci\":null,\"state\":\"NO_INCI\"");
+
+        // 改 CAS 号：预检列出，审计记下
+        Map<String, Object> moved = rule("BANNED", "Fake Cas Banned", null);
+        moved.put("casNo", "2345-67-7");
+        assertThat(importRules(qa, true, List.of(moved)).get("changes").toString()).contains("CAS 号").contains("2345-67-7");
+        importRules(qa, false, List.of(moved));
+        // 现在只剩限用 5% 对得上：0.001 kg / 100 g = 1%，不超
+        saveBom(admin, f, rmId, "0.001").andExpect(status().isOk());
+        Map<String, Object> upd = new HashMap<>(m);
+        upd.put("casNo", "2345-67-7");
+        mvc.perform(put("/api/items/" + rmId).header("Authorization", "Bearer " + admin).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(upd))).andExpect(status().isOk());
+        assertThat(text(read(admin, "/api/audit?q=RG-CAS1"))).contains("CAS 号");
+        for (String n : List.of("Fake Cas Limit", "Fake Cas Banned")) {
+            call(qa, "/api/regulatory/" + ruleId(qa, n) + "/retire", Map.of("reason", "测试")).andExpect(status().isOk());
+        }
+    }
+
+    @Test
     void catalogIsEnforcedInFormulasPurchasesAndRfqsWhicheverIsStricter() throws Exception {
         String admin = login("admin", "Admin@123456");
         String qa = login("qa1");

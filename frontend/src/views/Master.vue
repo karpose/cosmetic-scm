@@ -15,7 +15,7 @@
       <el-tabs v-model="tab" class="tabs">
         <el-tab-pane label="物料" name="items">
           <div class="filters pad">
-            <el-input v-model="it.keyword.value" placeholder="搜索编码、名称、INCI、备案编号" clearable />
+            <el-input v-model="it.keyword.value" placeholder="搜索编码、名称、INCI、CAS、备案编号" clearable />
             <el-select aria-label="按类型筛选" v-model="itemType" placeholder="全部类型" clearable>
               <el-option v-for="(v, k) in ITEM_TYPE" :key="k" :value="k" :label="v" />
             </el-select>
@@ -30,7 +30,7 @@
               <template #default="{ row }">
                 <el-tag v-if="row.banned" type="danger" size="small" disable-transitions>禁用</el-tag>
                 <el-tag v-else-if="row.limitPct" type="warning" size="small" disable-transitions>限用 ≤ {{ row.limitPct }}%</el-tag>
-                <span class="muted small"> {{ row.inci }}</span>
+                <span class="muted small"> {{ row.inci }}</span><span v-if="row.casNo" class="muted small mono"> CAS {{ row.casNo }}</span>
               </template>
             </el-table-column>
             <el-table-column label="标准成本 / 指导价" width="150">
@@ -143,6 +143,7 @@
         </div>
         <div v-if="item.itemType === 'RM'" class="form-grid">
           <el-form-item label="INCI 名"><el-input id="it-inci" v-model="item.inci" /></el-form-item>
+          <el-form-item v-if="item.itemType === 'RM'" label="CAS 号（选填）"><el-input id="it-cas" v-model="item.casNo" maxlength="40" placeholder="如 7732-18-5，保存时校验" /></el-form-item>
           <el-form-item label="限用浓度上限 %"><el-input-number id="it-limit" v-model="item.limitPct" :min="0" :precision="4" :controls="false" style="width:100%" placeholder="无则留空" /></el-form-item>
           <el-form-item label=" "><el-checkbox id="it-banned" v-model="item.banned">禁用原料（不可采购、不可进入 BOM）</el-checkbox></el-form-item>
         </div>
@@ -282,7 +283,7 @@ const boms = ref([])
 const canEdit = computed(() => auth.hasAny('ADMIN', 'MASTER_DATA'))
 const addLabel = computed(() => ({ items: '新增物料', partners: '新增往来单位', warehouses: '新增仓库', boms: '维护 BOM' }[tab.value]))
 
-const emptyItem = () => ({ id: null, code: '', name: '', itemType: 'RM', unit: 'kg', inci: '', limitPct: null, banned: false, shelfMonths: null, filingNo: '', netG: null, active: true, stdCost: null, listPrice: null })
+const emptyItem = () => ({ id: null, code: '', name: '', itemType: 'RM', unit: 'kg', inci: '', casNo: '', limitPct: null, banned: false, shelfMonths: null, filingNo: '', netG: null, active: true, stdCost: null, listPrice: null })
 const emptyPartner = () => ({ id: null, code: '', name: '', kind: 'SUPPLIER', licenseNo: '', licenseExpiry: null, licenseScope: '', batchPrefix: '', channel: '', minShelfPct: 0, contact: '', address: '', qualified: true, criticalSupplier: false })
 const item = reactive({ visible: false, saving: false, ...emptyItem() })
 const partner = reactive({ visible: false, saving: false, ...emptyPartner() })
@@ -294,7 +295,7 @@ const error = ref('')
 const itemType = ref('')
 const partnerKind = ref('')
 const it = usePaged(computed(() => rd.s.items), {
-  match: textMatch('code', 'name', 'inci', 'filingNo'),
+  match: textMatch('code', 'name', 'inci', 'casNo', 'filingNo'),
   extra: (r) => !itemType.value || r.itemType === itemType.value
 })
 const pt = usePaged(computed(() => rd.s.partners), {

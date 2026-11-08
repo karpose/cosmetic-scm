@@ -1628,6 +1628,24 @@ test('包材放行：有已批准的设计稿时要确认印刷内容一致', as
   await toast(page, '已放行')
 })
 
+test('主数据：原料的 CAS 号保存时校验校验位', async ({ page }) => {
+  await login(page, 'admin', 'Admin@123456')
+  await page.goto('/master')
+  await page.getByRole('button', { name: '新增物料' }).click()
+  const d = dialog(page, '新增物料')
+  await d.locator('#it-code').fill('RM-E2E-CAS')
+  await d.locator('#it-name').fill('E2E 原料')
+  await d.locator('#it-shelf').fill('24')
+  // 校验位不对（正确的是 7732-18-5）
+  await d.locator('#it-cas').fill('7732-18-4')
+  await d.getByRole('button', { name: '保存', exact: true }).click()
+  await toast(page, '校验位不对')
+  await d.locator('#it-cas').fill('7732-18-5')
+  await d.getByRole('button', { name: '保存', exact: true }).click()
+  await toast(page, '已保存')
+  await expect(page.locator('.el-table__row').filter({ hasText: 'RM-E2E-CAS' })).toContainText('CAS 7732-18-5')
+})
+
 test('供应商账号可以填邮箱接收提醒，提醒页列出会发给谁', async ({ page }) => {
   await login(page, 'admin', 'Admin@123456')
   await page.goto('/users')
@@ -1923,7 +1941,7 @@ test('名称里的脚本标签只当文字显示', async ({ page }) => {
     await fetch('/api/items', { method: 'POST', headers: h, body: JSON.stringify({ code: 'FG-E2E-XSS', name: n, itemType: 'FG', unit: '瓶', banned: false, shelfMonths: 36, active: true }) })
   }, name)
   await page.goto('/master')
-  await page.getByPlaceholder('搜索编码、名称、INCI、备案编号').fill('FG-E2E-XSS')
+  await page.getByPlaceholder('搜索编码、名称、INCI、CAS、备案编号').fill('FG-E2E-XSS')
   await expect(page.getByText(name).first()).toBeVisible()
   expect(await page.evaluate(() => window.__xss)).toBeUndefined()
   expect(await page.locator('main img[src="x"]').count()).toBe(0)

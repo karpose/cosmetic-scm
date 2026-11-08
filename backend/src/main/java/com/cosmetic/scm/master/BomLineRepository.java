@@ -23,6 +23,13 @@ public interface BomLineRepository extends JpaRepository<BomLine, Long> {
             """)
     java.util.List<Object[]> findLinesMatchedByAlias();
 
+    /** 物料 CAS 号和目录条目的 CAS 号相同的配方行：[BomLine, Item, RegulatedSubstance]。 */
+    @org.springframework.data.jpa.repository.Query("""
+            select l, i, r from BomLine l, Item i, RegulatedCas c, RegulatedSubstance r
+            where l.itemId = i.id and i.casNo is not null and i.casNo = c.cas and c.substanceId = r.id and r.active = true
+            """)
+    java.util.List<Object[]> findLinesMatchedByCas();
+
     List<BomLine> findByBomIdOrderByLineNo(Long bomId);
 
     @Modifying

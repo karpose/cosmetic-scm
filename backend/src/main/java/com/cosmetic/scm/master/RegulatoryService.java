@@ -48,6 +48,7 @@ public class RegulatoryService {
 
     private final RegulatedSubstanceRepository substances;
     private final RegulatedAliasRepository aliasRepo;
+    private final RegulatedCasRepository casRepo;
     private final ItemRepository items;
     private final BomRepository boms;
     private final BomLineRepository bomLines;
@@ -112,18 +113,28 @@ public class RegulatoryService {
         return Normalizer.normalize(inci.trim(), Normalizer.Form.NFKD).replaceAll("\\p{M}", "").toLowerCase(Locale.ROOT).trim();
     }
 
-    /** 物料适用的目录规则。只有原料才有。 */
+    /** 物料适用的目录规则。只有原料才有。按 INCI、别名、CAS 号都能对上；对上多条时取最严的。 */
     public Optional<Rule> ruleOf(Item item) {
-        if (item.getItemType() != ItemType.RM || item.getInci() == null || item.getInci().isBlank()) {
+        if (item.getItemType() != ItemType.RM) {
             return Optional.empty();
         }
-        String k = key(item.getInci());
-        Optional<RegulatedSubstance> s = substances.findByInciKeyAndActiveTrue(k);
-        if (s.isEmpty()) {
-            // 名称对不上再看别名
-            s = aliasRepo.findByAliasKey(k).flatMap(a -> substances.findById(a.getSubstanceId())).filter(RegulatedSubstance::isActive);
+        List<RegulatedSubstance> found = new ArrayList<>();
+        if (item.getInci() != null && !item.getInci().isBlank()) {
+            String k = key(item.getInci());
+            substances.findByInciKeyAndActiveTrue(k).ifPresent(found::add);
+            aliasRepo.findByAliasKey(k).flatMap(a -> substances.findById(a.getSubstanceId())).filter(RegulatedSubstance::isActive).ifPresent(found::add);
         }
-        return s.map(x -> new Rule(x.getCatalog(), x.getMaxPct(), x.getSource()));
+        if (item.getCasNo() != null && !item.getCasNo().isBlank()) {
+            List<Long> ids = casRepo.findByCas(item.getCasNo()).stream().map(RegulatedCas::getSubstanceId).toList();
+            substances.findAllById(ids).stream().filter(RegulatedSubstance::isActive).forEach(found::add);
+        }
+        return strictest(found).map(x -> new Rule(x.getCatalog(), x.getMaxPct(), x.getSource()));
+    }
+
+    /** 禁用最严；限用里上限越小越严；限用没上限的最松。 */
+    static Optional<RegulatedSubstance> strictest(java.util.Collection<RegulatedSubstance> list) {
+        return list.stream().min(java.util.Comparator.<RegulatedSubstance>comparingInt(s -> s.getCatalog() == RegulatedCatalog.BANNED ? 0 : s.getMaxPct() != null ? 1 : 2)
+                .thenComparing(s -> s.getMaxPct() == null ? BigDecimal.valueOf(Long.MAX_VALUE) : s.getMaxPct()));
     }
 
     /** 物料上标了禁用，或目录里是禁用。 */
@@ -240,6 +251,7 @@ public class RegulatoryService {
             List<Long> rewrite = existing.values().stream().map(RegulatedSubstance::getId).toList();
             if (!rewrite.isEmpty()) {
                 aliasRepo.deleteBySubstanceIds(rewrite);
+                casRepo.deleteBySubstanceIds(rewrite);
             }
             for (RowReq r : req.rows()) {
                 RegulatedSubstance s = write(existing.getOrDefault(key(r.inciName()), new RegulatedSubstance()), r, by, now);
@@ -248,6 +260,13 @@ public class RegulatoryService {
                     a.setSubstanceId(s.getId());
                     a.setAliasKey(key(alias));
                     aliasRepo.save(a);
+                }
+                // CAS 列里能识别的号才用于对照，“无”之类的只保留文字
+                for (String cas : com.cosmetic.scm.domain.rules.CasNumber.parseAll(r.casNo())) {
+                    RegulatedCas c = new RegulatedCas();
+                    c.setSubstanceId(s.getId());
+                    c.setCas(cas);
+                    casRepo.save(c);
                 }
             }
             audit.log("导入法规目录", req.rows().size() + " 条", "新增 " + created + "，修改 " + updated + "，规则变化 " + changes.size() + " 处；来源 " + String.join("、", sources));
@@ -286,6 +305,11 @@ public class RegulatoryService {
         }
         if (!old.isActive()) {
             list.add(new Change(inci, "状态", "已停用", "生效"));
+        }
+        String casBefore = String.join("; ", com.cosmetic.scm.domain.rules.CasNumber.parseAll(old.getCasNo()));
+        String casAfter = String.join("; ", com.cosmetic.scm.domain.rules.CasNumber.parseAll(r.casNo()));
+        if (!casBefore.equals(casAfter)) {
+            list.add(new Change(inci, "CAS 号", casBefore.isEmpty() ? "无" : casBefore, casAfter.isEmpty() ? "无" : casAfter));
         }
         String before = aliasText(parseAliases(old.getAliases()));
         String after = aliasText(parseAliases(r.aliases()));
@@ -357,12 +381,21 @@ public class RegulatoryService {
     public Comparison compare() {
         Map<String, RegulatedSubstance> rules = substances.findByActiveTrue().stream().collect(Collectors.toMap(RegulatedSubstance::getInciKey, s -> s));
         long ruleCount = rules.size();
-        Map<Long, RegulatedSubstance> byId = rules.values().stream().collect(Collectors.toMap(RegulatedSubstance::getId, s -> s));
-        // 别名也能对上：别名表只有目录这么大，整张读出来
+        Map<Long, RegulatedSubstance> byId = rules.values().stream().collect(Collectors.toMap(RegulatedSubstance::getId, x -> x));
+        // 别名和 CAS 号也能对上：这两张表只有目录这么大，整张读出来
+        Map<String, List<RegulatedSubstance>> byName = new HashMap<>();
+        rules.forEach((k, v) -> byName.computeIfAbsent(k, x -> new ArrayList<>()).add(v));
         for (RegulatedAlias a : aliasRepo.findAll()) {
-            RegulatedSubstance s = byId.get(a.getSubstanceId());
-            if (s != null) {
-                rules.putIfAbsent(a.getAliasKey(), s);
+            RegulatedSubstance x = byId.get(a.getSubstanceId());
+            if (x != null) {
+                byName.computeIfAbsent(a.getAliasKey(), k -> new ArrayList<>()).add(x);
+            }
+        }
+        Map<String, List<RegulatedSubstance>> byCas = new HashMap<>();
+        for (RegulatedCas c : casRepo.findAll()) {
+            RegulatedSubstance x = byId.get(c.getSubstanceId());
+            if (x != null) {
+                byCas.computeIfAbsent(c.getCas(), k -> new ArrayList<>()).add(x);
             }
         }
         List<ItemGap> gaps = new ArrayList<>();
@@ -370,19 +403,28 @@ public class RegulatoryService {
             if (i.getItemType() != ItemType.RM || !i.isActive()) {
                 continue;
             }
-            if (i.getInci() == null || i.getInci().isBlank()) {
-                gaps.add(new ItemGap(i.getId(), i.getCode(), i.getName(), null, "NO_INCI", "没填 INCI，法规目录对不上，不会被校验"));
+            boolean noInci = i.getInci() == null || i.getInci().isBlank();
+            boolean noCas = i.getCasNo() == null || i.getCasNo().isBlank();
+            if (noInci && noCas) {
+                gaps.add(new ItemGap(i.getId(), i.getCode(), i.getName(), null, "NO_INCI", "INCI 和 CAS 号都没填，法规目录对不上，不会被校验"));
                 continue;
             }
-            RegulatedSubstance s = rules.get(key(i.getInci()));
+            List<RegulatedSubstance> found = new ArrayList<>();
+            if (!noInci) {
+                found.addAll(byName.getOrDefault(key(i.getInci()), List.of()));
+            }
+            if (!noCas) {
+                found.addAll(byCas.getOrDefault(i.getCasNo(), List.of()));
+            }
+            RegulatedSubstance s = strictest(found).orElse(null);
             if (s == null) {
                 continue;
             }
             if (s.getCatalog() == RegulatedCatalog.BANNED && !i.isBanned()) {
-                gaps.add(new ItemGap(i.getId(), i.getCode(), i.getName(), i.getInci(), "BANNED_NOT_MARKED", "目录里是禁用，物料上没标。系统已按禁用处理，请把物料也改过来"));
+                gaps.add(new ItemGap(i.getId(), i.getCode(), i.getName(), i.getInci(), "BANNED_NOT_MARKED", "目录里是禁用（" + s.getInciName() + "），物料上没标。系统已按禁用处理，请把物料也改过来"));
             } else if (s.getMaxPct() != null && (i.getLimitPct() == null || i.getLimitPct().compareTo(s.getMaxPct()) > 0)) {
                 gaps.add(new ItemGap(i.getId(), i.getCode(), i.getName(), i.getInci(), "LIMIT_LOOSER",
-                        "目录上限 " + plain(s.getMaxPct()) + "%，物料上是 " + (i.getLimitPct() == null ? "没填" : plain(i.getLimitPct()) + "%") + "。系统已按目录校验"));
+                        "目录上限 " + plain(s.getMaxPct()) + "%（" + s.getInciName() + "），物料上是 " + (i.getLimitPct() == null ? "没填" : plain(i.getLimitPct()) + "%") + "。系统已按目录校验"));
             }
         }
         return new Comparison(ruleCount, gaps, violations());
@@ -397,6 +439,9 @@ public class RegulatoryService {
         List<Violation> out = new ArrayList<>();
         List<Object[]> matched = new ArrayList<>(bomLines.findLinesOfRegulatedItems());
         matched.addAll(bomLines.findLinesMatchedByAlias());
+        matched.addAll(bomLines.findLinesMatchedByCas());
+        // 同一配方行可能按名称、别名、CAS 号各对上一次，只报一次
+        Set<String> reported = new HashSet<>();
         for (Object[] row : matched) {
             BomLine line = (BomLine) row[0];
             Item m = (Item) row[1];
@@ -407,7 +452,7 @@ public class RegulatoryService {
                 continue;
             }
             FormulaCompliance.Check c = FormulaCompliance.check(m.getName(), true, s.getCatalog() == RegulatedCatalog.BANNED, s.getMaxPct(), line.getQtyPer(), m.getUnit(), fg.getNetG());
-            if (c.blocking()) {
+            if (c.blocking() && reported.add(fg.getId() + "/" + m.getId())) {
                 out.add(new Violation(fg.getId(), fg.getCode(), fg.getName(), m.getCode(), c.message()));
             }
         }
