@@ -48,6 +48,9 @@ public class ControlledDoc {
 
     private String obsoleteReason;
 
+    /** 需要确认已读的岗位，逗号分隔的 Role 名称。为空表示不需要确认。 */
+    private String trainRoles;
+
     private String createdBy;
 
     private LocalDateTime createdAt;

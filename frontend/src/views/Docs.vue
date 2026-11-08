@@ -11,6 +11,13 @@
       </div>
     </div>
 
+    <el-card v-if="mine.length" shadow="never" class="mine">
+      <template #header><b>待我确认（{{ mine.length }}）</b> <span class="muted small">请阅读后在文件详情里确认</span></template>
+      <div v-for="m in mine" :key="m.revisionId" class="mine-row">
+        <a href="#" class="mono" @click.prevent="openDetail(m.docId)">{{ m.docCode }}</a> {{ m.title }} <span class="muted small">第 {{ m.revNo }} 版<template v-if="m.effectiveDate">，{{ m.effectiveDate }} 生效</template></span>
+      </div>
+    </el-card>
+
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
     <el-card v-else shadow="never" body-style="padding:0 0 8px">
       <template #header>
@@ -28,6 +35,7 @@
             <span v-else class="muted">没有</span>
             <div v-if="row.upcomingRev" class="small">第 {{ row.upcomingRev }} 版 {{ row.upcomingEffective }} 生效</div>
             <div v-if="row.pendingRevisionId" class="small warn">有一版待签批</div>
+            <div v-if="row.ackPending" class="small" :class="row.ackOverdue ? 'late' : 'muted'">{{ row.ackPending }} 人待确认</div>
           </template>
         </el-table-column>
         <el-table-column label="复审" width="130"><template #default="{ row }"><template v-if="row.reviewDue"><span :class="{ late: row.reviewOverdue }">{{ row.reviewDue }}</span><div class="muted small">每 {{ row.reviewMonths }} 个月</div></template><span v-else class="muted">—</span></template></el-table-column>
@@ -54,6 +62,11 @@
           <el-form-item label="复审周期（月）"><el-input-number id="dc-months" v-model="cr.reviewMonths" :min="1" :max="60" :precision="0" style="width:100%" /></el-form-item>
           <el-form-item label="生效日期（选填，默认签批当天）"><el-date-picker id="dc-effective" v-model="cr.effectiveDate" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d < startOfToday" /></el-form-item>
         </div>
+        <el-form-item label="需要确认已读的岗位（选填）">
+          <el-select id="dc-roles" v-model="cr.trainRoles" multiple placeholder="不选表示不需要确认" style="width:100%">
+            <el-option v-for="r in roles" :key="r.code" :value="r.code" :label="r.label" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="制定说明"><el-input id="dc-summary" v-model="cr.changeSummary" maxlength="300" placeholder="如：首版" /></el-form-item>
         <p class="muted small">保存后上传文件，再由质量安全负责人签批。</p>
       </el-form>
@@ -67,6 +80,24 @@
       <template v-if="dt.data">
         <p class="summary-line"><StatusTag :status="d.status" :label="d.statusLabel" /> <b>{{ d.title }}</b> · {{ d.categoryLabel }}<template v-if="d.ownerDept"> · {{ d.ownerDept }}</template> · 每 {{ d.reviewMonths }} 个月复审</p>
         <el-alert v-if="d.obsoleteReason" type="info" :closable="false" show-icon :title="`已作废：${d.obsoleteReason}`" />
+        <div class="roles-row small">
+          <span>需要确认的岗位：{{ d.trainRoles.length ? d.trainRoles.map(roleLabel).join('、') : '不需要确认' }}</span>
+          <el-button v-if="isQuality && d.status === 'ACTIVE' && !tr.editing" size="small" text @click="tr.editing = true; tr.roles = [...d.trainRoles]">修改</el-button>
+          <template v-if="tr.editing">
+            <el-select v-model="tr.roles" multiple size="small" placeholder="不选表示不需要确认" aria-label="需要确认的岗位" style="min-width:240px">
+              <el-option v-for="r in roles" :key="r.code" :value="r.code" :label="r.label" />
+            </el-select>
+            <el-button size="small" type="primary" :loading="tr.saving" @click="saveRoles">保存</el-button>
+            <el-button size="small" text @click="tr.editing = false">取消</el-button>
+          </template>
+        </div>
+        <div v-if="dt.data.ack" class="ack-box">
+          <b>第 {{ dt.data.ack.revNo }} 版已读确认 {{ dt.data.ack.done }} / {{ dt.data.ack.total }}</b>
+          <el-button v-if="needMyAck" size="small" type="primary" :loading="dt.saving" @click="ackMine">我已阅读并理解第 {{ dt.data.ack.revNo }} 版</el-button>
+          <div class="small">
+            <span v-for="p in dt.data.ack.people" :key="p.username" class="person" :class="p.ackedAt ? 'muted' : 'late'">{{ p.displayName || p.username }}{{ p.ackedAt ? ' ✓' : '' }}</span>
+          </div>
+        </div>
         <el-table :data="dt.data.revisions" size="small" style="margin-top:8px" highlight-current-row scrollbar-tabindex="0" @current-change="(r) => (dt.rev = r)">
           <el-table-column label="版本" width="110"><template #default="{ row }">第 {{ row.revNo }} 版 <el-tag v-if="row.current" type="success" size="small" disable-transitions>现行</el-tag><el-tag v-else-if="row.upcoming" size="small" disable-transitions>待生效</el-tag></template></el-table-column>
           <el-table-column label="修订内容" min-width="200"><template #default="{ row }">{{ row.changeSummary }}<div v-if="row.rejectNote" class="small late">退回：{{ row.rejectNote }}</div></template></el-table-column>
@@ -129,28 +160,40 @@ import { textMatch, usePaged } from '../utils/table'
 const CATEGORY = { SOP: '标准操作规程', PROCESS: '工艺规程', FORM: '记录表格', MANUAL: '手册', OTHER: '其他' }
 const auth = useAuth()
 const canEdit = computed(() => auth.hasAny('MASTER_DATA', 'QA', 'QSO'))
+const isQuality = computed(() => auth.hasAny('QA', 'QSO'))
+const roles = ref([])
+const roleLabel = (code) => roles.value.find((r) => r.code === code)?.label || code
+const mine = ref([])
 const isQso = computed(() => auth.hasAny('QSO'))
 const docs = ref([])
 const activeOnly = ref(true)
-const loader = useLoader(async () => { docs.value = await http.get('/docs') })
+const loader = useLoader(async () => {
+  const [d, m] = await Promise.all([http.get('/docs'), http.get('/docs/my-pending')])
+  docs.value = d
+  mine.value = m
+})
 const load = () => loader.run()
 const shown = computed(() => activeOnly.value ? docs.value.filter((x) => x.status === 'ACTIVE') : docs.value)
 const pg = usePaged(shown, { match: textMatch('docCode', 'title', 'ownerDept') })
 const startOfToday = startOfBusinessDay()
 const narrow = ref(window.innerWidth <= 768)
 const onResize = () => { narrow.value = window.innerWidth <= 768 }
-onMounted(() => { load(); window.addEventListener('resize', onResize) })
+onMounted(() => {
+  load()
+  http.get('/auth/roles').then((r) => { roles.value = r.filter((x) => !x.portal) })
+  window.addEventListener('resize', onResize)
+})
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
-const cr = reactive({ visible: false, saving: false, docCode: '', title: '', category: 'SOP', ownerDept: '', reviewMonths: 24, effectiveDate: null, changeSummary: '首版' })
+const cr = reactive({ visible: false, saving: false, docCode: '', title: '', category: 'SOP', ownerDept: '', reviewMonths: 24, effectiveDate: null, changeSummary: '首版', trainRoles: [] })
 function openCreate() {
-  Object.assign(cr, { visible: true, saving: false, docCode: '', title: '', category: 'SOP', ownerDept: '', reviewMonths: 24, effectiveDate: null, changeSummary: '首版' })
+  Object.assign(cr, { visible: true, saving: false, docCode: '', title: '', category: 'SOP', ownerDept: '', reviewMonths: 24, effectiveDate: null, changeSummary: '首版', trainRoles: [] })
 }
 async function submitCreate() {
   if (!cr.docCode.trim() || !cr.title.trim() || !cr.changeSummary.trim()) return ElMessage.warning('请填写文件编号、名称和制定说明')
   cr.saving = true
   try {
-    const x = await http.post('/docs', { docCode: cr.docCode, title: cr.title, category: cr.category, ownerDept: cr.ownerDept, reviewMonths: cr.reviewMonths, effectiveDate: cr.effectiveDate, changeSummary: cr.changeSummary })
+    const x = await http.post('/docs', { docCode: cr.docCode, title: cr.title, category: cr.category, ownerDept: cr.ownerDept, reviewMonths: cr.reviewMonths, effectiveDate: cr.effectiveDate, changeSummary: cr.changeSummary, trainRoles: cr.trainRoles })
     ElMessage.success(`文件 ${x.doc.docCode} 已保存，请上传文件`)
     cr.visible = false
     load()
@@ -164,7 +207,29 @@ const dt = reactive({ visible: false, saving: false, data: null, rev: null, pass
 const d = computed(() => dt.data?.doc)
 const pending = computed(() => dt.data?.revisions.find((r) => r.status === 'PENDING'))
 const req = latestOnly()
+const tr = reactive({ editing: false, saving: false, roles: [] })
+const needMyAck = computed(() => dt.data?.ack?.people.some((p) => p.username === auth.user?.username && !p.ackedAt))
+async function saveRoles() {
+  tr.saving = true
+  try {
+    apply(await http.post(`/docs/${d.value.id}/train-roles`, { trainRoles: tr.roles }))
+    tr.editing = false
+    ElMessage.success('已修改确认岗位')
+  } finally {
+    tr.saving = false
+  }
+}
+async function ackMine() {
+  dt.saving = true
+  try {
+    apply(await http.post(`/docs/${d.value.id}/revisions/${dt.data.ack.revisionId}/ack`, {}))
+    ElMessage.success('已确认')
+  } finally {
+    dt.saving = false
+  }
+}
 function show(x) {
+  tr.editing = false
   dt.data = x
   dt.rev = x.revisions.find((r) => r.status === 'PENDING') || x.revisions.find((r) => r.current) || x.revisions[0] || null
   dt.password = ''
@@ -230,4 +295,10 @@ async function submitRevise() {
 .late { color: var(--el-color-danger); }
 .warn { color: var(--el-color-warning); }
 .summary-line { margin: 0 0 6px; line-height: 1.8; }
+.mine { margin-bottom: 14px; }
+.mine-row { padding: 4px 0; }
+.roles-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 6px 0; }
+.ack-box { margin: 8px 0; padding: 10px 12px; border-radius: 12px; background: var(--lg-tint); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.ack-box > .small { flex: 1 1 100%; }
+.person { margin-right: 12px; }
 </style>

@@ -17,6 +17,7 @@ const routes = [
       { path: '', name: 'dashboard', component: () => import('./views/Dashboard.vue'), meta: { title: '总览' } },
       { path: 'analytics', name: 'analytics', component: () => import('./views/Analytics.vue'), meta: { title: '经营看板' } },
       { path: 'planning', name: 'planning', component: () => import('./views/Planning.vue'), meta: { title: '补货建议' } },
+      { path: 'artworks', name: 'artworks', component: () => import('./views/Artworks.vue'), meta: { title: '标签设计稿' } },
       { path: 'docs', name: 'docs', component: () => import('./views/Docs.vue'), meta: { title: '受控文件' } },
       { path: 'changes', name: 'changes', component: () => import('./views/Changes.vue'), meta: { title: '变更控制' } },
       { path: 'npd', name: 'npd', component: () => import('./views/Npd.vue'), meta: { title: '新品立项' } },

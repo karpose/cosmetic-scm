@@ -16,7 +16,8 @@ public enum OwnerType {
     QUALITY_SPEC("质量标准"),
     NPD_PROJECT("新品项目"),
     DOC_REVISION("受控文件修订"),
-    CHANGE_REQUEST("变更");
+    CHANGE_REQUEST("变更"),
+    LABEL_ARTWORK("标签设计稿");
 
     private final String label;
 

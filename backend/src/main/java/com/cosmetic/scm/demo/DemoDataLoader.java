@@ -112,6 +112,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final com.cosmetic.scm.plm.NpdService npdService;
     private final com.cosmetic.scm.plm.DocControlService docControlService;
     private final com.cosmetic.scm.plm.ChangeService changeService;
+    private final com.cosmetic.scm.plm.ArtworkService artworkService;
     private final QualityService quality;
     private final ProductionService production;
     private final SalesService sales;
@@ -322,6 +323,8 @@ public class DemoDataLoader implements ApplicationRunner {
                 com.cosmetic.scm.domain.DocCategory.SOP, "质量部", 24, "首版（示例）", null)));
         as("purchase1", () -> changeService.create(new com.cosmetic.scm.plm.ChangeService.CreateReq("甘油增加第二供应商（示例）", com.cosmetic.scm.domain.ChangeType.MATERIAL,
                 "降低单一来源风险（示例）", "引入第二家甘油供应商，规格不变（示例）", "精华液、面霜")));
+        // 标签设计稿：面霜瓶的第一版待评审（批准前要上传设计稿文件）
+        as("qa1", () -> artworkService.create(new com.cosmetic.scm.plm.ArtworkService.CreateReq(jar.getId(), cream.getId(), "首版设计稿（示例）")));
         // 询价：邀请两家，华澄已报价。截止前内部看不到价格
         var rfq = as("purchase1", () -> rfqService.create(new com.cosmetic.scm.sourcing.RfqService.CreateRfqReq("透明质酸钠年度询价（示例）", t.plusDays(7), List.of(hc.id(), mp.id()),
                 List.of(new com.cosmetic.scm.sourcing.RfqService.RfqLineReq(ha.getId(), new BigDecimal("20"))))));

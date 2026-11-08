@@ -131,6 +131,53 @@ class DocChangeControlTest {
     }
 
     @Test
+    void peopleInTheChosenRolesAcknowledgeEachNewRevisionOnce() throws Exception {
+        String qa = login("qa1");
+        String qso = login("qso1");
+        String prod = login("prod1");
+        String sales = login("sales1");
+        Map<String, Object> m = doc("SOP-ACK-1", null);
+        m.put("trainRoles", List.of("PRODUCTION", "SALES"));
+        JsonNode d = ok(call(qa, "/api/docs", m));
+        long id = d.get("doc").get("id").asLong();
+        String base = "/api/docs/" + id;
+        long rev1 = d.get("revisions").get(0).get("id").asLong();
+        upload(qa, rev1);
+        d = ok(call(qso, base + "/revisions/" + rev1 + "/approve", Map.of("password", PWD)));
+        assertThat(d.get("ack").get("total").asInt()).isEqualTo(2);
+        assertThat(d.get("ack").get("done").asInt()).isZero();
+        assertThat(d.get("doc").get("ackPending").asInt()).isEqualTo(2);
+        assertThat(read(prod, "/api/docs/my-pending").toString()).contains("SOP-ACK-1");
+        assertThat(read(qa, "/api/docs/my-pending").toString()).doesNotContain("SOP-ACK-1");
+        assertThat(read(qa, "/api/dashboard").get("todos").toString()).contains("受控文件待确认").contains("2 人");
+
+        // 只有应确认的人能确认，每人每版一次
+        call(login("viewer1"), base + "/revisions/" + rev1 + "/ack", Map.of()).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("不需要确认")));
+        ok(call(prod, base + "/revisions/" + rev1 + "/ack", Map.of()));
+        call(prod, base + "/revisions/" + rev1 + "/ack", Map.of()).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("已经确认")));
+        assertThat(read(prod, "/api/docs/my-pending").toString()).doesNotContain("SOP-ACK-1");
+        d = ok(call(sales, base + "/revisions/" + rev1 + "/ack", Map.of()));
+        assertThat(d.get("ack").get("done").asInt()).isEqualTo(2);
+        assertThat(read(qa, "/api/dashboard").get("todos").toString()).doesNotContain("SOP-ACK-1");
+
+        // 出新版：要重新确认，旧版不能再确认
+        long rev2 = ok(call(qa, base + "/revisions", Map.of("changeSummary", "第二版"))).get("revisions").get(0).get("id").asLong();
+        upload(qa, rev2);
+        d = ok(call(qso, base + "/revisions/" + rev2 + "/approve", Map.of("password", PWD)));
+        assertThat(d.get("ack").get("revNo").asInt()).isEqualTo(2);
+        assertThat(d.get("ack").get("done").asInt()).isZero();
+        call(prod, base + "/revisions/" + rev1 + "/ack", Map.of()).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("不用确认")));
+
+        // 改岗位：只给质量，门户岗位不行
+        call(login("purchase1"), base + "/train-roles", Map.of("trainRoles", List.of("QA"))).andExpect(status().isForbidden());
+        call(qa, base + "/train-roles", Map.of("trainRoles", List.of("OEM_PORTAL"))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("门户")));
+        d = ok(call(qa, base + "/train-roles", Map.of("trainRoles", List.of())));
+        assertThat(d.get("ack").isNull()).isTrue();
+        assertThat(d.get("doc").get("ackPending").asInt()).isZero();
+        assertThat(read(qa, "/api/audit?q=修改文件确认岗位").toString()).contains("不需要确认");
+    }
+
+    @Test
     void changeGoesFromRequestToAssessmentApprovalActionsAndClosure() throws Exception {
         String qa = login("qa1");
         String qso = login("qso1");
