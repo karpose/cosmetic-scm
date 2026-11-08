@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.text.Normalizer;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -46,6 +47,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class RegulatoryService {
 
     private final RegulatedSubstanceRepository substances;
+    private final RegulatedAliasRepository aliasRepo;
     private final ItemRepository items;
     private final BomRepository boms;
     private final BomLineRepository bomLines;
@@ -64,7 +66,11 @@ public class RegulatoryService {
                          @Size(max = 200) String cnName, @Size(max = 40) String casNo,
                          @DecimalMin(value = "0", message = "上限不能为负") @DecimalMax(value = "100", message = "上限不能超过 100") @Digits(integer = 5, fraction = 4, message = "上限最多 4 位小数") BigDecimal maxPct,
                          @Size(max = 500) String conditions,
-                         @NotBlank(message = "请填写来源文件和版本") @Size(max = 200) String source) {
+                         @NotBlank(message = "请填写来源文件和版本") @Size(max = 200) String source,
+                         @Size(max = 1000, message = "别名太长，最多 1000 字") String aliases) {
+        public RowReq(RegulatedCatalog catalog, String inciName, String cnName, String casNo, BigDecimal maxPct, String conditions, String source) {
+            this(catalog, inciName, cnName, casNo, maxPct, conditions, source, null);
+        }
     }
 
     public record Change(String code, String field, String from, String to) {
@@ -80,7 +86,7 @@ public class RegulatoryService {
     }
 
     public record SubstanceView(Long id, RegulatedCatalog catalog, String catalogLabel, String inciName, String cnName, String casNo, BigDecimal maxPct,
-                                String conditions, String source, boolean active, String updatedBy, LocalDateTime updatedAt) {
+                                String conditions, String source, boolean active, String updatedBy, LocalDateTime updatedAt, String aliases) {
     }
 
     /** state：BANNED_NOT_MARKED 目录禁用，物料没标；LIMIT_LOOSER 物料的上限比目录松或没填；NO_INCI 没填 INCI，对不上。 */
@@ -111,7 +117,13 @@ public class RegulatoryService {
         if (item.getItemType() != ItemType.RM || item.getInci() == null || item.getInci().isBlank()) {
             return Optional.empty();
         }
-        return substances.findByInciKeyAndActiveTrue(key(item.getInci())).map(s -> new Rule(s.getCatalog(), s.getMaxPct(), s.getSource()));
+        String k = key(item.getInci());
+        Optional<RegulatedSubstance> s = substances.findByInciKeyAndActiveTrue(k);
+        if (s.isEmpty()) {
+            // 名称对不上再看别名
+            s = aliasRepo.findByAliasKey(k).flatMap(a -> substances.findById(a.getSubstanceId())).filter(RegulatedSubstance::isActive);
+        }
+        return s.map(x -> new Rule(x.getCatalog(), x.getMaxPct(), x.getSource()));
     }
 
     /** 物料上标了禁用，或目录里是禁用。 */
@@ -146,6 +158,24 @@ public class RegulatoryService {
         Set<String> sources = new java.util.LinkedHashSet<>();
         Map<String, RegulatedSubstance> existing = substances.findByInciKeyIn(req.rows().stream().map(r -> key(r.inciName())).collect(Collectors.toSet()))
                 .stream().collect(Collectors.toMap(RegulatedSubstance::getInciKey, s -> s));
+        // 别名不能和别的条目的名称或别名重复：文件里的名称和别名、库里的名称和别名都要查，一次查完
+        Map<String, String> fileOwner = new HashMap<>();
+        for (RowReq r : req.rows()) {
+            if (r.inciName() != null && !r.inciName().isBlank()) {
+                fileOwner.putIfAbsent(key(r.inciName()), key(r.inciName()));
+            }
+        }
+        Set<String> allAliasKeys = req.rows().stream().flatMap(r -> parseAliases(r.aliases()).stream()).map(RegulatoryService::key).collect(Collectors.toSet());
+        Map<String, String> dbNameOwner = allAliasKeys.isEmpty() ? Map.of() : substances.findByInciKeyIn(allAliasKeys).stream()
+                .collect(Collectors.toMap(RegulatedSubstance::getInciKey, RegulatedSubstance::getInciKey));
+        Set<String> nameAndAliasKeys = new HashSet<>(allAliasKeys);
+        nameAndAliasKeys.addAll(fileOwner.keySet());
+        Map<String, Long> dbAliasOwner = nameAndAliasKeys.isEmpty() ? Map.of() : aliasRepo.findByAliasKeyIn(nameAndAliasKeys).stream()
+                .collect(Collectors.toMap(RegulatedAlias::getAliasKey, RegulatedAlias::getSubstanceId));
+        Map<Long, String> idToKey = new HashMap<>();
+        if (!dbAliasOwner.isEmpty()) {
+            substances.findAllById(new HashSet<>(dbAliasOwner.values())).forEach(s -> idToKey.put(s.getId(), s.getInciKey()));
+        }
         for (int i = 0; i < req.rows().size(); i++) {
             RowReq r = req.rows().get(i);
             int line = i + 2;
@@ -163,6 +193,35 @@ public class RegulatoryService {
                 errors.add(new RowError(line, inci, "禁用的不能填浓度上限"));
                 continue;
             }
+            String mine = key(inci);
+            String other = dbAliasOwner.containsKey(mine) && !mine.equals(idToKey.get(dbAliasOwner.get(mine))) ? idToKey.get(dbAliasOwner.get(mine)) : null;
+            if (other != null && !fileRedefinesAliases(req, other)) {
+                errors.add(new RowError(line, inci, "INCI 已是目录里另一条的别名，请先从那一条去掉"));
+                continue;
+            }
+            String conflict = null;
+            for (String alias : parseAliases(r.aliases())) {
+                String ak = key(alias);
+                if (ak.length() > 200) {
+                    conflict = "别名“" + alias + "”太长，每个最多 200 字";
+                } else if (ak.equals(mine)) {
+                    conflict = "别名“" + alias + "”和名称相同";
+                } else if (fileOwner.containsKey(ak) && !fileOwner.get(ak).equals(mine)) {
+                    conflict = "别名“" + alias + "”在文件里已是另一条的名称或别名";
+                } else if (dbNameOwner.containsKey(ak)) {
+                    conflict = "别名“" + alias + "”已是目录里另一条的名称";
+                } else if (dbAliasOwner.containsKey(ak) && !mine.equals(idToKey.get(dbAliasOwner.get(ak))) && !fileRedefinesAliases(req, idToKey.get(dbAliasOwner.get(ak)))) {
+                    conflict = "别名“" + alias + "”已是目录里另一条的别名";
+                }
+                if (conflict != null) {
+                    break;
+                }
+                fileOwner.put(ak, mine);
+            }
+            if (conflict != null) {
+                errors.add(new RowError(line, inci, conflict));
+                continue;
+            }
             RegulatedSubstance old = existing.get(key(inci));
             if (old == null) {
                 created++;
@@ -177,8 +236,19 @@ public class RegulatoryService {
             // 操作人只查一次：每查一次库 Hibernate 都要检查一遍所有已载入的条目，逐行查就是平方级
             String by = currentUser.usernameOrSystem();
             LocalDateTime now = time.now();
+            // 文件里出现的已有条目，别名按文件重写：整批删一次
+            List<Long> rewrite = existing.values().stream().map(RegulatedSubstance::getId).toList();
+            if (!rewrite.isEmpty()) {
+                aliasRepo.deleteBySubstanceIds(rewrite);
+            }
             for (RowReq r : req.rows()) {
-                write(existing.getOrDefault(key(r.inciName()), new RegulatedSubstance()), r, by, now);
+                RegulatedSubstance s = write(existing.getOrDefault(key(r.inciName()), new RegulatedSubstance()), r, by, now);
+                for (String alias : parseAliases(r.aliases())) {
+                    RegulatedAlias a = new RegulatedAlias();
+                    a.setSubstanceId(s.getId());
+                    a.setAliasKey(key(alias));
+                    aliasRepo.save(a);
+                }
             }
             audit.log("导入法规目录", req.rows().size() + " 条", "新增 " + created + "，修改 " + updated + "，规则变化 " + changes.size() + " 处；来源 " + String.join("、", sources));
             logChanges(changes);
@@ -217,10 +287,40 @@ public class RegulatoryService {
         if (!old.isActive()) {
             list.add(new Change(inci, "状态", "已停用", "生效"));
         }
+        String before = aliasText(parseAliases(old.getAliases()));
+        String after = aliasText(parseAliases(r.aliases()));
+        if (!before.equals(after)) {
+            list.add(new Change(inci, "别名", before.isEmpty() ? "无" : before, after.isEmpty() ? "无" : after));
+        }
         return list;
     }
 
-    private void write(RegulatedSubstance s, RowReq r, String by, LocalDateTime now) {
+    /** 分号（中英文）分隔，去空、按对照键去重。 */
+    static List<String> parseAliases(String s) {
+        if (s == null || s.isBlank()) {
+            return List.of();
+        }
+        Map<String, String> byKey = new java.util.LinkedHashMap<>();
+        for (String part : s.split("[;；]")) {
+            String t = part.trim();
+            if (!t.isEmpty()) {
+                byKey.putIfAbsent(key(t), t);
+            }
+        }
+        return new ArrayList<>(byKey.values());
+    }
+
+    private static String aliasText(List<String> aliases) {
+        return aliases.stream().sorted(java.util.Comparator.comparing(RegulatoryService::key)).collect(Collectors.joining("; "));
+    }
+
+    /** 那一条也在这次文件里：它的别名会按文件重写，库里的旧别名不算冲突。 */
+    private static boolean fileRedefinesAliases(ImportReq req, String otherKey) {
+        return otherKey != null && req.rows().stream().anyMatch(r -> r.inciName() != null && key(r.inciName()).equals(otherKey)
+                && parseAliases(r.aliases()).stream().noneMatch(a -> key(a).equals(otherKey)));
+    }
+
+    private RegulatedSubstance write(RegulatedSubstance s, RowReq r, String by, LocalDateTime now) {
         String inci = r.inciName().trim();
         s.setCatalog(r.catalog());
         s.setInciName(inci);
@@ -233,7 +333,9 @@ public class RegulatoryService {
         s.setActive(true);
         s.setUpdatedBy(by);
         s.setUpdatedAt(now);
-        substances.save(s);
+        List<String> al = parseAliases(r.aliases());
+        s.setAliases(al.isEmpty() ? null : String.join("; ", al));
+        return substances.save(s);
     }
 
     /** 法规目录只增不删，不再适用的停用，留下记录。 */
@@ -254,6 +356,15 @@ public class RegulatoryService {
     @Transactional(readOnly = true)
     public Comparison compare() {
         Map<String, RegulatedSubstance> rules = substances.findByActiveTrue().stream().collect(Collectors.toMap(RegulatedSubstance::getInciKey, s -> s));
+        long ruleCount = rules.size();
+        Map<Long, RegulatedSubstance> byId = rules.values().stream().collect(Collectors.toMap(RegulatedSubstance::getId, s -> s));
+        // 别名也能对上：别名表只有目录这么大，整张读出来
+        for (RegulatedAlias a : aliasRepo.findAll()) {
+            RegulatedSubstance s = byId.get(a.getSubstanceId());
+            if (s != null) {
+                rules.putIfAbsent(a.getAliasKey(), s);
+            }
+        }
         List<ItemGap> gaps = new ArrayList<>();
         for (Item i : items.findAll()) {
             if (i.getItemType() != ItemType.RM || !i.isActive()) {
@@ -274,7 +385,7 @@ public class RegulatoryService {
                         "目录上限 " + plain(s.getMaxPct()) + "%，物料上是 " + (i.getLimitPct() == null ? "没填" : plain(i.getLimitPct()) + "%") + "。系统已按目录校验"));
             }
         }
-        return new Comparison(rules.size(), gaps, violations());
+        return new Comparison(ruleCount, gaps, violations());
     }
 
     /**
@@ -284,7 +395,9 @@ public class RegulatoryService {
     @Transactional(readOnly = true)
     public List<Violation> violations() {
         List<Violation> out = new ArrayList<>();
-        for (Object[] row : bomLines.findLinesOfRegulatedItems()) {
+        List<Object[]> matched = new ArrayList<>(bomLines.findLinesOfRegulatedItems());
+        matched.addAll(bomLines.findLinesMatchedByAlias());
+        for (Object[] row : matched) {
             BomLine line = (BomLine) row[0];
             Item m = (Item) row[1];
             RegulatedSubstance s = (RegulatedSubstance) row[2];
@@ -303,7 +416,7 @@ public class RegulatoryService {
 
     private static SubstanceView view(RegulatedSubstance s) {
         return new SubstanceView(s.getId(), s.getCatalog(), s.getCatalog().getLabel(), s.getInciName(), s.getCnName(), s.getCasNo(), s.getMaxPct(), s.getConditions(),
-                s.getSource(), s.isActive(), s.getUpdatedBy(), s.getUpdatedAt());
+                s.getSource(), s.isActive(), s.getUpdatedBy(), s.getUpdatedAt(), s.getAliases());
     }
 
     private static boolean sameNumber(BigDecimal a, BigDecimal b) {

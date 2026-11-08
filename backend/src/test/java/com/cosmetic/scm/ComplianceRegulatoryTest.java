@@ -175,6 +175,48 @@ class ComplianceRegulatoryTest {
         call(qa, "/api/regulatory/" + ruleId(qa, "Fake Cafe") + "/retire", Map.of("reason", "测试")).andExpect(status().isOk());
     }
 
+    private Map<String, Object> aliased(String catalog, String inci, String aliases) {
+        Map<String, Object> m = rule(catalog, inci, null);
+        m.put("aliases", aliases);
+        return m;
+    }
+
+    @Test
+    void aliasesMatchItemsAndCannotBelongToTwoEntries() throws Exception {
+        String admin = login("admin", "Admin@123456");
+        String qa = login("qa1");
+        JsonNode ok = importRules(qa, false, List.of(aliased("BANNED", "Fake Alias Base", "Fake Old Name； FAKE OLDER ; fake old name")));
+        assertThat(ok.get("applied").asBoolean()).isTrue();
+        assertThat(text(read(qa, "/api/regulatory"))).contains("Fake Old Name; FAKE OLDER");
+
+        // 物料按旧名称写 INCI，也会被拦
+        long m = rm(admin, "RG-AL1", "  fake older ", null);
+        long f = fg(admin, "RG-ALFG");
+        saveBom(admin, f, m, "0.001").andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("禁用")));
+
+        // 别名不能属于两条
+        JsonNode bad = importRules(qa, true, List.of(aliased("RESTRICTED", "Fake Other", "Fake Older")));
+        assertThat(bad.get("errors").get(0).get("message").asText()).contains("另一条的别名");
+        bad = importRules(qa, true, List.of(rule("RESTRICTED", "Fake Old Name", "1")));
+        assertThat(bad.get("errors").get(0).get("message").asText()).contains("另一条的别名");
+        bad = importRules(qa, true, List.of(aliased("RESTRICTED", "Fake X", "Fake Y"), rule("RESTRICTED", "Fake Y", "1")));
+        assertThat(bad.get("errors").toString()).contains("另一条的名称或别名");
+        bad = importRules(qa, true, List.of(aliased("RESTRICTED", "Fake Self", "fake self")));
+        assertThat(bad.get("errors").get(0).get("message").asText()).contains("和名称相同");
+
+        // 同一个文件里把别名挪到另一条：可以；预检列出别名变化
+        JsonNode move = importRules(qa, true, List.of(aliased("BANNED", "Fake Alias Base", "Fake Old Name"), aliased("RESTRICTED", "Fake Other", "Fake Older")));
+        assertThat(move.get("errors").size()).isZero();
+        assertThat(move.get("changes").toString()).contains("别名").contains("FAKE OLDER");
+        importRules(qa, false, List.of(aliased("BANNED", "Fake Alias Base", "Fake Old Name"), aliased("RESTRICTED", "Fake Other", "Fake Older")));
+        // 现在 Fake Older 按限用（没有上限）校验，不再算禁用
+        saveBom(admin, f, m, "0.001").andExpect(status().isOk());
+        assertThat(text(read(qa, "/api/audit?q=修改法规条目"))).contains("别名");
+        for (String n : List.of("Fake Alias Base", "Fake Other")) {
+            call(qa, "/api/regulatory/" + ruleId(qa, n) + "/retire", Map.of("reason", "测试")).andExpect(status().isOk());
+        }
+    }
+
     @Test
     void catalogIsEnforcedInFormulasPurchasesAndRfqsWhicheverIsStricter() throws Exception {
         String admin = login("admin", "Admin@123456");

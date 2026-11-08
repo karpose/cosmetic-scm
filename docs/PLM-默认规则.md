@@ -14,13 +14,14 @@
 
 | 规则 | 现在的做法 | 要改时看 |
 | --- | --- | --- |
-| 怎么对照 | 只按 INCI 名称，不分大小写、不分重音（é 和 e 算同一个），去首尾空格。不按 CAS 号和中文名 | `RegulatoryService.key` |
+| 怎么对照 | 按 INCI 名称和别名，不分大小写、不分重音（é 和 e 算同一个），去首尾空格。不按 CAS 号和中文名 | `RegulatoryService.key` |
 | 没填 INCI 的物料 | 对不上，不会被校验，列在对照结果里 | `RegulatoryService.compare` |
 | 目录和物料不一致 | 取严的：目录禁用就按禁用，上限取小的 | `RegulatoryService.isBanned`、`effectiveLimit` |
 | 哪里会拦 | 配方保存和提交、采购下单、发起询价 | `MasterService.check`、`PurchaseService`、`RfqService` |
 | 已生效的配方 | 不会自动停用，总览报紧急待办，上线检查报必须处理 | `RegulatoryService.violations` |
 | 使用条件 | 只是记录，系统不判断（如“仅用于淋洗类”），只校验浓度上限 | `RegulatoryService` |
 | 谁能导入和停用 | QA、QSO。管理员不行，因为它决定配方能不能过校验 | `RegulatoryController` |
+| 别名 | 同一物质的其它 INCI 写法，导入时分号分隔。别名不能和其它条目的名称或别名重复（同一文件里把别名从一条挪到另一条可以）；改别名会列在预检的变化里并写审计 | `RegulatoryService.importRows`、`regulated_alias` |
 | 导入 | 全成或全不成，来源必填；INCI 已存在的按整行覆盖，**留空的上限就是无上限**，不保留原值。预检列出类别、上限、状态的变化，审计也记下 | `RegulatoryService.importRows` |
 | 不再适用的 | 停用，不删除 | `RegulatoryService.retire` |
 
@@ -156,6 +157,7 @@
 ## 没有做的
 
 - 变更控制和供应商、标签、工艺等操作没有联动（配方已联动，开关默认关闭）。
+- 法规目录：按 CAS 号对照（要先给物料加 CAS 字段）。
 - 标签设计稿：没有打样和印刷批次记录；核对印刷内容靠人工确认，系统不比对图片。
 - 受控文件：纸质文件的分发和回收记录；培训考核（现在只有已读确认）。
 - 新品：项目预算和成本（涉及价格权限，没有做）、阶段计划和甘特图、包材设计稿评审、多个成品规格（同一项目多个 SKU）。

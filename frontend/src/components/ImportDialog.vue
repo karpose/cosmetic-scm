@@ -174,7 +174,7 @@ const SPECS = {
   },
   regulated: {
     title: '法规目录', url: '/regulatory/import', file: '法规目录导入模板.csv', codeKey: 'inciName', required: ['catalog', 'inciName', 'source'], unit: '条法规目录',
-    hint: '请按官方发布的版本填写，来源必填。全成或全不成；INCI 已存在的按修改处理。只有类别、上限和来源会影响校验。下面的示例不是法规内容。',
+    hint: '请按官方发布的版本填写，来源必填。全成或全不成；INCI 已存在的按修改处理。类别、上限和别名会影响校验，别名用分号分隔，不能和别的条目重复。下面的示例不是法规内容。',
     columns: [
       { header: '类别', key: 'catalog', conv: enumOf('类别', { BANNED: '禁用', RESTRICTED: '限用' }, true), show: (v) => ({ BANNED: '禁用', RESTRICTED: '限用' }[v]), example: '限用' },
       { header: 'INCI 名称', key: 'inciName', conv: text, example: 'Example Substance' },
@@ -182,7 +182,8 @@ const SPECS = {
       { header: 'CAS 号', key: 'casNo', conv: text, example: '' },
       { header: '浓度上限（%）', key: 'maxPct', conv: num('浓度上限'), example: '1' },
       { header: '使用条件', key: 'conditions', conv: text, example: '' },
-      { header: '来源文件和版本', key: 'source', conv: text, example: '请填文件名和版本' }
+      { header: '来源文件和版本', key: 'source', conv: text, example: '请填文件名和版本' },
+      { header: '别名（其它 INCI 写法，分号分隔）', key: 'aliases', conv: text, example: '' }
     ]
   },
   partners: {

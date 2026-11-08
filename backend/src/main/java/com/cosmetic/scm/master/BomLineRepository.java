@@ -16,6 +16,13 @@ public interface BomLineRepository extends JpaRepository<BomLine, Long> {
             """)
     java.util.List<Object[]> findLinesOfRegulatedItems();
 
+    /** 物料 INCI 和目录条目的别名相同的配方行：[BomLine, Item, RegulatedSubstance]。 */
+    @org.springframework.data.jpa.repository.Query("""
+            select l, i, r from BomLine l, Item i, RegulatedAlias a, RegulatedSubstance r
+            where l.itemId = i.id and i.inci is not null and lower(trim(i.inci)) = a.aliasKey and a.substanceId = r.id and r.active = true
+            """)
+    java.util.List<Object[]> findLinesMatchedByAlias();
+
     List<BomLine> findByBomIdOrderByLineNo(Long bomId);
 
     @Modifying

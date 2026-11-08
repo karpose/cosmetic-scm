@@ -39,6 +39,9 @@ public class RegulatedSubstance {
 
     private String cnName;
 
+    /** 别名，分号分隔，只用于显示；对照用 regulated_alias 表。 */
+    private String aliases;
+
     private String casNo;
 
     /** 限用浓度上限（%）。 */
