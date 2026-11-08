@@ -7,6 +7,7 @@ const routes = [
   { path: '/login', name: 'login', component: () => import('./views/Login.vue'), meta: { public: true, title: '登录' } },
   // 批次标签打印页：不套主布局，白底便于打印；需要登录
   { path: '/batch-record', name: 'batch-record', component: () => import('./views/BatchRecordPrint.vue'), meta: { title: '批生产记录' } },
+  { path: '/stability-report', name: 'stability-report', component: () => import('./views/StabilityReportPrint.vue'), meta: { title: '稳定性试验报告' } },
   { path: '/labels', name: 'labels', component: () => import('./views/Labels.vue'), meta: { title: '批次标签' } },
   // 消费者扫码页：不需要登录，二维码里的地址是 /v/防伪码
   { path: '/v/:code?', name: 'verify', component: () => import('./views/Verify.vue'), meta: { public: true, title: '正品查询' } },

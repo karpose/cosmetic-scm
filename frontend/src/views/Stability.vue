@@ -171,6 +171,7 @@
       </template>
       <template #footer>
         <template v-if="dt.data">
+          <el-button text @click="printReport">打印报告</el-button>
           <el-button v-if="canRecord && dt.data.study.status === 'ACTIVE'" text @click="noteAction('cancel', '取消试验', '取消后不再提醒，已有的结果会保留。')">取消试验</el-button>
           <el-button v-if="isQso && dt.data.study.status === 'REVIEW'" text @click="noteAction('reject', '退回结论', '写明退回原因，退回后可以重写。')">退回</el-button>
           <el-button v-if="isQso && dt.data.study.status === 'APPROVED'" text @click="noteAction('void', '作废结论', '作废后保质期依据随之失效，记录会保留。')">作废</el-button>
@@ -239,7 +240,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
@@ -273,6 +274,8 @@ const COVERAGE = {
 const WINDOW_DAYS = 7
 
 const route = useRoute()
+const router = useRouter()
+const printReport = () => router.push({ path: '/stability-report', query: { id: dt.data.study.id } })
 const auth = useAuth()
 const tab = ref(route.query.tab === 'products' ? 'products' : 'studies')
 const canCreate = computed(() => auth.hasAny('MASTER_DATA', 'QA', 'QSO'))
