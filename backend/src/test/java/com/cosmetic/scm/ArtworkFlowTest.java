@@ -16,6 +16,10 @@ import java.util.Map;
 
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
+import com.cosmetic.scm.domain.BatchStatus;
+import com.cosmetic.scm.domain.SourceType;
+import com.cosmetic.scm.inventory.Batch;
+import com.cosmetic.scm.inventory.BatchRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -43,6 +47,7 @@ class ArtworkFlowTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired TimeProvider time;
+    @Autowired BatchRepository batches;
 
     private String login(String u, String p) throws Exception {
         return json.readTree(mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
@@ -127,5 +132,58 @@ class ArtworkFlowTest {
         ok(call(qso, "/api/plm/versions/" + draft + "/approve", Map.of("password", PWD)));
         call(qso, "/api/artworks/" + id4 + "/approve", Map.of("checked", ALL, "password", PWD)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("配方变了")));
         assertThat(ok(mvc.perform(get("/api/dashboard").header("Authorization", "Bearer " + qa))).get("todos").toString()).contains("标签设计稿要重新评审").contains("物料AW-PK");
+    }
+
+    private long pkBatch(long pk, String no) {
+        Batch b = new Batch();
+        b.setBatchNo(no);
+        b.setItemId(pk);
+        b.setMfgDate(time.today().minusDays(5));
+        b.setExpDate(time.today().plusYears(3));
+        b.setStatus(BatchStatus.QUARANTINE);
+        b.setSourceType(SourceType.OPEN);
+        b.setSourceNo("AW-TEST");
+        b.setQtyIn(java.math.BigDecimal.TEN);
+        b.setCreatedAt(time.now());
+        return batches.save(b).getId();
+    }
+
+    @Test
+    void packagingWithAnApprovedArtworkNeedsAPrintCheckBeforeRelease() throws Exception {
+        String admin = login("admin", "Admin@123456");
+        String qa = login("qa1", PWD);
+        String qso = login("qso1", PWD);
+        long rm = item(admin, "AWR-RM", "RM");
+        long pk = item(admin, "AWR-PK", "PK");
+        long plain = item(admin, "AWR-PK2", "PK");
+        long fg = item(admin, "AWR-FG", "FG");
+        mvc.perform(put("/api/boms/" + fg).header("Authorization", "Bearer " + admin).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(Map.of("lines", List.of(
+                Map.of("itemId", rm, "qtyPer", new BigDecimal("0.01"), "supplyMode", "BRAND"), Map.of("itemId", pk, "qtyPer", BigDecimal.ONE, "supplyMode", "BRAND")))))).andExpect(status().isOk());
+        long art = ok(call(qa, "/api/artworks", Map.of("pkItemId", pk, "fgItemId", fg, "changeNote", "首版"))).get("id").asLong();
+        upload(qa, art);
+        ok(call(qso, "/api/artworks/" + art + "/approve", Map.of("checked", ALL, "password", PWD)));
+        assertThat(ok(mvc.perform(get("/api/artworks/current/" + pk).header("Authorization", "Bearer " + qa))).get("versionNo").asInt()).isEqualTo(1);
+        mvc.perform(get("/api/artworks/current/" + plain).header("Authorization", "Bearer " + qa)).andExpect(status().isNoContent());
+
+        Map<String, Object> rel = new java.util.HashMap<>(Map.of("decision", "RELEASED", "reportNo", "COA", "note", "合格", "password", PWD));
+        // 没有设计稿的包材照旧
+        ok(call(qa, "/api/quality/batches/" + pkBatch(plain, "AWR-B0") + "/material-decision", rel));
+        // 有设计稿：要确认印刷内容
+        long b1 = pkBatch(pk, "AWR-B1");
+        call(qa, "/api/quality/batches/" + b1 + "/material-decision", rel).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("请确认印刷内容")));
+        rel.put("artworkConfirmed", true);
+        ok(call(qa, "/api/quality/batches/" + b1 + "/material-decision", rel));
+        assertThat(ok(mvc.perform(get("/api/audit?q=AWR-B1").header("Authorization", "Bearer " + admin))).toString()).contains("印刷内容与设计稿").contains("第 1 版");
+
+        // 配方变了：不能放行，拒收照常
+        long draft = ok(call(admin, "/api/plm/formulas/" + fg + "/draft", Map.of("changeNote", "调整用量", "lines", List.of(
+                Map.of("itemId", rm, "qtyPer", new BigDecimal("0.02"), "supplyMode", "BRAND"), Map.of("itemId", pk, "qtyPer", BigDecimal.ONE, "supplyMode", "BRAND"))))).get("id").asLong();
+        ok(call(admin, "/api/plm/versions/" + draft + "/submit", Map.of()));
+        long filing = ok(call(qa, "/api/plm/filings", Map.of("fgItemId", fg, "filingType", "GENERAL", "formulaVersionId", draft, "submittedDate", time.today().toString()))).get("id").asLong();
+        ok(call(qa, "/api/plm/filings/" + filing + "/complete", Map.of("filingNo", "备案AWR-V2", "filedDate", time.today().toString())));
+        ok(call(qso, "/api/plm/versions/" + draft + "/approve", Map.of("password", PWD)));
+        long b2 = pkBatch(pk, "AWR-B2");
+        call(qa, "/api/quality/batches/" + b2 + "/material-decision", rel).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("重新评审")));
+        ok(call(qa, "/api/quality/batches/" + b2 + "/material-decision", Map.of("decision", "REJECTED", "reportNo", "COA", "note", "版本不对", "password", PWD)));
     }
 }

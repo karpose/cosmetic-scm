@@ -105,6 +105,12 @@ public class ArtworkService {
         return views(artworks.findByStatusInOrderById(List.of(ArtworkStatus.APPROVED))).stream().filter(ArtworkView::stale).toList();
     }
 
+    /** 包材现行（已批准）的设计稿。 */
+    @Transactional(readOnly = true)
+    public java.util.Optional<ArtworkView> current(Long pkItemId) {
+        return artworks.findFirstByPkItemIdAndStatus(pkItemId, ArtworkStatus.APPROVED).map(a -> views(List.of(a)).get(0));
+    }
+
     @Transactional
     public ArtworkView create(CreateReq req) {
         // 同一包材只能有一版待签批：先锁包材行，而且是事务第一句

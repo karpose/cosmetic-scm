@@ -1602,6 +1602,32 @@ test('标签设计稿：对照成分表逐项评审，上传文件后 QSO 批准
   await expect(dt.getByText('已批准').first()).toBeVisible()
 })
 
+test('包材放行：有已批准的设计稿时要确认印刷内容一致', async ({ page }) => {
+  await login(page, 'purchase1')
+  const batchNo = await page.evaluate(async () => {
+    const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
+    const j = (u) => fetch(`/api${u}`, { headers: h }).then((r) => r.json())
+    const jar = (await j('/items')).find((i) => i.code === 'PK-JAR-003')
+    const mp = (await j('/partners')).find((p) => p.code === 'SUP-MP')
+    const wh = (await j('/warehouses')).find((w) => w.code === 'WH-MAIN')
+    const po = await fetch('/api/purchase-orders', { method: 'POST', headers: h, body: JSON.stringify({ supplierId: mp.id, lines: [{ itemId: jar.id, qty: 100, unitPrice: 3.5, taxRate: 13 }] }) }).then((r) => r.json())
+    const rc = await fetch(`/api/purchase-orders/${po.id}/receipts`, { method: 'POST', headers: h, body: JSON.stringify({ lines: [{ poLineId: po.lines[0].id, qty: 100, extBatchNo: 'E2E-JAR-1', warehouseId: wh.id }] }) }).then((r) => r.json())
+    return rc.batchNos[0]
+  })
+  await login(page, 'qa1')
+  await page.goto('/quality')
+  await page.locator('.el-table__row').filter({ hasText: batchNo }).getByRole('button', { name: '检验放行' }).click()
+  const d = dialog(page, '物料检验放行')
+  await expect(d.getByText(/印刷内容与已批准的设计稿 LA-.* 第 1 版一致/)).toBeVisible()
+  await d.getByPlaceholder('内部检验或供应商 COA 编号').fill('COA-JAR')
+  await d.getByPlaceholder('例如：外观、气味、含量检测符合内控标准').fill('印刷清晰')
+  await d.locator('input[type=password]').fill(DEMO)
+  await expect(d.getByRole('button', { name: '签批' })).toBeDisabled()
+  await d.getByText(/印刷内容与已批准的设计稿/).click()
+  await d.getByRole('button', { name: '签批' }).click()
+  await toast(page, '已放行')
+})
+
 test('供应商账号可以填邮箱接收提醒，提醒页列出会发给谁', async ({ page }) => {
   await login(page, 'admin', 'Admin@123456')
   await page.goto('/users')

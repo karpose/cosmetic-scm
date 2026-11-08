@@ -60,6 +60,7 @@ public class QualityService {
 
     private final com.cosmetic.scm.plm.ComplianceService compliance;
     private final QualitySpecService specs;
+    private final com.cosmetic.scm.plm.ArtworkService artworks;
     private final com.cosmetic.scm.master.MasterService master;
 
     private final QualityDecisionRepository decisions;
@@ -75,10 +76,14 @@ public class QualityService {
     private final AuditService audit;
     private final TimeProvider time;
 
+    /** artworkConfirmed：包材有已批准的设计稿时，确认印刷内容与它一致。 */
     public record MaterialDecisionReq(@NotNull Decision decision,
                                       @NotBlank(message = "请填写检验报告编号") @Size(max = 60) String reportNo,
                                       @NotBlank(message = "请填写签批说明") @Size(max = 500) String note,
-                                      @NotBlank(message = "请输入签批密码") String password) {
+                                      @NotBlank(message = "请输入签批密码") String password, boolean artworkConfirmed) {
+        public MaterialDecisionReq(Decision decision, String reportNo, String note, String password) {
+            this(decision, reportNo, note, password, false);
+        }
     }
 
     public record ReleaseReq(@NotNull Decision decision,
@@ -140,18 +145,21 @@ public class QualityService {
         if (req.decision() == Decision.RELEASED && ShelfLife.isExpired(b.getExpDate(), time.today())) {
             throw new BizException("批次 " + b.getBatchNo() + " 已过有效期，不能放行");
         }
+        String artworkCheck = null;
         if (req.decision() == Decision.RELEASED) {
             specs.blocker(b).ifPresent(m -> {
                 throw new BizException(m);
             });
             requireNoOpenDeviation(b);
+            artworkCheck = checkArtwork(item, req.artworkConfirmed());
         }
         b.setStatus(req.decision() == Decision.RELEASED ? BatchStatus.RELEASED : BatchStatus.REJECTED);
         batches.save(b);
         QualityDecision d = newDecision(b, QcStage.MATERIAL_QC, req.decision(), req.reportNo(), req.note(), signer);
+        d.setChecklist(artworkCheck);
         decisions.save(d);
         audit.log(req.decision() == Decision.RELEASED ? "物料检验放行" : "物料检验拒收", b.getBatchNo(),
-                item.getName() + "，报告 " + req.reportNo().trim(), req.note().trim());
+                item.getName() + "，报告 " + req.reportNo().trim() + (artworkCheck == null ? "" : "，" + artworkCheck), req.note().trim());
         return single(b);
     }
 
@@ -299,6 +307,28 @@ public class QualityService {
         if (!bad.isEmpty()) {
             throw new BizException("用到的物料批次 " + String.join("、", bad) + " 有问题，不能放行；调查清楚并解冻后再放行，或判定不合格");
         }
+    }
+
+    /**
+     * 有已批准设计稿的包材，放行前要确认印刷内容与它一致；设计稿对应的配方已变，印刷的成分表可能不对，不能放行。
+     * 没有设计稿的包材照旧。返回写进放行记录的核对说明。
+     */
+    private String checkArtwork(Item item, boolean confirmed) {
+        if (item.getItemType() != ItemType.PK) {
+            return null;
+        }
+        var art = artworks.current(item.getId()).orElse(null);
+        if (art == null) {
+            return null;
+        }
+        String ref = art.artworkNo() + " 第 " + art.versionNo() + " 版";
+        if (art.stale()) {
+            throw new BizException("设计稿 " + ref + " 对应的成品配方已变，要先重新评审设计稿，这批包材不能放行（可以拒收）");
+        }
+        if (!confirmed) {
+            throw new BizException("请确认印刷内容与已批准的设计稿 " + ref + " 一致");
+        }
+        return "印刷内容与设计稿 " + ref + " 一致";
     }
 
     private void requireNoOpenDeviation(Batch b) {
