@@ -53,4 +53,13 @@ public class BatchInspection {
     private Long deviationId;
 
     private LocalDateTime createdAt;
+
+    /** 取样情况：数量、位置、取样人。 */
+    private String sampleNote;
+
+    /** 供方检验报告编号，有项目采用供方报告时必填。 */
+    private String coaNo;
+
+    /** 有项目采用了供方报告。全项自检的是 false，算连续批数时用。 */
+    private boolean usedCoa;
 }

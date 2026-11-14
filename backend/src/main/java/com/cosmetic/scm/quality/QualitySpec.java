@@ -48,4 +48,10 @@ public class QualitySpec {
     private String approvedBy;
 
     private LocalDateTime approvedAt;
+
+    /** 取样要求，文字。系统不内置抽样方案。 */
+    private String samplingPlan;
+
+    /** 同一供方连续采用报告的批数上限，空 = 不限。设了以后首批也要全项自检。 */
+    private Integer coaMaxStreak;
 }

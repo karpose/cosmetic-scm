@@ -19,7 +19,11 @@
         <router-link v-if="i.deviationNo" to="/qms" class="mono small">{{ i.deviationNo }}</router-link>
         <el-button v-if="canVoid && i.status === 'VALID'" size="small" text @click="voidOne(i)">作废</el-button>
         <div class="small results">
-          <span v-for="r in i.results" :key="r.lineId" :class="{ late: !r.passed }">{{ lineName(r.lineId) }} {{ shown(r) }}{{ r.passed ? '' : '（不合格）' }}</span>
+          <span v-for="r in i.results" :key="r.lineId" :class="{ late: !r.passed }">{{ lineName(r.lineId) }} {{ shown(r) }}{{ r.source === 'COA' ? '（供方报告）' : '' }}{{ r.passed ? '' : '（不合格）' }}</span>
+        </div>
+        <div v-if="i.coaNo || i.sampleNote" class="muted small extra">
+          <span v-if="i.coaNo">供方报告 <span class="mono">{{ i.coaNo }}</span></span>
+          <span v-if="i.sampleNote">取样：{{ i.sampleNote }}</span>
         </div>
         <div v-if="i.note || i.voidReason" class="muted small">{{ i.voidReason ? `作废原因：${i.voidReason}` : i.note }}</div>
       </div>
@@ -29,6 +33,11 @@
     <el-dialog v-model="rc.visible" :title="`录入检验结果：${batchNo}`" width="560px" :close-on-click-modal="false" append-to-body>
       <el-form v-if="panel?.spec" label-position="top" @submit.prevent>
         <el-form-item label="检验日期"><el-date-picker id="qi-date" v-model="rc.date" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d > startOfToday" /></el-form-item>
+        <el-form-item :label="sampleRequired ? '取样情况（必填）' : '取样情况（选填）'">
+          <div v-if="panel.spec.samplingPlan" class="muted small field-hint">标准的取样要求：{{ panel.spec.samplingPlan }}</div>
+          <el-input id="qi-sample" v-model="rc.sampleNote" maxlength="200" placeholder="取了多少、从哪里取、谁取的" />
+        </el-form-item>
+        <el-alert v-if="hasCoaLines && panel.coaBlocker" type="warning" :closable="false" show-icon :title="`这批不能采用供方报告：${panel.coaBlocker}`" class="coa-alert" />
         <div v-for="l in rc.lines" :key="l.line.id" class="result-line">
           <div class="result-name"><b>{{ l.line.name }}</b> <span class="muted small">{{ l.line.limitText || l.line.criteria || '' }}<template v-if="l.line.method"> · {{ l.line.method }}</template></span></div>
           <template v-if="l.line.judgedBySystem">
@@ -42,6 +51,14 @@
               <el-radio-button :value="false">不合格</el-radio-button>
             </el-radio-group>
           </template>
+          <el-checkbox v-if="l.line.coaAllowed && !panel.coaBlocker" v-model="l.fromCoa" :aria-label="`${l.line.name}采用供方报告`">采用供方报告</el-checkbox>
+        </div>
+        <div v-if="anyCoa" class="coa-box">
+          <el-form-item label="供方检验报告编号">
+            <el-input id="qi-coa" v-model="rc.coaNo" maxlength="60" :placeholder="panel.supplierName ? `${panel.supplierName} 报告上的编号` : '报告上的编号'" />
+          </el-form-item>
+          <AttachmentList owner-type="BATCH" :owner-id="batchId" :can-upload="auth.canAttach()" title="这个批次的附件" empty-text="批次上还没有附件"
+                          notice="采用供方报告要有报告扫描件：传到这里；采购单或委托单上已有附件的（供应商、受托厂在门户里传的）不用再传。" />
         </div>
         <el-alert v-if="anyFailed" type="error" :closable="false" show-icon title="有不合格项，保存后会自动生成重大偏差，请在备注里写明情况。" />
         <el-form-item :label="noteLabel" style="margin-top:12px"><el-input id="qi-note" v-model="rc.note" type="textarea" :rows="2" maxlength="500" /></el-form-item>
@@ -59,6 +76,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
+import AttachmentList from './AttachmentList.vue'
+import { useAuth } from '../stores/auth'
 import { fmtQty, startOfBusinessDay, today } from '../utils/format'
 import { latestOnly } from '../utils/latest'
 
@@ -68,8 +87,10 @@ const props = defineProps({
   canRecord: { type: Boolean, default: false },
   canVoid: { type: Boolean, default: false }
 })
-const emit = defineEmits(['loaded'])
+// saved：录入成功。弹窗里可能刚上传了报告扫描件，外面同一个批次的附件列表要跟着刷新
+const emit = defineEmits(['loaded', 'saved'])
 
+const auth = useAuth()
 const panel = ref(null)
 const startOfToday = startOfBusinessDay()
 const req = latestOnly()
@@ -92,10 +113,14 @@ const lineName = (id) => panel.value?.spec?.lines.find((l) => l.id === id)?.name
 const lineOf = (id) => panel.value?.spec?.lines.find((l) => l.id === id)
 const shown = (r) => [r.value != null ? `${fmtQty(r.value)}${lineOf(r.lineId)?.unit ? ` ${lineOf(r.lineId).unit}` : ''}` : '', r.text || ''].filter(Boolean).join(' ')
 
-const rc = reactive({ visible: false, saving: false, date: '', note: '', lines: [] })
+const rc = reactive({ visible: false, saving: false, date: '', note: '', sampleNote: '', coaNo: '', lines: [] })
 function openRecord() {
-  Object.assign(rc, { visible: true, saving: false, date: today(), note: '', lines: panel.value.spec.lines.map((line) => ({ line, value: undefined, text: '', passed: null })) })
+  Object.assign(rc, { visible: true, saving: false, date: today(), note: '', sampleNote: '', coaNo: '', lines: panel.value.spec.lines.map((line) => ({ line, value: undefined, text: '', passed: null, fromCoa: false })) })
 }
+const hasCoaLines = computed(() => !!panel.value?.spec?.lines.some((l) => l.coaAllowed))
+const anyCoa = computed(() => rc.lines.some((l) => l.fromCoa))
+// 标准写了取样要求，而且有项目是自检的，就要写取样情况；全部采用供方报告时不用取样
+const sampleRequired = computed(() => !!panel.value?.spec?.samplingPlan && rc.lines.some((l) => !l.fromCoa))
 function failed(l) {
   if (!l.line.judgedBySystem) return l.passed === false
   if (l.value == null) return false
@@ -113,15 +138,18 @@ async function submit() {
     if (l.line.judgedBySystem && l.value == null) return ElMessage.warning(`请填写“${l.line.name}”的实测值`)
     if (!l.line.judgedBySystem && (!l.text.trim() || l.passed === null)) return ElMessage.warning(`请填写“${l.line.name}”的结果并判定是否合格`)
   }
+  if (sampleRequired.value && !rc.sampleNote.trim()) return ElMessage.warning('标准有取样要求，请填写取样情况')
+  if (anyCoa.value && !rc.coaNo.trim()) return ElMessage.warning('请填写供方检验报告编号')
   if ((anyFailed.value || hasFailedBefore.value) && !rc.note.trim()) return ElMessage.warning(anyFailed.value ? '有不合格项，请写明情况' : '复检请写明原因和依据')
   rc.saving = true
   try {
-    const results = rc.lines.map((l) => ({ lineId: l.line.id, value: l.value ?? null, text: l.text, passed: l.passed }))
-    const p = await http.post(`/quality/batches/${props.batchId}/inspections`, { inspectedDate: rc.date, results, note: rc.note })
+    const results = rc.lines.map((l) => ({ lineId: l.line.id, value: l.value ?? null, text: l.text, passed: l.passed, source: l.fromCoa ? 'COA' : 'TEST' }))
+    const p = await http.post(`/quality/batches/${props.batchId}/inspections`, { inspectedDate: rc.date, results, note: rc.note, sampleNote: rc.sampleNote, coaNo: anyCoa.value ? rc.coaNo : null })
     const dev = p.inspections[0]?.deviationNo
     ElMessage[dev ? 'warning' : 'success'](dev ? `检验不合格，已生成偏差 ${dev}` : '检验结果已保存')
     rc.visible = false
     apply(p)
+    emit('saved')
   } finally {
     rc.saving = false
   }
@@ -149,7 +177,10 @@ defineExpose({ reload: load })
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 0; border-top: 1px solid var(--el-border-color-lighter); }
 .row:first-of-type { border-top: 0; }
 .row.voided { opacity: 0.65; }
-.results { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.results, .extra { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.coa-alert { margin-bottom: 8px; }
+.field-hint { flex: 1 1 100%; line-height: 1.5; margin-bottom: 4px; }
+.coa-box { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: var(--lg-tint); }
 .none { margin: 6px 0 0; }
 .late { color: var(--el-color-danger); }
 .result-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--el-border-color-lighter); }

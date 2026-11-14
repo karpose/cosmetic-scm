@@ -84,7 +84,7 @@
         <el-descriptions-item label="供应商">{{ qc.batch.partnerName }} · 来料批号 {{ qc.batch.extBatchNo || '—' }}</el-descriptions-item>
         <el-descriptions-item label="数量">{{ fmtQty(qc.batch.qtyIn) }} {{ qc.batch.unit }}</el-descriptions-item>
       </el-descriptions>
-      <InspectionPanel v-if="qc.batch" :batch-id="qc.batch.id" :batch-no="qc.batch.batchNo" :can-record="canQc" :can-void="canRelease" @loaded="onQcPanel" />
+      <InspectionPanel v-if="qc.batch" :batch-id="qc.batch.id" :batch-no="qc.batch.batchNo" :can-record="canQc" :can-void="canRelease" @loaded="onQcPanel" @saved="qc.attKey++" />
       <el-alert v-if="qc.artwork && qc.artwork.stale" type="error" :closable="false" show-icon style="margin-top:12px"
                 :title="`设计稿 ${qc.artwork.artworkNo} 对应的成品配方已变，要先重新评审设计稿，这批包材不能放行（可以拒收）`" />
       <div v-else-if="qc.artwork" class="artwork-check">
@@ -95,7 +95,7 @@
           <span v-else class="late">{{ qc.supplierName }} 还没有这一版设计稿的签样，先在“标签设计稿”里登记打样并签样，才能放行（可以拒收）。</span>
         </div>
       </div>
-      <AttachmentList v-if="qc.batch" style="margin-top:12px" owner-type="BATCH" :owner-id="qc.batch.id" :can-upload="auth.canAttach()"
+      <AttachmentList v-if="qc.batch" :key="qc.attKey" style="margin-top:12px" owner-type="BATCH" :owner-id="qc.batch.id" :can-upload="auth.canAttach()"
                       title="供应商 COA / 检验报告" empty-text="还没有上传 COA 或检验报告" />
       <el-form label-position="top" style="margin-top:12px" @submit.prevent>
         <el-form-item label="结论">
@@ -191,7 +191,7 @@ const q = reactive({ quarantine: [], pendingRelease: [], frozen: [], recent: [] 
 const canQc = computed(() => auth.hasAny('QA', 'QSO'))
 const canRelease = computed(() => auth.hasAny('QSO'))
 
-const qc = reactive({ visible: false, saving: false, batch: null, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '', artwork: undefined, artworkConfirmed: false, proof: null, proofRequired: false, supplierName: '' })
+const qc = reactive({ visible: false, saving: false, attKey: 0, batch: null, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '', artwork: undefined, artworkConfirmed: false, proof: null, proofRequired: false, supplierName: '' })
 // 包材有已批准的设计稿时要确认印刷内容，供应商收货的还要有这家供应商的签样；设计稿读完之前不能签批
 const artworkBlocks = computed(() => !!qc.artwork && (qc.artwork.stale || !qc.artworkConfirmed || (qc.proofRequired && !qc.proof)))
 const artworkReq = latestOnly()

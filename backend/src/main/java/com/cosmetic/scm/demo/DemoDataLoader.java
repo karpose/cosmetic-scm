@@ -303,12 +303,13 @@ public class DemoDataLoader implements ApplicationRunner {
                 List.of(new com.cosmetic.scm.plm.StabilityService.TimepointReq(1, 0), new com.cosmetic.scm.plm.StabilityService.TimepointReq(3, 0)), stabilityTests, null)));
         // 质量标准：角鲨烷已生效，面霜的待签批。项目和限度是示例，不是真实标准
         var squSpec = as("qa1", () -> qualitySpecService.create(new com.cosmetic.scm.quality.QualitySpecService.CreateReq(squ.getId(), "首版（示例）", List.of(
-                new com.cosmetic.scm.quality.QualitySpecService.LineReq("外观", "目测（示例）", null, null, null, "无色透明液体（示例）"),
-                new com.cosmetic.scm.quality.QualitySpecService.LineReq("含量", "（示例）", "%", new BigDecimal("98"), null, null)))));
+                new com.cosmetic.scm.quality.QualitySpecService.LineReq("外观", "目测（示例）", null, null, null, "无色透明液体（示例）", false),
+                new com.cosmetic.scm.quality.QualitySpecService.LineReq("含量", "（示例）", "%", new BigDecimal("98"), null, null, true)),
+                "每批随机取 1 桶，取样 50 g（示例）", null)));
         as("qso1", () -> qualitySpecService.approve(squSpec.id(), new com.cosmetic.scm.quality.QualitySpecService.ApproveReq(DEMO_PASSWORD)));
         as("qa1", () -> qualitySpecService.create(new com.cosmetic.scm.quality.QualitySpecService.CreateReq(cream.getId(), "首版（示例）", List.of(
-                new com.cosmetic.scm.quality.QualitySpecService.LineReq("外观", "目测（示例）", null, null, null, "膏体细腻（示例）"),
-                new com.cosmetic.scm.quality.QualitySpecService.LineReq("pH", "（示例）", null, new BigDecimal("5"), new BigDecimal("7"), null)))));
+                new com.cosmetic.scm.quality.QualitySpecService.LineReq("外观", "目测（示例）", null, null, null, "膏体细腻（示例）", false),
+                new com.cosmetic.scm.quality.QualitySpecService.LineReq("pH", "（示例）", null, new BigDecimal("5"), new BigDecimal("7"), null, false)), null, null)));
         // 新品立项：面膜待管理员批准；面霜在开发中，做过一次小试，上市检查还差资料、稳定性和中试
         as("qa1", () -> npdService.create(new com.cosmetic.scm.plm.NpdService.CreateReq("舒缓修护面膜（示例）", "面膜", com.cosmetic.scm.domain.FilingType.GENERAL,
                 "保湿（示例）", t.plusMonths(6), null)));
