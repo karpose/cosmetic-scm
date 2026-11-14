@@ -47,6 +47,7 @@ public class ReportService {
     private final ComplaintService complaints;
     private final DeviationService deviations;
     private final com.cosmetic.scm.plm.StabilityService stability;
+    private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
     private final SupplierAuditService audits;
     private final RetainService retains;
     private final PurchaseService purchases;
@@ -79,6 +80,7 @@ public class ReportService {
         m.put("statements", this::statements);
         m.put("supplier-returns", this::supplierReturns);
         m.put("stability", this::stabilityResults);
+        m.put("inspections", () -> inspectionResults(from, to));
         return m;
     }
 
@@ -178,6 +180,14 @@ public class ReportService {
         audits.listAll().forEach(a -> rows.add(row(a.auditNo(), a.partnerName(), a.auditDate(), a.auditTypeLabel(), a.score(), a.resultLabel(), a.findings(),
                 a.auditor(), a.nextAuditDate(), a.signedBy())));
         return new Table("供应商审核", List.of("编号", "单位", "审核日期", "类型", "得分", "结论", "发现的问题", "审核员", "下次审核", "签批人"), rows);
+    }
+
+    private Table inspectionResults(LocalDate from, LocalDate to) {
+        List<List<Object>> rows = new ArrayList<>();
+        qualitySpecs.exportRows(from, to).forEach(r -> rows.add(row(r.inspectionNo(), r.batchNo(), r.itemCode(), r.itemName(), r.spec(), r.inspectedDate(), r.inspector(), r.testName(),
+                r.method(), r.limits(), r.result(), r.judgement(), r.conclusion(), r.status(), r.voidReason(), r.deviationNo(), r.note())));
+        return new Table("批次检验结果", List.of("检验单号", "批号", "物料编码", "物料", "质量标准", "检验日期", "检验人", "检验项目", "方法", "限度或标准", "结果", "判定",
+                "本次结论", "状态", "作废原因", "偏差", "备注"), rows);
     }
 
     private Table stabilityResults() {

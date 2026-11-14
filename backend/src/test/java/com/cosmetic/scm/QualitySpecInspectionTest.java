@@ -226,6 +226,29 @@ class QualitySpecInspectionTest {
         assertThat(good.get("inspections").get(0).get("specVersion").asInt()).isEqualTo(1);
         call(qa, db + "/material-decision", release(good.get("inspections").get(0).get("inspectionNo").asText())).andExpect(status().isOk());
         assertThat(read(admin, "/api/golive").toString()).contains("质量标准");
+
+        // 导出检验结果：每次检验每个项目一行，作废的、不合格的、偏差号都在；只读账号也能导；按检验日期过滤
+        String sheet = sheetOf(mvc.perform(get("/api/reports/inspections").header("Authorization", "Bearer " + login("viewer1"))).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray());
+        assertThat(sheet).contains(first.get("inspectionNo").asText()).contains("QS-B-1").contains("97.5").contains("不合格").contains(first.get("deviationNo").asText())
+                .contains("含量偏低").contains("已作废").contains("录错了外观").contains("QS-B-3").contains("99.2");
+        String none = sheetOf(mvc.perform(get("/api/reports/inspections").param("from", time.today().plusDays(1).toString()).header("Authorization", "Bearer " + qa))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray());
+        assertThat(none).doesNotContain("QS-B-1");
+        assertThat(read(admin, "/api/audit?q=批次检验结果").toString()).contains("导出报表");
+    }
+
+    private static String sheetOf(byte[] xlsx) throws Exception {
+        String sheet = "";
+        try (var z = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(xlsx), StandardCharsets.UTF_8)) {
+            java.util.zip.ZipEntry e;
+            while ((e = z.getNextEntry()) != null) {
+                if (e.getName().startsWith("xl/worksheets/")) {
+                    sheet = new String(z.readAllBytes(), StandardCharsets.UTF_8);
+                }
+            }
+        }
+        return sheet;
     }
 
     @Test

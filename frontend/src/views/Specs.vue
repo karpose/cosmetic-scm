@@ -7,6 +7,7 @@
       </div>
       <div class="toolbar">
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
+        <ExportButton report="inspections" label="导出检验结果" />
         <el-button v-if="canCreate" type="primary" @click="openCreate()">新建标准</el-button>
       </div>
     </div>
@@ -100,6 +101,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
+import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'

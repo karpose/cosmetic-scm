@@ -3,6 +3,7 @@ package com.cosmetic.scm;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -25,6 +26,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -94,9 +96,11 @@ class NpdFlowTest {
     private long[] product(String admin, String code) throws Exception {
         long m = ok(call(admin, "/api/items", Map.of("code", code + "-RM", "name", "原料" + code, "itemType", "RM", "unit", "kg", "banned", false, "active", true, "shelfMonths", 24))).get("id").asLong();
         long f = ok(call(admin, "/api/items", Map.of("code", code, "name", "成品" + code, "itemType", "FG", "unit", "瓶", "banned", false, "active", true, "shelfMonths", 24, "netG", 50, "filingNo", "备案" + code))).get("id").asLong();
+        long pk = ok(call(admin, "/api/items", Map.of("code", code + "-PK", "name", "包材" + code, "itemType", "PK", "unit", "个", "banned", false, "active", true, "shelfMonths", 36))).get("id").asLong();
         mvc.perform(put("/api/boms/" + f).header("Authorization", "Bearer " + admin).contentType(MediaType.APPLICATION_JSON)
-                .content(json.writeValueAsString(Map.of("lines", List.of(Map.of("itemId", m, "qtyPer", new BigDecimal("0.01"), "supplyMode", "BRAND")))))).andExpect(status().isOk());
-        return new long[] {f, m};
+                .content(json.writeValueAsString(Map.of("lines", List.of(Map.of("itemId", m, "qtyPer", new BigDecimal("0.01"), "supplyMode", "BRAND"),
+                        Map.of("itemId", pk, "qtyPer", BigDecimal.ONE, "supplyMode", "BRAND")))))).andExpect(status().isOk());
+        return new long[] {f, m, pk};
     }
 
     private long effectiveVersion(String t, long fg) throws Exception {
@@ -156,7 +160,7 @@ class NpdFlowTest {
         call(qa, base + "/trials", trial("PILOT", effectiveVersion(qa, pm2[0]), "PASS")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("不属于")));
 
         // 有配方、有备案，其余都没有
-        assertThat(checks(d)).isEqualTo("关联成品=true;生效配方=true;备案或注册=true;安全评估和标签=false;稳定性依据=false;质量标准=false;中试通过=false;");
+        assertThat(checks(d)).isEqualTo("关联成品=true;生效配方=true;备案或注册=true;安全评估和标签=false;包材设计稿=false;稳定性依据=false;质量标准=false;中试通过=false;");
         long v1 = effectiveVersion(qa, fg);
 
         // 补齐：合规资料
@@ -175,6 +179,13 @@ class NpdFlowTest {
         // 质量标准
         long spec = ok(call(qa, "/api/quality/specs", Map.of("itemId", fg, "changeNote", "首版", "lines", List.of(Map.of("name", "外观"))))).get("id").asLong();
         ok(call(qso, "/api/quality/specs/" + spec + "/approve", Map.of("password", PWD)));
+        // 包材设计稿：提交了还不算，批准后才算
+        long art = ok(call(qa, "/api/artworks", Map.of("pkItemId", pm[2], "fgItemId", fg, "changeNote", "首版"))).get("id").asLong();
+        assertThat(read(qa, base).get("checks").toString()).contains("配方里的包材还没有已批准的设计稿");
+        mvc.perform(multipart("/api/attachments").file(new MockMultipartFile("file", "art.pdf", "application/pdf", "%PDF-1.4 art".getBytes(StandardCharsets.UTF_8)))
+                .param("ownerType", "LABEL_ARTWORK").param("ownerId", String.valueOf(art)).header("Authorization", "Bearer " + qa)).andExpect(status().isOk());
+        ok(call(qso, "/api/artworks/" + art + "/approve", Map.of("checked", List.of("INGREDIENTS", "FILING", "NET", "USAGE", "WARNING", "COMPANY", "BATCH"), "password", PWD)));
+        assertThat(read(qa, base).get("checks").toString()).contains("包材NPD-FG1 第 1 版 已批准");
         // 中试不通过不算
         ok(call(qa, base + "/trials", trial("PILOT", v1, "FAIL")));
         d = read(qa, base);

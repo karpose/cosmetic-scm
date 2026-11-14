@@ -11,6 +11,8 @@ public interface BatchInspectionRepository extends JpaRepository<BatchInspection
 
     List<BatchInspection> findByBatchIdOrderByIdDesc(Long batchId);
 
+    List<BatchInspection> findAllByOrderByIdAsc();
+
     Optional<BatchInspection> findFirstByBatchIdAndStatusOrderByIdDesc(Long batchId, InspectionStatus status);
 
     boolean existsByBatchIdAndStatusAndPassedFalse(Long batchId, InspectionStatus status);
