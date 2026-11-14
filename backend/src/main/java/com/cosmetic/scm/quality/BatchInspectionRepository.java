@@ -14,12 +14,11 @@ public interface BatchInspectionRepository extends JpaRepository<BatchInspection
 
     List<BatchInspection> findByBatchIdOrderByIdDesc(Long batchId);
 
+    List<BatchInspection> findAllByOrderByIdAsc();
+
     Optional<BatchInspection> findFirstByBatchIdAndStatusOrderByIdDesc(Long batchId, InspectionStatus status);
 
     boolean existsByBatchIdAndStatusAndPassedFalse(Long batchId, InspectionStatus status);
-
-    /** 全部检验记录，导出用。 */
-    List<BatchInspection> findAllByOrderByIdAsc();
 
     /** 这家供方这个物料的全项自检记录，新的在前。 */
     @Query("""
