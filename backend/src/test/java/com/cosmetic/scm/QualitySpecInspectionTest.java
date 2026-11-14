@@ -3,7 +3,9 @@ package com.cosmetic.scm;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -28,6 +30,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -265,5 +268,191 @@ class QualitySpecInspectionTest {
         call(qso, base + "/market-release", rel).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("请先录入检验结果")));
         call(qa, base + "/inspections", inspect(spec, "99", true, null)).andExpect(status().isOk());
         call(qso, base + "/market-release", rel).andExpect(status().isOk());
+    }
+
+    // ---------- 采用供方报告、取样、导出 ----------
+
+    private Map<String, Object> partner(String code, boolean qualified) {
+        Map<String, Object> m = new HashMap<>(Map.of("code", code, "name", "供方" + code, "kind", "SUPPLIER", "licenseNo", "LIC-" + code,
+                "licenseExpiry", time.today().plusYears(1).toString(), "qualified", qualified, "criticalSupplier", false));
+        return m;
+    }
+
+    private Batch received(long itemId, long supplierId, String no, String poNo) {
+        Batch b = batch(itemId, no, BatchStatus.QUARANTINE);
+        b.setSourceType(SourceType.PO);
+        b.setSourceNo(poNo);
+        b.setPartnerId(supplierId);
+        b.setExtBatchNo("EXT-" + no);
+        return batches.save(b);
+    }
+
+    private void upload(String t, String ownerType, long id) throws Exception {
+        mvc.perform(multipart("/api/attachments").file(new MockMultipartFile("file", "coa.pdf", "application/pdf", "%PDF-1.4 coa".getBytes(StandardCharsets.UTF_8)))
+                .param("ownerType", ownerType).param("ownerId", String.valueOf(id)).header("Authorization", "Bearer " + t)).andExpect(status().isOk());
+    }
+
+    /** 外观自检；含量按 COA 或自检。 */
+    private Map<String, Object> results(JsonNode spec, String content, boolean contentFromCoa, String sampleNote, String coaNo) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        rows.add(Map.of("lineId", spec.get("lines").get(0).get("id").asLong(), "text", "正常", "passed", true));
+        rows.add(Map.of("lineId", spec.get("lines").get(1).get("id").asLong(), "value", new BigDecimal(content), "source", contentFromCoa ? "COA" : "TEST"));
+        Map<String, Object> m = new HashMap<>(Map.of("inspectedDate", time.today().toString(), "results", rows));
+        if (sampleNote != null) {
+            m.put("sampleNote", sampleNote);
+        }
+        if (coaNo != null) {
+            m.put("coaNo", coaNo);
+        }
+        return m;
+    }
+
+    @Test
+    void supplierReportsCanReplaceSelfTestsOnlyWithinTheRules() throws Exception {
+        String admin = login("admin", "Admin@123456");
+        String qa = login("qa1");
+        String qso = login("qso1");
+        long m = item(admin, "QS-RM5", "RM");
+        JsonNode sup = body(call(admin, "/api/partners", partner("QS-SUP1", true)).andExpect(status().isOk()));
+        long s1 = sup.get("id").asLong();
+        String supName = sup.get("name").asText();
+
+        // 没有可采用供方报告的项目，不能设连续批数；批数至少 1
+        Map<String, Object> lineLook = Map.of("name", "外观", "criteria", "测试");
+        Map<String, Object> lineContent = Map.of("name", "含量", "unit", "%", "minValue", new BigDecimal("98"), "coaAllowed", true);
+        call(qa, "/api/quality/specs", Map.of("itemId", m, "changeNote", "x", "lines", List.of(lineLook), "coaMaxStreak", 2))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("没有可采用供方报告的项目")));
+        call(qa, "/api/quality/specs", Map.of("itemId", m, "changeNote", "x", "lines", List.of(lineLook, lineContent), "coaMaxStreak", 0))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("至少是 1")));
+        long specId = body(call(qa, "/api/quality/specs", Map.of("itemId", m, "changeNote", "首版", "lines", List.of(lineLook, lineContent),
+                "samplingPlan", "每批取 3 桶", "coaMaxStreak", 2)).andExpect(status().isOk())).get("id").asLong();
+        JsonNode spec = body(call(qso, "/api/quality/specs/" + specId + "/approve", Map.of("password", PWD)).andExpect(status().isOk()));
+        assertThat(spec.get("samplingPlan").asText()).isEqualTo("每批取 3 桶");
+        assertThat(spec.get("coaMaxStreak").asInt()).isEqualTo(2);
+        assertThat(spec.get("lines").get(0).get("coaAllowed").asBoolean()).isFalse();
+        assertThat(spec.get("lines").get(1).get("coaAllowed").asBoolean()).isTrue();
+
+        // 第 1 批：这家供方还没有全项自检，不能采用报告；自检要写取样情况
+        Batch b1 = received(m, s1, "QS-C-1", "PO-NONE-1");
+        String u1 = "/api/quality/batches/" + b1.getId() + "/inspections";
+        JsonNode p1 = read(qa, u1);
+        assertThat(p1.get("coaBlocker").asText()).contains("还没有全项自检");
+        assertThat(p1.get("supplierName").asText()).isEqualTo(supName);
+        upload(qa, "BATCH", b1.getId());
+        call(qa, u1, results(spec, "99", true, "3 桶各 50 g", "COA-1")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("全项自检")));
+        call(qa, u1, results(spec, "99", false, null, null)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("取样情况")));
+        JsonNode full = body(call(qa, u1, results(spec, "99", false, "3 桶各 50 g", null)).andExpect(status().isOk()));
+        assertThat(full.get("inspections").get(0).get("sampleNote").asText()).isEqualTo("3 桶各 50 g");
+        assertThat(full.get("inspections").get(0).get("coaNo").isNull()).isTrue();
+        assertThat(full.get("inspections").get(0).get("results").get(1).get("source").asText()).isEqualTo("TEST");
+
+        // 第 2 批：可以采用。标准里要自检的项目不能采用；要报告编号和报告扫描件
+        Batch b2 = received(m, s1, "QS-C-2", "PO-NONE-2");
+        String u2 = "/api/quality/batches/" + b2.getId() + "/inspections";
+        assertThat(read(qa, u2).get("coaBlocker").isNull()).isTrue();
+        Map<String, Object> lookFromCoa = results(spec, "99", true, "3 桶各 50 g", "COA-2");
+        lookFromCoa.put("results", List.of(Map.of("lineId", spec.get("lines").get(0).get("id").asLong(), "text", "正常", "passed", true, "source", "COA"),
+                Map.of("lineId", spec.get("lines").get(1).get("id").asLong(), "value", 99, "source", "COA")));
+        call(qa, u2, lookFromCoa).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("要每批自检")));
+        call(qa, u2, results(spec, "99", true, "3 桶各 50 g", null)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("报告编号")));
+        call(qa, u2, results(spec, "99", true, "3 桶各 50 g", "COA-2")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("上传供方检验报告")));
+        upload(qa, "BATCH", b2.getId());
+        JsonNode adopted = body(call(qa, u2, results(spec, "99", true, "3 桶各 50 g", "COA-2")).andExpect(status().isOk()));
+        assertThat(adopted.get("inspections").get(0).get("coaNo").asText()).isEqualTo("COA-2");
+        assertThat(adopted.get("inspections").get(0).get("results").get(0).get("source").asText()).isEqualTo("TEST");
+        assertThat(adopted.get("inspections").get(0).get("results").get(1).get("source").asText()).isEqualTo("COA");
+        assertThat(adopted.get("blocker").isNull()).isTrue();
+        call(qa, "/api/quality/batches/" + b2.getId() + "/material-decision", release("COA-2")).andExpect(status().isOk());
+
+        // 第 3 批：报告扫描件在采购单上也算（供应商在门户里传到采购单）；报告上的数值照样按限度判定
+        JsonNode po = read(admin, "/api/purchase-orders").get(0);
+        Batch b3 = received(m, s1, "QS-C-3", po.get("poNo").asText());
+        String u3 = "/api/quality/batches/" + b3.getId() + "/inspections";
+        call(qa, u3, results(spec, "99", true, "3 桶各 50 g", "COA-3")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("上传供方检验报告")));
+        upload(qa, "PURCHASE_ORDER", po.get("id").asLong());
+        call(qa, u3, results(spec, "97", true, "3 桶各 50 g", "COA-3")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("写明情况")));
+        JsonNode third = body(call(qa, u3, results(spec, "99", true, "3 桶各 50 g", "COA-3")).andExpect(status().isOk()));
+        long thirdId = third.get("inspections").get(0).get("id").asLong();
+
+        // 第 4 批：已经连续 2 批采用，这批要全项自检。作废第 3 批的记录后又可以采用，重录后又不行
+        Batch b4 = received(m, s1, "QS-C-4", "PO-NONE-4");
+        String u4 = "/api/quality/batches/" + b4.getId() + "/inspections";
+        upload(qa, "BATCH", b4.getId());
+        assertThat(read(qa, u4).get("coaBlocker").asText()).contains("已连续 2 批").contains("最多 2 批");
+        call(qa, u4, results(spec, "99", true, "3 桶各 50 g", "COA-4")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("已连续 2 批")));
+        call(qso, u3 + "/" + thirdId + "/void", Map.of("note", "录错了报告编号")).andExpect(status().isOk());
+        assertThat(read(qa, u4).get("coaBlocker").isNull()).isTrue();
+        call(qa, u3, results(spec, "99", true, "3 桶各 50 g", "COA-3A")).andExpect(status().isOk());
+        assertThat(read(qa, u4).get("coaBlocker").asText()).contains("已连续 2 批");
+        // 同一批再录一次不算新的一批
+        call(qa, u3, results(spec, "99.1", true, "3 桶各 50 g", "COA-3B")).andExpect(status().isOk());
+        call(qa, u4, results(spec, "99", false, "3 桶各 50 g", null)).andExpect(status().isOk());
+
+        // 第 5 批：全项自检合格后重新计数。别的供方各算各的
+        Batch b5 = received(m, s1, "QS-C-5", "PO-NONE-5");
+        String u5 = "/api/quality/batches/" + b5.getId() + "/inspections";
+        assertThat(read(qa, u5).get("coaBlocker").isNull()).isTrue();
+        long s2 = body(call(admin, "/api/partners", partner("QS-SUP2", true)).andExpect(status().isOk())).get("id").asLong();
+        Batch other = received(m, s2, "QS-C-OTHER", "PO-NONE-6");
+        assertThat(read(qa, "/api/quality/batches/" + other.getId() + "/inspections").get("coaBlocker").asText()).contains("还没有全项自检");
+
+        // 全项自检不合格：下一批不能采用
+        call(qa, u5, results(spec, "97", false, "3 桶各 50 g", null)).andExpect(status().isBadRequest());
+        Map<String, Object> failed = results(spec, "97", false, "3 桶各 50 g", null);
+        failed.put("note", "含量偏低");
+        call(qa, u5, failed).andExpect(status().isOk());
+        Batch b6 = received(m, s1, "QS-C-6", "PO-NONE-7");
+        String u6 = "/api/quality/batches/" + b6.getId() + "/inspections";
+        assertThat(read(qa, u6).get("coaBlocker").asText()).contains("不合格").contains("全项自检");
+        call(qa, u6, results(spec, "99", false, "3 桶各 50 g", null)).andExpect(status().isOk());
+
+        // 供方被移出合格名录：不能采用它的报告
+        Batch b7 = received(m, s1, "QS-C-7", "PO-NONE-8");
+        String u7 = "/api/quality/batches/" + b7.getId() + "/inspections";
+        assertThat(read(qa, u7).get("coaBlocker").isNull()).isTrue();
+        mvc.perform(put("/api/partners/" + s1).header("Authorization", "Bearer " + admin).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(partner("QS-SUP1", false)))).andExpect(status().isOk());
+        assertThat(read(qa, u7).get("coaBlocker").asText()).contains("不在合格名录");
+        upload(qa, "BATCH", b7.getId());
+        call(qa, u7, results(spec, "99", true, "3 桶各 50 g", "COA-7")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("不在合格名录")));
+
+        // 期初导入的批次没有供方
+        Batch open = batch(m, "QS-C-OPEN", BatchStatus.QUARANTINE);
+        assertThat(read(qa, "/api/quality/batches/" + open.getId() + "/inspections").get("coaBlocker").asText()).contains("期初导入");
+
+        // 审计写明采用了几项、报告编号
+        assertThat(read(admin, "/api/audit?q=QS-C-2").toString()).contains("1 项采用供方报告 COA-2");
+
+        // 导出：全部记录，一个项目一行，只读账号也能导
+        byte[] xlsx = mvc.perform(get("/api/reports/inspections").header("Authorization", "Bearer " + login("viewer1"))).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+        String sheet = sheetOf(xlsx);
+        assertThat(sheet).contains("QS-C-2").contains("COA-2").contains("供方报告").contains("自检").contains("3 桶各 50 g").contains("已作废").contains("录错了报告编号").contains(supName);
+    }
+
+    @Test
+    void specsWithoutAStreakLimitLetEveryBatchUseTheSupplierReport() throws Exception {
+        String admin = login("admin", "Admin@123456");
+        String qa = login("qa1");
+        String qso = login("qso1");
+        long m = item(admin, "QS-RM6", "RM");
+        long s1 = body(call(admin, "/api/partners", partner("QS-SUP3", true)).andExpect(status().isOk())).get("id").asLong();
+        // 两个项目都可以采用，没有取样要求、不限连续批数
+        long specId = body(call(qa, "/api/quality/specs", Map.of("itemId", m, "changeNote", "首版", "lines", List.of(Map.of("name", "外观", "criteria", "测试", "coaAllowed", true),
+                Map.of("name", "含量", "unit", "%", "minValue", new BigDecimal("98"), "coaAllowed", true)))).andExpect(status().isOk())).get("id").asLong();
+        JsonNode spec = body(call(qso, "/api/quality/specs/" + specId + "/approve", Map.of("password", PWD)).andExpect(status().isOk()));
+        Batch b = received(m, s1, "QS-D-1", "PO-NONE-9");
+        String u = "/api/quality/batches/" + b.getId() + "/inspections";
+        assertThat(read(qa, u).get("coaBlocker").isNull()).isTrue();
+        upload(qa, "BATCH", b.getId());
+        Map<String, Object> all = new HashMap<>(Map.of("inspectedDate", time.today().toString(), "coaNo", "COA-D1", "results", List.of(
+                Map.of("lineId", spec.get("lines").get(0).get("id").asLong(), "text", "正常", "passed", true, "source", "COA"),
+                Map.of("lineId", spec.get("lines").get(1).get("id").asLong(), "value", 99, "source", "COA"))));
+        call(qa, u, all).andExpect(status().isOk());
+        // 没有标 source 的旧请求按自检算
+        Batch c = received(m, s1, "QS-D-2", "PO-NONE-10");
+        JsonNode old = body(call(qa, "/api/quality/batches/" + c.getId() + "/inspections", inspect(spec, "99", true, null)).andExpect(status().isOk()));
+        assertThat(old.get("inspections").get(0).get("results").get(0).get("source").asText()).isEqualTo("TEST");
+        assertThat(old.get("inspections").get(0).get("coaNo").isNull()).isTrue();
     }
 }

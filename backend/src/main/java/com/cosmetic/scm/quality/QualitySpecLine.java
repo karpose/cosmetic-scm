@@ -39,4 +39,7 @@ public class QualitySpecLine {
     private BigDecimal maxValue;
 
     private String criteria;
+
+    /** 可以不自检、采用供方（供应商或受托厂）的检验报告。 */
+    private boolean coaAllowed;
 }

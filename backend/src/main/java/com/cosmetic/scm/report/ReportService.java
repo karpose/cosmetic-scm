@@ -184,10 +184,11 @@ public class ReportService {
 
     private Table inspectionResults(LocalDate from, LocalDate to) {
         List<List<Object>> rows = new ArrayList<>();
-        qualitySpecs.exportRows(from, to).forEach(r -> rows.add(row(r.inspectionNo(), r.batchNo(), r.itemCode(), r.itemName(), r.spec(), r.inspectedDate(), r.inspector(), r.testName(),
-                r.method(), r.limits(), r.result(), r.judgement(), r.conclusion(), r.status(), r.voidReason(), r.deviationNo(), r.note())));
-        return new Table("批次检验结果", List.of("检验单号", "批号", "物料编码", "物料", "质量标准", "检验日期", "检验人", "检验项目", "方法", "限度或标准", "结果", "判定",
-                "本次结论", "状态", "作废原因", "偏差", "备注"), rows);
+        qualitySpecs.exportRows(from, to).forEach(r -> rows.add(row(r.inspectionNo(), r.batchNo(), r.itemCode(), r.itemName(), r.itemType(), r.supplierName(), r.extBatchNo(), r.spec(),
+                r.inspectedDate(), r.inspector(), r.sampleNote(), r.coaNo(), r.testName(), r.method(), r.limits(), r.result(), r.source(), r.judgement(), r.conclusion(), r.status(),
+                r.voidReason(), r.deviationNo(), r.note())));
+        return new Table("批次检验结果", List.of("检验单号", "批号", "物料编码", "物料", "类型", "来源单位", "外部批号", "质量标准", "检验日期", "检验人", "取样情况", "供方报告编号",
+                "检验项目", "方法", "限度或标准", "结果", "结果来源", "判定", "本次结论", "状态", "作废原因", "偏差", "备注"), rows);
     }
 
     private Table stabilityResults() {

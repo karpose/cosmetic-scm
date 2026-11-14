@@ -300,7 +300,7 @@ class SourcingSettlementTest {
     }
 
     private void registryReports(List<String> urls) {
-        for (String key : List.of("stock", "batches", "purchases", "production", "shipments", "complaints", "deviations", "capas", "supplier-audits", "retains", "equipment", "statements")) {
+        for (String key : List.of("stock", "batches", "purchases", "production", "shipments", "complaints", "deviations", "capas", "supplier-audits", "retains", "equipment", "statements", "supplier-returns", "stability", "inspections")) {
             urls.add("/api/reports/" + key);
         }
         urls.add("/api/reports/audit?from=" + d(-1) + "&to=" + d(1));

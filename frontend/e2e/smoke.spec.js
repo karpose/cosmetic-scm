@@ -1527,6 +1527,72 @@ test('质量标准：新建和修订、QSO 签批；有标准的成品要先录�
   expect((await download).suggestedFilename()).toMatch(/^批次检验结果-.*\.xlsx$/)
 })
 
+test('检验：可采用供方报告的项目要填报告编号、有扫描件；自检的项目要写取样情况', async ({ page }) => {
+  test.setTimeout(120_000)
+  // 采购收一批角鲨烷（示例标准：外观每批自检，含量可采用供方报告，有取样要求；上一个用例修订成了 V2，这些设置要带过来）
+  await login(page, 'purchase1')
+  const batchNo = await page.evaluate(async () => {
+    const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
+    const j = (u) => fetch(`/api${u}`, { headers: h }).then((r) => r.json())
+    const squ = (await j('/items')).find((i) => i.code === 'RM-SQU-005')
+    const hc = (await j('/partners')).find((p) => p.code === 'SUP-HC')
+    const wh = (await j('/warehouses')).find((w) => w.code === 'WH-MAIN')
+    const po = await fetch('/api/purchase-orders', { method: 'POST', headers: h, body: JSON.stringify({ supplierId: hc.id, lines: [{ itemId: squ.id, qty: 10, unitPrice: 260, taxRate: 13 }] }) }).then((r) => r.json())
+    const rc = await fetch(`/api/purchase-orders/${po.id}/receipts`, { method: 'POST', headers: h, body: JSON.stringify({ lines: [{ poLineId: po.lines[0].id, qty: 10, extBatchNo: 'E2E-SQU-COA', warehouseId: wh.id }] }) }).then((r) => r.json())
+    return rc.batchNos[0]
+  })
+
+  await login(page, 'qa1')
+  await page.goto('/specs')
+  const specRow = page.locator('.el-table__row').filter({ hasText: 'RM-SQU-005' })
+  await expect(specRow).toContainText('V2')
+  await expect(specRow).toContainText('1 项可采用供方报告')
+  await specRow.getByRole('button', { name: '详情' }).click()
+  const detail = page.getByRole('dialog', { name: /^质量标准 QS/ })
+  await expect(detail.getByText('每批随机取 1 桶，取样 50 g（示例）')).toBeVisible()
+  await expect(detail.locator('.el-table__row').filter({ hasText: '含量' })).toContainText('可采用供方报告')
+  await expect(detail.locator('.el-table__row').filter({ hasText: '外观' })).toContainText('每批自检')
+  await detail.getByRole('button', { name: '关闭', exact: true }).click()
+
+  await page.goto('/quality')
+  await page.locator('.el-table__row').filter({ hasText: batchNo }).getByRole('button', { name: '检验放行' }).click()
+  const qc = dialog(page, '物料检验放行')
+  await expect(qc.getByText('请先录入检验结果')).toBeVisible()
+  await qc.getByRole('button', { name: '录入检验结果' }).click()
+  const rc = page.getByRole('dialog', { name: /录入检验结果/ })
+  await expect(rc.getByText('标准的取样要求：每批随机取 1 桶，取样 50 g（示例）')).toBeVisible()
+  // 外观要自检，没有“采用供方报告”
+  await expect(rc.getByRole('checkbox', { name: '外观采用供方报告' })).toHaveCount(0)
+  await rc.getByRole('textbox', { name: '外观的结果' }).fill('无色透明')
+  await rc.getByRole('radiogroup', { name: '外观是否合格' }).getByText('合格', { exact: true }).click()
+  // Element Plus 的原生复选框是隐藏的，点文字
+  await expect(rc.getByRole('checkbox', { name: '含量采用供方报告' })).toHaveCount(1)
+  await rc.getByText('采用供方报告', { exact: true }).click()
+  await expect(rc.getByRole('checkbox', { name: '含量采用供方报告' })).toBeChecked()
+  await rc.getByRole('spinbutton', { name: '含量的实测值' }).fill('99.2')
+  const save = rc.getByRole('button', { name: '保存检验结果' })
+  await save.click()
+  await toast(page, '请填写取样情况')
+  await rc.locator('#qi-sample').fill('1 桶，上中下各取，共 50 g')
+  await save.click()
+  await toast(page, '请填写供方检验报告编号')
+  await rc.locator('#qi-coa').fill('COA-E2E-SQU')
+  // 没有报告扫描件，后端不收
+  await save.click()
+  await toast(page, '请先上传供方检验报告')
+  await rc.locator('input[type=file]').setInputFiles(pdfFile('角鲨烷COA.pdf'))
+  await toast(page, '已上传')
+  await save.click()
+  await toast(page, '检验结果已保存')
+  await expect(qc.getByText('含量 99.2 %（供方报告）')).toBeVisible()
+  await expect(qc.getByText('COA-E2E-SQU')).toBeVisible()
+  await expect(qc.getByText('取样：1 桶，上中下各取，共 50 g')).toBeVisible()
+  // 弹窗里传的扫描件，外面的附件列表也要看得到
+  await expect(qc.getByRole('link', { name: '角鲨烷COA.pdf' })).toBeVisible()
+  await expect(qc.getByText('请先录入检验结果')).toHaveCount(0)
+  await qc.getByRole('button', { name: '取消' }).click()
+})
+
 test('新品立项：申请、管理员批准、关联成品、记录试制；上市检查没通过不能提交', async ({ page }) => {
   test.setTimeout(240_000)
   await login(page, 'qa1')

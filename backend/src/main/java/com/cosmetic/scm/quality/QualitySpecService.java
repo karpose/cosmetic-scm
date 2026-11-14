@@ -17,7 +17,12 @@ import com.cosmetic.scm.common.BizException;
 import com.cosmetic.scm.common.DocNoService;
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.domain.BatchStatus;
+import com.cosmetic.scm.attachment.AttachmentRepository;
 import com.cosmetic.scm.domain.InspectionStatus;
+import com.cosmetic.scm.domain.OwnerType;
+import com.cosmetic.scm.domain.PartnerKind;
+import com.cosmetic.scm.domain.ResultSource;
+import com.cosmetic.scm.domain.SourceType;
 import com.cosmetic.scm.domain.SpecStatus;
 import com.cosmetic.scm.domain.rules.SpecLimit;
 import com.cosmetic.scm.inventory.Batch;
@@ -25,6 +30,10 @@ import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.master.Item;
 import com.cosmetic.scm.master.ItemRepository;
 import com.cosmetic.scm.master.MasterLookup;
+import com.cosmetic.scm.master.Partner;
+import com.cosmetic.scm.master.PartnerRepository;
+import com.cosmetic.scm.production.MfgOrderRepository;
+import com.cosmetic.scm.purchase.PurchaseOrderRepository;
 import com.cosmetic.scm.qms.Deviation;
 import com.cosmetic.scm.qms.DeviationRepository;
 import com.cosmetic.scm.qms.DeviationService;
@@ -34,6 +43,8 @@ import com.cosmetic.scm.security.SignatureService;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Digits;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
@@ -41,12 +52,14 @@ import jakarta.validation.constraints.Size;
 
 import lombok.RequiredArgsConstructor;
 
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 质量标准和批次检验。标准按物料建立，每次修改是一个新版本，QSO 签批后生效，旧版本自动替代。
  * 有生效标准的物料，放行前最近一次有效检验必须合格；没有标准的照旧按检验报告编号放行。
+ * 标准里标了“可采用供方报告”的项目可以不自检，照供应商或受托厂的检验报告录入，仍按限度判定。
  * 规则都是默认值，见 docs/PLM-默认规则.md。
  */
 @Service
@@ -59,8 +72,12 @@ public class QualitySpecService {
     private final BatchInspectionResultRepository results;
     private final BatchRepository batches;
     private final ItemRepository items;
+    private final PartnerRepository partners;
     private final DeviationRepository deviations;
     private final DeviationService deviationService;
+    private final AttachmentRepository attachments;
+    private final PurchaseOrderRepository purchaseOrders;
+    private final MfgOrderRepository mfgOrders;
     private final MasterLookup lookup;
     private final SignatureService signature;
     private final DocNoService docNo;
@@ -70,11 +87,13 @@ public class QualitySpecService {
 
     public record LineReq(@NotBlank(message = "请填写检测项目") @Size(max = 60) String name, @Size(max = 100) String method, @Size(max = 20) String unit,
                           @Digits(integer = 14, fraction = 4, message = "下限最多 4 位小数") BigDecimal minValue,
-                          @Digits(integer = 14, fraction = 4, message = "上限最多 4 位小数") BigDecimal maxValue, @Size(max = 200) String criteria) {
+                          @Digits(integer = 14, fraction = 4, message = "上限最多 4 位小数") BigDecimal maxValue, @Size(max = 200) String criteria, Boolean coaAllowed) {
     }
 
     public record CreateReq(@NotNull(message = "请选择物料") Long itemId, @NotBlank(message = "请写明制定或修改的原因") @Size(max = 300) String changeNote,
-                            @NotEmpty(message = "请至少设一个检测项目") @Size(max = 50, message = "检测项目最多 50 个") List<@Valid LineReq> lines) {
+                            @NotEmpty(message = "请至少设一个检测项目") @Size(max = 50, message = "检测项目最多 50 个") List<@Valid LineReq> lines,
+                            @Size(max = 300, message = "取样要求最多 300 字") String samplingPlan,
+                            @Min(value = 1, message = "连续采用供方报告的批数至少是 1") @Max(value = 50, message = "连续采用供方报告的批数最多 50") Integer coaMaxStreak) {
     }
 
     public record ApproveReq(@NotBlank(message = "请输入签批密码") String password) {
@@ -84,33 +103,41 @@ public class QualitySpecService {
     }
 
     public record ResultReq(@NotNull(message = "请选择检测项目") Long lineId, @Digits(integer = 14, fraction = 4, message = "实测值最多 4 位小数") BigDecimal value,
-                            @Size(max = 200) String text, Boolean passed) {
+                            @Size(max = 200) String text, Boolean passed, ResultSource source) {
     }
 
-    public record InspectReq(@NotNull(message = "请选择检验日期") LocalDate inspectedDate, @NotEmpty(message = "请填写检验结果") List<@Valid ResultReq> results, @Size(max = 500) String note) {
+    public record InspectReq(@NotNull(message = "请选择检验日期") LocalDate inspectedDate, @NotEmpty(message = "请填写检验结果") List<@Valid ResultReq> results, @Size(max = 500) String note,
+                             @Size(max = 200, message = "取样情况最多 200 字") String sampleNote, @Size(max = 60, message = "供方报告编号最多 60 字") String coaNo) {
     }
 
-    public record LineView(Long id, int lineNo, String name, String method, String unit, BigDecimal minValue, BigDecimal maxValue, String criteria, String limitText, boolean judgedBySystem) {
+    public record LineView(Long id, int lineNo, String name, String method, String unit, BigDecimal minValue, BigDecimal maxValue, String criteria, String limitText, boolean judgedBySystem,
+                           boolean coaAllowed) {
     }
 
     public record SpecView(Long id, String specNo, Long itemId, String itemCode, String itemName, String itemTypeLabel, int versionNo, SpecStatus status, String statusLabel,
-                           String changeNote, String rejectNote, String createdBy, LocalDateTime createdAt, String approvedBy, LocalDateTime approvedAt, List<LineView> lines) {
+                           String changeNote, String rejectNote, String createdBy, LocalDateTime createdAt, String approvedBy, LocalDateTime approvedAt, List<LineView> lines,
+                           String samplingPlan, Integer coaMaxStreak) {
     }
 
-    public record ResultView(Long lineId, BigDecimal value, String text, boolean passed) {
+    public record ResultView(Long lineId, BigDecimal value, String text, boolean passed, ResultSource source) {
     }
 
     public record InspectionView(Long id, String inspectionNo, Long specId, String specNo, int specVersion, LocalDate inspectedDate, String inspector, String note, boolean passed,
-                                 InspectionStatus status, String statusLabel, String voidReason, String voidedBy, Long deviationId, String deviationNo, LocalDateTime createdAt, List<ResultView> results) {
+                                 InspectionStatus status, String statusLabel, String voidReason, String voidedBy, Long deviationId, String deviationNo, LocalDateTime createdAt, List<ResultView> results,
+                                 String sampleNote, String coaNo) {
     }
 
-    /** 放行弹窗用：生效标准、这个批次的检验记录，以及现在放不了行的原因（能放行时为空）。 */
+    /**
+     * 放行弹窗用：生效标准、这个批次的检验记录，以及现在放不了行的原因（能放行时为空）。
+     * coaBlocker：标准里有可采用供方报告的项目、但这批不能采用时的原因；能采用或标准里没有这类项目时为空。
+     */
+    public record Panel(SpecView spec, List<InspectionView> inspections, String blocker, String supplierName, String coaBlocker) {
+    }
+
     /** 检验结果导出：每次检验的每个项目一行。 */
-    public record ExportRow(String inspectionNo, String batchNo, String itemCode, String itemName, String spec, LocalDate inspectedDate, String inspector, String testName,
-                            String method, String limits, String result, String judgement, String conclusion, String status, String voidReason, String deviationNo, String note) {
-    }
-
-    public record Panel(SpecView spec, List<InspectionView> inspections, String blocker) {
+    public record ExportRow(String inspectionNo, String batchNo, String itemCode, String itemName, String itemType, String supplierName, String extBatchNo, String spec,
+                            LocalDate inspectedDate, String inspector, String sampleNote, String coaNo, String testName, String method, String limits, String result, String source,
+                            String judgement, String conclusion, String status, String voidReason, String deviationNo, String note) {
     }
 
     @Transactional(readOnly = true)
@@ -150,6 +177,10 @@ public class QualitySpecService {
                 throw new BizException("检测项目“" + l.name().trim() + "”的下限大于上限");
             }
         }
+        long coaLines = req.lines().stream().filter(l -> Boolean.TRUE.equals(l.coaAllowed())).count();
+        if (req.coaMaxStreak() != null && coaLines == 0) {
+            throw new BizException("没有可采用供方报告的项目，不用填连续采用的批数");
+        }
         QualitySpec s = new QualitySpec();
         s.setSpecNo(docNo.next("QS", time.today()));
         s.setItemId(item.getId());
@@ -158,6 +189,8 @@ public class QualitySpecService {
         s.setChangeNote(req.changeNote().trim());
         s.setCreatedBy(currentUser.usernameOrSystem());
         s.setCreatedAt(time.now());
+        s.setSamplingPlan(blankToNull(req.samplingPlan()));
+        s.setCoaMaxStreak(req.coaMaxStreak());
         specs.save(s);
         int n = 1;
         for (LineReq l : req.lines()) {
@@ -170,9 +203,11 @@ public class QualitySpecService {
             x.setMinValue(l.minValue());
             x.setMaxValue(l.maxValue());
             x.setCriteria(blankToNull(l.criteria()));
+            x.setCoaAllowed(Boolean.TRUE.equals(l.coaAllowed()));
             lines.save(x);
         }
-        audit.log("提交质量标准", s.getSpecNo(), item.getName() + " V" + s.getVersionNo() + "，" + req.lines().size() + " 个项目：" + s.getChangeNote());
+        String coaText = coaLines == 0 ? "" : "，其中 " + coaLines + " 个可采用供方报告" + (s.getCoaMaxStreak() == null ? "" : "（最多连续 " + s.getCoaMaxStreak() + " 批）");
+        audit.log("提交质量标准", s.getSpecNo(), item.getName() + " V" + s.getVersionNo() + "，" + req.lines().size() + " 个项目" + coaText + "：" + s.getChangeNote());
         return views(List.of(s)).get(0);
     }
 
@@ -210,7 +245,58 @@ public class QualitySpecService {
     @Transactional(readOnly = true)
     public Panel panel(Long batchId) {
         Batch b = batches.findById(batchId).orElseThrow(() -> BizException.notFound("批次"));
-        return new Panel(effective(b.getItemId()).orElse(null), inspectionViews(inspections.findByBatchIdOrderByIdDesc(batchId)), blocker(b).orElse(null));
+        Optional<QualitySpec> spec = specs.findFirstByItemIdAndStatus(b.getItemId(), SpecStatus.EFFECTIVE);
+        SpecView view = spec.map(s -> views(List.of(s)).get(0)).orElse(null);
+        // 标准里没有可采用供方报告的项目时不用算，页面上也不显示
+        String coaBlocker = view != null && view.lines().stream().anyMatch(LineView::coaAllowed) ? coaBlocker(b, spec.get(), lookup.item(b.getItemId())).orElse(null) : null;
+        String supplier = b.getPartnerId() == null ? null : lookup.partner(b.getPartnerId()).getName();
+        return new Panel(view, inspectionViews(inspections.findByBatchIdOrderByIdDesc(batchId)), blocker(b).orElse(null), supplier, coaBlocker);
+    }
+
+    /**
+     * 这批能不能采用供方报告，不能时返回原因。预览时不加锁；录入时调用方要已经锁了批次和供方。
+     * 供方要在合格名录里；标准设了连续批数上限的，这家供方的这个物料要先有一次全项自检合格，之后连续采用的批数不能超过上限。
+     */
+    private Optional<String> coaBlocker(Batch b, QualitySpec spec, Item item) {
+        if (b.getPartnerId() == null || b.getSourceType() == SourceType.OPEN) {
+            return Optional.of("这批是期初导入的，没有供方报告可以采用，请自检");
+        }
+        Partner p = lookup.partner(b.getPartnerId());
+        if (p.getKind() != PartnerKind.SUPPLIER && p.getKind() != PartnerKind.OEM) {
+            return Optional.of("这批是自产的，没有供方报告可以采用，请自检");
+        }
+        if (!p.usable(time.today())) {
+            return Optional.of(p.getName() + " 不在合格名录或资质已过期，不能采用其检验报告，请自检");
+        }
+        Integer max = spec.getCoaMaxStreak();
+        if (max == null) {
+            return Optional.empty();
+        }
+        List<BatchInspection> full = inspections.fullTests(item.getId(), p.getId(), InspectionStatus.VALID, PageRequest.of(0, 1));
+        String who = p.getName() + " 的" + item.getName();
+        if (full.isEmpty()) {
+            return Optional.of(who + "还没有全项自检的记录，这批要全项自检");
+        }
+        if (!full.get(0).isPassed()) {
+            return Optional.of(who + "最近一次全项自检 " + full.get(0).getInspectionNo() + " 不合格，这批要全项自检");
+        }
+        long streak = inspections.coaBatchesSince(item.getId(), p.getId(), InspectionStatus.VALID, full.get(0).getId(), b.getId());
+        if (streak >= max) {
+            return Optional.of(who + "已连续 " + streak + " 批采用供方报告（标准规定最多 " + max + " 批），这批要全项自检");
+        }
+        return Optional.empty();
+    }
+
+    /** 供方报告的扫描件：批次上，或者来源的采购单、委托单上（供应商和受托厂在门户里传到单据上）。系统不判断附件内容。 */
+    private boolean hasSupplierReport(Batch b) {
+        if (attachments.existsByOwnerTypeAndOwnerId(OwnerType.BATCH, b.getId())) {
+            return true;
+        }
+        if (b.getSourceType() == SourceType.PO) {
+            return purchaseOrders.findByPoNo(b.getSourceNo()).map(o -> attachments.existsByOwnerTypeAndOwnerId(OwnerType.PURCHASE_ORDER, o.getId())).orElse(false);
+        }
+        return b.getSourceType() == SourceType.MO
+                && mfgOrders.findByMoNo(b.getSourceNo()).map(m -> attachments.existsByOwnerTypeAndOwnerId(OwnerType.MFG_ORDER, m.getId())).orElse(false);
     }
 
     /** 放行前检查，调用方要已经锁了批次。没有生效标准的不检查。 */
@@ -232,7 +318,12 @@ public class QualitySpecService {
     @Transactional
     public Panel record(Long batchId, InspectReq req) {
         Batch b = batches.lockById(batchId).orElseThrow(() -> BizException.notFound("批次"));
+        // 状态不对的在锁供方之前就退出：对账会先锁供方、再碰已放行的批次，顺序反过来会死锁
         requireBeforeRelease(b, "录入检验结果");
+        // 连续采用供方报告的批数是算出来的，同一供方的录入要串行；这把锁也要在所有普通查询之前。顺序固定是批次 → 供方
+        if (b.getPartnerId() != null) {
+            partners.lockById(b.getPartnerId()).orElseThrow(() -> BizException.notFound("往来单位"));
+        }
         Item item = lookup.item(b.getItemId());
         QualitySpec spec = specs.findFirstByItemIdAndStatus(item.getId(), SpecStatus.EFFECTIVE)
                 .orElseThrow(() -> new BizException(item.getName() + " 还没有生效的质量标准，按检验报告编号放行即可"));
@@ -258,10 +349,18 @@ public class QualitySpecService {
         }
         List<String> failed = new ArrayList<>();
         List<BatchInspectionResult> out = new ArrayList<>();
+        int fromCoa = 0;
         for (QualitySpecLine l : specLines) {
             ResultReq r = byLine.get(l.getId());
             if (r == null) {
                 throw new BizException("请填写“" + l.getName() + "”的结果");
+            }
+            ResultSource source = r.source() == null ? ResultSource.TEST : r.source();
+            if (source == ResultSource.COA) {
+                if (!l.isCoaAllowed()) {
+                    throw new BizException("“" + l.getName() + "”按标准要每批自检，不能采用供方报告");
+                }
+                fromCoa++;
             }
             boolean pass = judge(l, r);
             BatchInspectionResult x = new BatchInspectionResult();
@@ -269,6 +368,7 @@ public class QualitySpecService {
             x.setValueNum(r.value());
             x.setValueText(blankToNull(r.text()));
             x.setPassed(pass);
+            x.setSource(source);
             out.add(x);
             if (!pass) {
                 String limits = SpecLimit.text(l.getMinValue(), l.getMaxValue(), l.getUnit());
@@ -277,6 +377,22 @@ public class QualitySpecService {
         }
         if (!failed.isEmpty() && note == null) {
             throw new BizException(String.join("、", failed) + " 不合格，请在备注里写明情况");
+        }
+        String coaNo = blankToNull(req.coaNo());
+        if (fromCoa > 0) {
+            coaBlocker(b, spec, item).ifPresent(m -> {
+                throw new BizException(m);
+            });
+            if (coaNo == null) {
+                throw new BizException("有项目采用供方报告，请填写供方检验报告编号");
+            }
+            if (!hasSupplierReport(b)) {
+                throw new BizException("请先上传供方检验报告：传到这个批次的附件里，采购单或委托单上已有附件的也可以");
+            }
+        }
+        String sampleNote = blankToNull(req.sampleNote());
+        if (spec.getSamplingPlan() != null && fromCoa < specLines.size() && sampleNote == null) {
+            throw new BizException("标准有取样要求（" + spec.getSamplingPlan() + "），请填写取样情况");
         }
         BatchInspection i = new BatchInspection();
         i.setInspectionNo(docNo.next("QI", time.today()));
@@ -288,10 +404,14 @@ public class QualitySpecService {
         i.setPassed(failed.isEmpty());
         i.setStatus(InspectionStatus.VALID);
         i.setCreatedAt(time.now());
+        i.setSampleNote(sampleNote);
+        i.setCoaNo(fromCoa > 0 ? coaNo : null);
+        i.setUsedCoa(fromCoa > 0);
         inspections.save(i);
         out.forEach(x -> x.setInspectionId(i.getId()));
         results.saveAll(out);
-        String detail = item.getName() + "，按 " + spec.getSpecNo() + "（V" + spec.getVersionNo() + "）" + (failed.isEmpty() ? "，全部合格" : "，不合格：" + String.join("、", failed));
+        String detail = item.getName() + "，按 " + spec.getSpecNo() + "（V" + spec.getVersionNo() + "）" + (failed.isEmpty() ? "，全部合格" : "，不合格：" + String.join("、", failed))
+                + (fromCoa == 0 ? "" : "，" + fromCoa + " 项采用供方报告 " + coaNo);
         if (!failed.isEmpty()) {
             String description = "批次 " + b.getBatchNo() + " 检验 " + i.getInspectionNo() + " 不合格：" + String.join("、", failed) + "。情况：" + note;
             Deviation d = deviationService.createForInspection(i.getInspectionNo(), b.getId(), req.inspectedDate(), item.getName() + " 批次 " + b.getBatchNo() + " 检验不合格",
@@ -368,9 +488,9 @@ public class QualitySpecService {
             Item i = itemMap.get(s.getItemId());
             List<LineView> lv = byspec.getOrDefault(s.getId(), List.of()).stream().sorted(java.util.Comparator.comparing(QualitySpecLine::getLineNo))
                     .map(l -> new LineView(l.getId(), l.getLineNo(), l.getName(), l.getMethod(), l.getUnit(), l.getMinValue(), l.getMaxValue(), l.getCriteria(),
-                            SpecLimit.text(l.getMinValue(), l.getMaxValue(), l.getUnit()), SpecLimit.hasLimits(l.getMinValue(), l.getMaxValue()))).toList();
+                            SpecLimit.text(l.getMinValue(), l.getMaxValue(), l.getUnit()), SpecLimit.hasLimits(l.getMinValue(), l.getMaxValue()), l.isCoaAllowed())).toList();
             return new SpecView(s.getId(), s.getSpecNo(), s.getItemId(), i.getCode(), i.getName(), i.getItemType().getLabel(), s.getVersionNo(), s.getStatus(), s.getStatus().getLabel(),
-                    s.getChangeNote(), s.getRejectNote(), s.getCreatedBy(), s.getCreatedAt(), s.getApprovedBy(), s.getApprovedAt(), lv);
+                    s.getChangeNote(), s.getRejectNote(), s.getCreatedBy(), s.getCreatedAt(), s.getApprovedBy(), s.getApprovedAt(), lv, s.getSamplingPlan(), s.getCoaMaxStreak());
         }).toList();
     }
 
@@ -388,7 +508,8 @@ public class QualitySpecService {
             QualitySpec s = specMap.get(i.getSpecId());
             return new InspectionView(i.getId(), i.getInspectionNo(), s.getId(), s.getSpecNo(), s.getVersionNo(), i.getInspectedDate(), i.getInspector(), i.getNote(), i.isPassed(),
                     i.getStatus(), i.getStatus().getLabel(), i.getVoidReason(), i.getVoidedBy(), i.getDeviationId(), devNos.get(i.getDeviationId()), i.getCreatedAt(),
-                    byInspection.getOrDefault(i.getId(), List.of()).stream().map(r -> new ResultView(r.getSpecLineId(), r.getValueNum(), r.getValueText(), r.isPassed())).toList());
+                    byInspection.getOrDefault(i.getId(), List.of()).stream().map(r -> new ResultView(r.getSpecLineId(), r.getValueNum(), r.getValueText(), r.isPassed(), r.getSource())).toList(),
+                    i.getSampleNote(), i.getCoaNo());
         }).toList();
     }
 
@@ -410,11 +531,13 @@ public class QualitySpecService {
         Map<Long, String> devNos = new HashMap<>();
         deviations.findAllById(all.stream().map(BatchInspection::getDeviationId).filter(java.util.Objects::nonNull).distinct().toList())
                 .forEach(d -> devNos.put(d.getId(), d.getDeviationNo()));
-        Map<Long, Item> items = lookup.itemMap();
+        Map<Long, Item> itemMap = lookup.itemMap();
+        Map<Long, Partner> partnerMap = lookup.partnerMap();
         List<ExportRow> out = new ArrayList<>();
         for (BatchInspection i : all) {
             Batch b = batchMap.get(i.getBatchId());
-            Item item = items.get(b.getItemId());
+            Item item = itemMap.get(b.getItemId());
+            Partner p = b.getPartnerId() == null ? null : partnerMap.get(b.getPartnerId());
             QualitySpec sp = specMap.get(i.getSpecId());
             Map<Long, BatchInspectionResult> rs = resultsBy.getOrDefault(i.getId(), List.of()).stream().collect(Collectors.toMap(BatchInspectionResult::getSpecLineId, r -> r, (x, y) -> x));
             for (QualitySpecLine l : linesBySpec.getOrDefault(sp.getId(), List.of()).stream().sorted(java.util.Comparator.comparing(QualitySpecLine::getLineNo)).toList()) {
@@ -422,8 +545,9 @@ public class QualitySpecService {
                 String limits = SpecLimit.text(l.getMinValue(), l.getMaxValue(), l.getUnit());
                 String shown = r == null ? null : ((r.getValueNum() == null ? "" : r.getValueNum().stripTrailingZeros().toPlainString() + (l.getUnit() == null ? "" : " " + l.getUnit()))
                         + (r.getValueText() == null ? "" : (r.getValueNum() == null ? "" : " ") + r.getValueText())).trim();
-                out.add(new ExportRow(i.getInspectionNo(), b.getBatchNo(), item.getCode(), item.getName(), sp.getSpecNo() + " V" + sp.getVersionNo(), i.getInspectedDate(),
-                        i.getInspector(), l.getName(), l.getMethod(), limits.isEmpty() ? l.getCriteria() : limits, shown, r == null ? null : r.isPassed() ? "合格" : "不合格",
+                out.add(new ExportRow(i.getInspectionNo(), b.getBatchNo(), item.getCode(), item.getName(), item.getItemType().getLabel(), p == null ? null : p.getName(), b.getExtBatchNo(),
+                        sp.getSpecNo() + " V" + sp.getVersionNo(), i.getInspectedDate(), i.getInspector(), i.getSampleNote(), i.getCoaNo(), l.getName(), l.getMethod(),
+                        limits.isEmpty() ? l.getCriteria() : limits, shown, r == null ? null : r.getSource().getLabel(), r == null ? null : r.isPassed() ? "合格" : "不合格",
                         i.isPassed() ? "合格" : "不合格", i.getStatus().getLabel(), i.getVoidReason(), devNos.get(i.getDeviationId()), i.getNote()));
             }
         }

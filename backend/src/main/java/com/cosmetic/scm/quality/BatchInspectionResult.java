@@ -33,4 +33,7 @@ public class BatchInspectionResult {
     private String valueText;
 
     private boolean passed;
+
+    @jakarta.persistence.Enumerated(jakarta.persistence.EnumType.STRING)
+    private com.cosmetic.scm.domain.ResultSource source = com.cosmetic.scm.domain.ResultSource.TEST;
 }
