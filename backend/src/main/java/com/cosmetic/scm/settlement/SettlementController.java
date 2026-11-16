@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import com.cosmetic.scm.settlement.SettlementService.ApproveReq;
+import com.cosmetic.scm.settlement.SettlementService.BatchInvoiceReq;
 import com.cosmetic.scm.settlement.SettlementService.CancelReq;
 import com.cosmetic.scm.settlement.SettlementService.CreateReq;
 import com.cosmetic.scm.settlement.SettlementService.InvoiceReq;
@@ -24,7 +25,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 采购生成和作废，财务审批和付款。金额只给这两个岗位看。 */
+/** 采购生成和作废，财务审批、付款与登记供应商退款。金额只给这两个岗位看。 */
 @RestController
 @RequestMapping("/api/statements")
 @RequiredArgsConstructor
@@ -66,6 +67,12 @@ public class SettlementController {
         return settlement.registerInvoice(id, req);
     }
 
+    @PostMapping("/{id}/invoices")
+    @PreAuthorize(BUYER)
+    public StatementView invoices(@PathVariable Long id, @Valid @RequestBody BatchInvoiceReq req) {
+        return settlement.registerInvoices(id, req);
+    }
+
     @PostMapping("/{id}/approve")
     @PreAuthorize(FINANCE)
     public StatementView approve(@PathVariable Long id, @Valid @RequestBody ApproveReq req) {
@@ -76,5 +83,11 @@ public class SettlementController {
     @PreAuthorize(FINANCE)
     public StatementView pay(@PathVariable Long id, @Valid @RequestBody PayReq req) {
         return settlement.pay(id, req);
+    }
+
+    @PostMapping("/{id}/refund")
+    @PreAuthorize(FINANCE)
+    public StatementView refund(@PathVariable Long id, @Valid @RequestBody PayReq req) {
+        return settlement.refund(id, req);
     }
 }

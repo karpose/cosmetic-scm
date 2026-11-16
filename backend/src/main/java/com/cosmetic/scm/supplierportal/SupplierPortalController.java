@@ -8,6 +8,7 @@ import com.cosmetic.scm.supplierportal.SupplierPortalService.ProfileView;
 import com.cosmetic.scm.supplierportal.SupplierPortalService.PromiseReq;
 import com.cosmetic.scm.supplierportal.SupplierPortalService.ShipmentReq;
 import com.cosmetic.scm.supplierportal.SupplierPortalService.SupplierOrderView;
+import com.cosmetic.scm.supplierreturn.SupplierReturnService.ConfirmReturnReq;
 
 import jakarta.validation.Valid;
 
@@ -55,6 +56,13 @@ public class SupplierPortalController {
         return supplierReturns.mine();
     }
 
+    @PostMapping("/returns/{id}/confirm")
+    public com.cosmetic.scm.supplierreturn.SupplierReturnService.ReturnView confirmReturn(
+            @PathVariable Long id,
+            @Valid @RequestBody(required = false) ConfirmReturnReq req) {
+        return supplierReturns.confirmReceipt(id, req);
+    }
+
     @GetMapping("/statements")
     public List<SettlementService.StatementView> statements() {
         return settlement.myStatements();
@@ -73,6 +81,11 @@ public class SupplierPortalController {
     @PostMapping("/statements/{id}/invoice")
     public SettlementService.StatementView invoice(@PathVariable Long id, @Valid @RequestBody SettlementService.InvoiceReq req) {
         return settlement.myInvoice(id, req);
+    }
+
+    @PostMapping("/statements/{id}/invoices")
+    public SettlementService.StatementView invoices(@PathVariable Long id, @Valid @RequestBody SettlementService.BatchInvoiceReq req) {
+        return settlement.myInvoices(id, req);
     }
 
     @PostMapping("/orders/{id}/promise")

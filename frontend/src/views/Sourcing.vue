@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h2>询价比价</h2>
-        <p>向合格供应商询价，供应商在门户报价，互相看不到。截止或开标前内部也看不到价格。定标要签批，定标人不能是询价人，定标后自动生成带价格的采购单。</p>
+        <p>向合格供应商询价，供应商在门户报价，互相看不到。截止或开标前内部也看不到价格。支持多轮议价与历史采购价对比，定标要签批（定标人不能是询价人），定标后自动生成带价格的采购单。</p>
       </div>
       <div class="toolbar">
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
@@ -17,20 +17,34 @@
       </template>
       <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
       <el-table v-else :data="t.paged.value" v-loading="loader.loading.value" empty-text="还没有询价">
-        <el-table-column label="询价单" width="150"><template #default="{ row }"><span class="mono">{{ row.rfqNo }}</span><div class="muted small mono">截止 {{ row.deadline }}</div></template></el-table-column>
-        <el-table-column label="标题和物料" min-width="240">
-          <template #default="{ row }"><b>{{ row.title }}</b><div v-for="l in row.lines" :key="l.id" class="muted small">{{ l.itemName }} × {{ fmtQty(l.qty) }} {{ l.unit }}</div></template>
+        <el-table-column label="询价单" width="160">
+          <template #default="{ row }">
+            <span class="mono">{{ row.rfqNo }}</span>
+            <el-tag v-if="row.roundNo > 1" size="small" type="warning" disable-transitions style="margin-left:4px">第{{ row.roundNo }}轮</el-tag>
+            <div class="muted small mono">截止 {{ row.deadline }}</div>
+          </template>
         </el-table-column>
-        <el-table-column label="报价情况" min-width="210">
+        <el-table-column label="标题和物料" min-width="240">
+          <template #default="{ row }">
+            <b>{{ row.title }}</b>
+            <div v-if="row.roundNote" class="muted small">议价说明：{{ row.roundNote }}</div>
+            <div v-for="l in row.lines" :key="l.id" class="muted small">
+              {{ l.itemName }} × {{ fmtQty(l.qty) }} {{ l.unit }}
+              <span v-if="l.lastPoPrice != null" class="mono">（历史采购 ¥{{ fmtQty(l.lastPoPrice) }}）</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="本轮报价情况" min-width="210">
           <template #default="{ row }">
             <div v-for="s in row.suppliers" :key="s.supplierId" class="small">{{ s.supplierName }} <el-tag size="small" :type="s.quoted ? 'success' : 'info'" disable-transitions>{{ s.quoted ? '已报' : '未报' }}</el-tag></div>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="130"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /><div v-if="row.closeReason" class="muted small">{{ row.closeReason }}</div></template></el-table-column>
-        <el-table-column label="" width="190" :fixed="narrow ? false : 'right'">
+        <el-table-column label="" width="240" :fixed="narrow ? false : 'right'">
           <template #default="{ row }">
             <el-button v-if="row.sealed && canBuy" size="small" @click="openEarly(row)">提前开标</el-button>
             <el-button v-if="row.canAward && canBuy" size="small" type="primary" @click="openAward(row)">比价定标</el-button>
+            <el-button v-if="row.canAward && canBuy" size="small" @click="openNextRound(row)">下一轮议价</el-button>
             <el-button v-if="row.status === 'AWARDED'" size="small" @click="openAward(row)">比价记录</el-button>
             <el-button v-if="(row.sealed || row.canAward) && canBuy" size="small" text @click="cancel(row)">取消</el-button>
           </template>
@@ -70,10 +84,27 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="aw.visible" :title="`${aw.readonly ? '比价记录' : '比价定标'}：${aw.rfq?.title || ''}`" width="860px" :close-on-click-modal="false">
+    <el-dialog v-model="nr.visible" :title="`发起下一轮议价：${nr.rfq?.rfqNo || ''}`" width="520px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <p class="muted small" style="margin-top:0">当前为第 {{ nr.rfq?.roundNo || 1 }} 轮。发起下一轮后，原报价会自动保存为“上轮报价”供对比，询价单重新封标并开放供应商二次报价。</p>
+        <el-form-item label="新报价截止日期">
+          <el-date-picker id="nr-deadline" v-model="nr.deadline" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d < startOfToday" />
+        </el-form-item>
+        <el-form-item label="议价说明 / 目标价要求">
+          <el-input id="nr-note" v-model="nr.note" type="textarea" :rows="3" maxlength="300" show-word-limit placeholder="如：第一轮整体报价偏高，请结合年采量下浮 5%~8% 重新核算含税单价" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="nr.visible = false">取消</el-button>
+        <el-button type="primary" :loading="nr.saving" @click="submitNextRound">发起第 {{ (nr.rfq?.roundNo || 1) + 1 }} 轮议价</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="aw.visible" :title="`${aw.readonly ? '比价记录' : '比价定标'}：${aw.rfq?.title || ''}（第 ${aw.rfq?.roundNo || 1} 轮）`" width="920px" :close-on-click-modal="false">
       <template v-if="aw.rfq">
         <div v-for="l in aw.rfq.lines" :key="l.id" class="award-line">
           <b>{{ l.itemName }}</b> <span class="muted small mono">× {{ fmtQty(l.qty) }} {{ l.unit }}</span>
+          <span v-if="l.lastPoPrice != null" class="muted small mono" style="margin-left:8px">· 最近采购单价 ¥{{ fmtQty(l.lastPoPrice) }}</span>
           <el-button v-if="!aw.readonly && l.quotes.length" size="small" text @click="aw.picks[l.id] = null">本行不定标</el-button>
           <span v-if="!aw.readonly && l.quotes.length && !aw.picks[l.id]" class="late small">本行不定标，不生成采购单</span>
           <el-empty v-if="!l.quotes.length" description="没有供应商报价，这一行不定标" :image-size="40" />
@@ -81,8 +112,29 @@
             <el-table-column v-if="!aw.readonly" label="" width="70">
               <template #default="{ row }"><el-radio v-model="aw.picks[l.id]" :value="row.supplierId" :aria-label="`定 ${row.supplierName}`">选</el-radio></template>
             </el-table-column>
-            <el-table-column label="供应商" min-width="150"><template #default="{ row }">{{ row.supplierName }} <el-tag v-if="row.lowest" size="small" type="success" disable-transitions>最低</el-tag><el-tag v-if="row.awarded" size="small" type="primary" disable-transitions>中标</el-tag></template></el-table-column>
-            <el-table-column label="含税单价" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.unitPrice) }}</span></template></el-table-column>
+            <el-table-column label="供应商" min-width="150">
+              <template #default="{ row }">
+                {{ row.supplierName }}
+                <el-tag v-if="row.lowest" size="small" type="success" disable-transitions>最低</el-tag>
+                <el-tag v-if="row.awarded" size="small" type="primary" disable-transitions>中标</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="含税单价" width="130" align="right">
+              <template #default="{ row }">
+                <span class="mono">{{ fmtQty(row.unitPrice) }}</span>
+                <div v-if="row.prevUnitPrice != null && Number(row.prevUnitPrice) !== Number(row.unitPrice)" class="muted small mono">
+                  上轮 {{ fmtQty(row.prevUnitPrice) }}
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="较历史采购" width="110" align="right">
+              <template #default="{ row }">
+                <span v-if="l.lastPoPrice != null && Number(l.lastPoPrice) > 0" class="mono small" :class="{ late: Number(row.unitPrice) > Number(l.lastPoPrice) }">
+                  {{ diffPctText(row.unitPrice, l.lastPoPrice) }}
+                </span>
+                <span v-else class="muted small">-</span>
+              </template>
+            </el-table-column>
             <el-table-column label="税率" width="70" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.taxRate) }}%</span></template></el-table-column>
             <el-table-column label="金额" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.amount) }}</span></template></el-table-column>
             <el-table-column label="交货" width="80" align="right"><template #default="{ row }">{{ row.leadDays }} 天</template></el-table-column>
@@ -103,6 +155,7 @@
       </template>
       <template #footer>
         <el-button @click="aw.visible = false">{{ aw.readonly ? '关闭' : '取消' }}</el-button>
+        <el-button v-if="!aw.readonly" @click="aw.visible = false; openNextRound(aw.rfq)">转入下一轮议价</el-button>
         <el-button v-if="!aw.readonly" type="primary" :loading="aw.saving" @click="submitAward">签批定标</el-button>
       </template>
     </el-dialog>
@@ -118,7 +171,7 @@ import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
-import { fmtMoney, fmtQty, fmtTime, startOfBusinessDay, today } from '../utils/format'
+import { daysFromToday, fmtMoney, fmtQty, fmtTime, startOfBusinessDay, today } from '../utils/format'
 import { useLoader } from '../utils/loader'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
@@ -126,6 +179,7 @@ import { textMatch, usePaged } from '../utils/table'
 const auth = useAuth()
 const rd = useRefData()
 const canBuy = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
+
 const rows = ref([])
 const loader = useLoader(async () => { rows.value = await http.get('/rfqs') })
 const load = () => loader.run()
@@ -137,6 +191,12 @@ const narrow = ref(window.innerWidth <= 768)
 const onResize = () => { narrow.value = window.innerWidth <= 768 }
 onMounted(() => window.addEventListener('resize', onResize))
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
+
+function diffPctText(unitPrice, lastPoPrice) {
+  const diff = ((Number(unitPrice) - Number(lastPoPrice)) / Number(lastPoPrice)) * 100
+  const sign = diff > 0 ? '+' : ''
+  return `${sign}${diff.toFixed(1)}%`
+}
 
 const cr = reactive({ visible: false, saving: false, title: '', deadline: null, supplierIds: [], lines: [] })
 async function openCreate() {
@@ -161,22 +221,37 @@ async function submitCreate() {
 
 async function openEarly(r) {
   try {
-    await ElMessageBox.confirm('开标后所有报价可见，供应商不能再改价。要所有邀请的供应商都报完才能提前开标。', `提前开标 ${r.rfqNo}`, { confirmButtonText: '提前开标', cancelButtonText: '不开标', type: 'warning' })
-  } catch {
-    return
-  }
+    await ElMessageBox.confirm('开标后所有报价可见，供应商不能再改价。要所有邀请的供应商都报完才能提前开标。', `提前开标 ${r.rfqNo}`,
+      { confirmButtonText: '提前开标', cancelButtonText: '不开标', type: 'warning' })
+  } catch { return }
   await http.post(`/rfqs/${r.id}/open`)
   ElMessage.success('已开标')
   load()
 }
 
+const nr = reactive({ visible: false, saving: false, rfq: null, deadline: null, note: '' })
+function openNextRound(r) {
+  Object.assign(nr, { visible: true, saving: false, rfq: r, deadline: daysFromToday(7), note: r.roundNote || '' })
+}
+async function submitNextRound() {
+  if (!nr.deadline || !nr.note.trim()) return ElMessage.warning('请填写新截止日期和议价说明')
+  nr.saving = true
+  try {
+    await http.post(`/rfqs/${nr.rfq.id}/next-round`, { deadline: nr.deadline, note: nr.note })
+    ElMessage.success(`已开启第 ${(nr.rfq.roundNo || 1) + 1} 轮议价`)
+    nr.visible = false
+    load()
+  } finally {
+    nr.saving = false
+  }
+}
+
 async function cancel(r) {
   let reason
   try {
-    reason = (await ElMessageBox.prompt('写明原因。', `取消询价 ${r.rfqNo}`, { confirmButtonText: '取消询价', cancelButtonText: '不取消', inputValidator: (v) => !!v?.trim() || '请填写取消原因' })).value
-  } catch {
-    return
-  }
+    reason = (await ElMessageBox.prompt('写明原因。', `取消询价 ${r.rfqNo}`,
+      { confirmButtonText: '取消询价', cancelButtonText: '不取消', inputValidator: (v) => !!v?.trim() || '请填写取消原因' })).value
+  } catch { return }
   await http.post(`/rfqs/${r.id}/cancel`, { reason })
   ElMessage.success('询价已取消')
   load()
@@ -190,7 +265,8 @@ function openAward(r) {
   Object.assign(aw, { visible: true, saving: false, readonly: r.status === 'AWARDED', rfq: r, picks, reason: '', password: '' })
 }
 // 和后端一致：没人报价的行不算；有报价的行不足 3 家、不是最低价或不定标都要写原因
-const needReason = computed(() => (aw.rfq?.lines || []).some((l) => l.quotes.length > 0 && (l.quotes.length < 3 || !l.quotes.find((q) => q.supplierId === aw.picks[l.id])?.lowest)))
+const needReason = computed(() => (aw.rfq?.lines || []).some((l) =>
+  l.quotes.length > 0 && (l.quotes.length < 3 || !l.quotes.find((q) => q.supplierId === aw.picks[l.id])?.lowest)))
 const awardedPos = computed(() => [...new Set((aw.rfq?.lines || []).flatMap((l) => l.quotes.filter((q) => q.awarded).map((q) => q.poNo)))])
 async function submitAward() {
   const lines = aw.rfq.lines.filter((l) => aw.picks[l.id]).map((l) => ({ rfqLineId: l.id, supplierId: aw.picks[l.id] }))

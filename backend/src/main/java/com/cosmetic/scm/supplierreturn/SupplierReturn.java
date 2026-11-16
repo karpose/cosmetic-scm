@@ -17,7 +17,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/** 退货给供应商：一个批次、一个仓库、一个数量。质量签批时才扣库存。 */
+/** 退货给供应商：一个批次、一个仓库、一个数量。质量签批时才扣库存，支持登记退货物流与供应商门户签收确认。 */
 @Entity
 @Table(name = "supplier_return")
 @Getter
@@ -52,6 +52,27 @@ public class SupplierReturn {
 
     /** 已经在哪张对账单里算过。结算前退的减了数量，结算后退的做了冲减。 */
     private Long settledStatementId;
+
+    /** 退货物流承运商（如顺丰、德邦、专车）。 */
+    private String carrier;
+
+    /** 退货物流运单号。 */
+    private String trackingNo;
+
+    /** 登记退货发货人。 */
+    private String shippedBy;
+
+    /** 登记退货发货时间。 */
+    private LocalDateTime shippedAt;
+
+    /** 供应商门户确认收货人。 */
+    private String supplierConfirmedBy;
+
+    /** 供应商门户确认收货时间。 */
+    private LocalDateTime supplierConfirmedAt;
+
+    /** 供应商收货备注。 */
+    private String supplierNote;
 
     private String createdBy;
 

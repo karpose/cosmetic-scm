@@ -14,7 +14,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/** 付款记录。系统只登记，不实际付款。 */
+/** 付款与退款记录。paymentType: PAY（向供应商付款）或 REFUND（退货冲减大于货款时供应商退款）。 */
 @Entity
 @Table(name = "supplier_payment")
 @Getter
@@ -27,6 +27,9 @@ public class SupplierPayment {
     private Long id;
 
     private Long statementId;
+
+    /** PAY=付款，REFUND=供应商退款。 */
+    private String paymentType = "PAY";
 
     private LocalDate payDate;
 

@@ -18,7 +18,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/** 供应商对账单。 */
+/** 供应商对账单。支持信用账期、应付到期日、多税率拆分汇总与红字冲减对账。 */
 @Entity
 @Table(name = "supplier_statement")
 @Getter
@@ -35,6 +35,12 @@ public class SupplierStatement {
     private Long supplierId;
 
     private LocalDate periodTo;
+
+    /** 信用账期天数（默认 30 天）。 */
+    private int creditDays = 30;
+
+    /** 应付到期日（periodTo + creditDays）。 */
+    private LocalDate dueDate;
 
     @Enumerated(EnumType.STRING)
     private StatementStatus status;

@@ -17,7 +17,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/** 询价单。 */
+/** 询价单。支持多轮议价（roundNo、roundNote）。 */
 @Entity
 @Table(name = "rfq")
 @Getter
@@ -30,23 +30,22 @@ public class Rfq {
     private Long id;
 
     private String rfqNo;
-
     private String title;
-
     private LocalDate deadline;
+
+    /** 当前议价轮次（默认第 1 轮）。 */
+    private int roundNo = 1;
+
+    /** 多轮议价说明或目标价提示。 */
+    private String roundNote;
 
     @Enumerated(EnumType.STRING)
     private RfqStatus status;
 
     private String closeReason;
-
     private String awardReason;
-
     private String awardedBy;
-
     private LocalDateTime awardedAt;
-
     private String createdBy;
-
     private LocalDateTime createdAt;
 }

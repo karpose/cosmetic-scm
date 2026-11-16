@@ -1,79 +1,33 @@
-# SRM 默认规则清单
-
-询价比价和对账结算是按常见采购规范先定的默认规则，等业务确认后再改。这份清单列出每条规则现在的取值，以及要改时看哪里。
-
-**状态**：都还没有经过采购部、财务部和质量部确认。
+# SRM 默认规则（V28 已升级）
 
 ## 询价比价
-
-| 规则 | 现在的做法 | 要改时看 |
-| --- | --- | --- |
-| 比价最少家数 | 3 家。不足 3 家能定标，但要写原因 | `RfqService.MIN_QUOTES` |
-| 没选最低价 | 能定标，但要写原因 | `RfqService.award` |
-| 比价依据 | 只比含税单价，不折算税率、交期和账期 | `RfqService.award`、`views` |
-| 封标 | 截止日期前，内部接口不返回价格，审计日志也不记价格 | `RfqService.sealed`、`submitQuote` |
-| 截止当天 | 当天还能报价，第二天才算截止 | `RfqService.sealed` |
-| 提前开标 | 邀请的供应商都报完所有行才可以 | `RfqService.open` |
-| 定标人 | 不能是询价人，要输入签批密码 | `RfqService.award` |
-| 谁能发起和定标 | 管理员、采购。财务只能查看 | `RfqController` |
-| 报价修改 | 截止前可以改，不留历史价格 | `RfqService.submitQuote` |
-| 报价有效期 | 不能早于截止日期；过期的报价不能定标 | `RfqService.submitQuote`、`award` |
-| 供应商看到的结果 | 只看到“已中标”或“未中标”，看不到别家价格和定标原因 | `RfqService.portalViews` |
-| 按行定标 | 每行可以定不同的供应商，一家一张采购单；可以只定一部分，有报价却不定要写原因 | `RfqService.award` |
-| 采购单期望到货日 | 今天 + 该供应商最长的交货天数 | `RfqService.award` |
+- **比价最少家数**：3 家。不足 3 家能定标，但要写原因（`RfqService.MIN_QUOTES`）
+- **没选最低价**：能定标，但要写原因（`RfqService.award`）
+- **比价依据与历史采购价参考**：按含税单价排序对比，同时自动关联展示该物料最近一次有效采购单单价（`lastPoPrice`）及涨跌幅百分比（`RfqService.views`）
+- **多轮议价（V28 新增）**：已开标或已截止待定标时，若报价偏高，采购可设定新截止日期与议价说明发起下一轮议价（`POST /api/rfqs/{id}/next-round`），轮次 `roundNo + 1`，原报价自动快照至 `prevUnitPrice` 供对比，并重新进入封标报价状态（`RfqService.nextRound`）
+- **询价物料范围（V28 扩展）**：支持原料（`RM`）、包材（`PKG`）及半成品委外加工（`WIP`）询价（`RfqService.create`）
+- **封标**：当前轮次截止日期前，内部接口不返回价格，审计日志也不记价格（`RfqService.sealed`、`submitQuote`）
+- **提前开标**：邀请的供应商在本轮次都报完所有行才可以（`RfqService.open`）
+- **定标人**：不能是询价人，要输入签批密码（`RfqService.award`）
 
 ## 对账结算
-
-| 规则 | 现在的做法 | 要改时看 |
-| --- | --- | --- |
-| 哪些批次能结算 | 只有**已放行**的。待检、不合格、冻结的都不结算 | `SettlementService.unbilled` |
-| 结算数量 | 批次入库数量。之后发料、报废多少都和供应商无关 | `SettlementService.unbilled` |
-| 金额 | 入库数量 × 含税单价，每行四舍五入到分 | `SettlementService.unbilled` |
-| 税额 | 含税金额 × 税率 /（100 + 税率）。默认税率 13%，只是页面默认值 | `SettlementService.unbilled` |
-| 没有单价的批次 | 不进对账单，生成时列出来提醒 | `SettlementService.unbilled` |
-| 调整金额 | 扣款填负数，必须写原因；调整后合计要大于 0 | `SettlementService.create` |
-| 发票 | 金额必须**完全等于**对账单合计，没有容差；一张对账单一张发票；同一供应商发票号不能重复 | `SettlementService.invoice` |
-| 审批人 | 不能是制单人，要输入签批密码 | `SettlementService.approve` |
-| 谁能做什么 | 采购生成和作废，财务审批和付款，管理员都可以 | `SettlementController` |
-| 付款 | 可以分多次，不能超付，只做登记 | `SettlementService.pay` |
-| 作废 | 审批前可以作废，批次放回去重新结算；审批后不能作废 | `SettlementService.cancel` |
-| 改单价 | 进了有效对账单的不能改；改已有单价要写原因 | `PurchaseService.setPrices` |
-| 批次后来出问题 | 生成对账单后批次被冻结或判不合格，不能审批和付款，要等质量结论或作废重来 | `SettlementService.requireStillReleased` |
-| 谁能看价格 | 采购、财务、管理员。其它岗位：接口不返回单价；审计记录遮盖成“含金额”，也搜不到；对账单附件看不了；总览不带金额。供应商只看自己的 | `PriceAccess`、`AuditService.visible` |
+- **哪些批次能结算**：只有**已放行**的。待检、不合格、冻结的都不结算（`SettlementService.unbilled`）
+- **账期与应付到期日（V28 新增）**：生成对账单时可设置信用账期天数 `creditDays`（默认 30 天，范围 0~365 天），自动计算应付到期日 `dueDate = periodTo + creditDays` 并计算逾期天数 `overdueDays`（`SettlementRule.computeDueDate`、`overdueDays`）
+- **多税率自动拆分汇总（V28 新增）**：对账单预览与详情自动按税率升序拆分汇总各档税率的含税金额、不含税金额和税额（`SettlementRule.breakdownByTaxRate`）
+- **一单多票与蓝/红字发票（V28 新增）**：支持单张或多张发票组合登记（`POST /api/statements/{id}/invoices`），区分蓝字发票（`BLUE`，正数）与红字冲减发票（`RED`，负数），发票含税总额须严格等于对账单合计（`SettlementRule.validateInvoices`）
+- **红字冲减对账单与供应商退款（V28 新增）**：当结算后退货冲减超过当期新入库货款（`totalAmount < 0`）时，支持勾选“允许生成红字冲减对账单”，由供应商登记红字发票，财务审批后通过 `POST /api/statements/{id}/refund` 登记供应商退款（`SettlementService.refund`）
+- **审批人**：不能是制单人，要输入签批密码（`SettlementService.approve`）
+- **谁能看价格**：采购、财务、管理员。其它岗位接口不返回单价，审计记录遮盖成“含金额”
 
 ## 供应商评分和提醒
-
-| 规则 | 现在的做法 | 要改时看 |
-| --- | --- | --- |
-| 评分权重 | 质量 50、交货 30、审核 20，没有数据的项不计 | `SupplierScore` |
-| 等级线 | A ≥ 90，B ≥ 75，C ≥ 60，其余 D | `SupplierScore` |
-| 评分的作用 | 只作参考，不影响下单，不给供应商看 | `SupplierAuditService.toRow` |
-| 准时率 | 按第一次承诺的交期算，没承诺过看采购期望 | `PurchaseOrderRepository.deliveryStats` |
-| 交期提醒 | 还有 3 天以内 | `NotifyService.SUPPLIER_DUE_WARN_DAYS` |
+- **评分权重**：质量 50、交货 30、审核 20，没有数据的项不计（`SupplierScore`）
+- **等级线**：A ≥ 90, B ≥ 75, C ≥ 60, 其余 D（`SupplierScore`）
+- **准时率**：按第一次承诺的交期算，没承诺过看采购期望（`PurchaseOrderRepository.deliveryStats`）
 
 ## 退货给供应商
-
-| 规则 | 现在的做法 | 要改时看 |
-| --- | --- | --- |
-| 能退什么 | 采购来的批次，任何状态（待检、放行、不合格、冻结）。期初导入和生产的批次不能退 | `SupplierReturnService.create` |
-| 谁发起 | 管理员、采购、仓库 | `SupplierReturnController` |
-| 谁签批 | QA 或 QSO，不能是发起人，要输入密码。**签批时才扣库存** | `SupplierReturnService.approve` |
-| 待签批的额度 | 占用可退数量，但库存没扣，这期间可能被发料用掉，那时签批会报库存不足 | `SupplierReturnService.create` |
-| 结算前退的 | 结算数量 = 入库 - 已退回 | `SettlementService.unbilled` |
-| 结算后退的 | 下一张对账单生成负数行，按当时的单价和税率 | `SettlementService.unbilled` |
-| 冲减超过货款 | 不能生成对账单，等有新货款一起算；不处理退款 | `SettlementService.create` |
-| 供应商能看到什么 | 只看已退回的，待签批的看不到 | `SupplierReturnService.mine` |
-
-## 没有做的
-
-要做的话，这些都不是改一个参数能解决的，需要先确定业务规则：
-
-- **退款**：退货冲减超过货款时，系统不处理退款，也没有预付款和应付余额。
-- **退货物流**：没有运单、签收，也不需要供应商确认收到。
-- **账期和付款计划**：没有账期，也不提醒什么时候该付。
-- **多币种、多税率拆分**：只支持人民币；同一发票多税率时只看总额。
-- **红字发票、一票多单、多票一单**：不支持。
-- **预付款、应付账款、记账凭证**：这不是财务系统，也不和财务系统对接。
-- **框架协议价、价格历史分析**：单价只记在每张采购单上。
-- **多轮议价、在线竞价**：只有一轮报价，截止前可以改。
-- **询价的物料范围**：只能询原料和包材，不能询加工费。
+- **能退什么**：采购来的批次，任何状态（待检、放行、不合格、冻结）。期初导入和生产的批次不能退（`SupplierReturnService.create`）
+- **谁发起与签批**：管理员、采购、仓库发起；QA 或 QSO 签批（不能是发起人，要输入密码），**签批时才扣库存**（`SupplierReturnService.approve`）
+- **退货物流与供应商门户签收确认（V28 新增）**：
+  - 质量签批后，采购或仓库可登记承运商 `carrier` 与运单号 `trackingNo`（`POST /api/supplier-returns/{id}/ship`）
+  - 供应商在门户查看退货明细与物流单号，点击“确认收到退货”并填写签收备注（`POST /api/portal/supplier/returns/{id}/confirm`）
+- **对账联动**：结算前退的自动扣减结算数量；结算后退的在下一张对账单生成负数冲减行（`SettlementService.unbilled`）
