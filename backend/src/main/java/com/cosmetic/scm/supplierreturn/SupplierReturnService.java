@@ -39,7 +39,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 退货给供应商：采购或仓库发起，质量签批（不能是发起人）时扣库存。只能退采购来的批次。
+ * 退货给供应商：采购或仓库发起，质量签批（不能是发起人）时扣库存，签批后登记退货物流，供应商在门户确认收货。
  * 对账的影响在 SettlementService：结算前退的减数量，结算后退的在下一张对账单冲减。
  */
 @Service
@@ -65,6 +65,13 @@ public class SupplierReturnService {
     public record ApproveReq(@NotBlank(message = "请输入签批密码") String password) {
     }
 
+    public record ShipReq(@NotBlank(message = "请填写承运商或送货方式") @Size(max = 60) String carrier,
+                          @NotBlank(message = "请填写物流单号或车牌号") @Size(max = 60) String trackingNo) {
+    }
+
+    public record ConfirmReturnReq(@Size(max = 300) String note) {
+    }
+
     public record CancelReq(@NotBlank(message = "请填写取消原因") @Size(max = 300) String reason) {
     }
 
@@ -75,7 +82,10 @@ public class SupplierReturnService {
 
     public record ReturnView(Long id, String returnNo, Long supplierId, String supplierName, Long batchId, String batchNo, String extBatchNo,
                              String itemName, String unit, String warehouseName, BigDecimal qty, String reason, SupplierReturnStatus status,
-                             String statusLabel, String cancelReason, String signedBy, LocalDateTime signedAt, String createdBy, LocalDateTime createdAt) {
+                             String statusLabel, String cancelReason, String signedBy, LocalDateTime signedAt,
+                             String carrier, String trackingNo, String shippedBy, LocalDateTime shippedAt,
+                             String supplierConfirmedBy, LocalDateTime supplierConfirmedAt, String supplierNote,
+                             String createdBy, LocalDateTime createdAt) {
     }
 
     @Transactional(readOnly = true)
@@ -138,7 +148,7 @@ public class SupplierReturnService {
                 .filter(r -> r.getWarehouseId().equals(req.warehouseId())).map(SupplierReturn::getQty).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal left = s.getQty().subtract(pending);
         if (req.qty().compareTo(left) > 0) {
-            throw new BizException("批次 " + b.getBatchNo() + " 还能退 " + plain(left.max(BigDecimal.ZERO)) + "（在库 " + plain(s.getQty()) + "，待签批 " + plain(pending) + "）");
+            throw new BizException("批次 " + b.getBatchNo() + " 还能退 " + plain(left.max(BigDecimal.ZERO)) + " (在库 " + plain(s.getQty()) + ", 待签批 " + plain(pending) + ") ");
         }
         SupplierReturn r = new SupplierReturn();
         r.setReturnNo(docNo.next("RS", time.today()));
@@ -151,7 +161,7 @@ public class SupplierReturnService {
         r.setCreatedBy(currentUser.usernameOrSystem());
         r.setCreatedAt(time.now());
         returns.save(r);
-        audit.log("发起退供", r.getReturnNo(), lookup.partner(b.getPartnerId()).getName() + "，批次 " + b.getBatchNo() + " × " + plain(req.qty()), r.getReason());
+        audit.log("发起退供", r.getReturnNo(), lookup.partner(b.getPartnerId()).getName() + ", 批次 " + b.getBatchNo() + " × " + plain(req.qty()), r.getReason());
         return views(List.of(r)).get(0);
     }
 
@@ -170,7 +180,45 @@ public class SupplierReturnService {
         r.setSignedBy(signer.getUsername());
         r.setSignedAt(time.now());
         returns.save(r);
-        audit.log("退供签批", r.getReturnNo(), "批次 " + b.getBatchNo() + " × " + plain(r.getQty()) + " 退回 " + lookup.partner(r.getSupplierId()).getName() + "，库存已扣减", r.getReason());
+        audit.log("退供签批", r.getReturnNo(), "批次 " + b.getBatchNo() + " × " + plain(r.getQty()) + " 退回 " + lookup.partner(r.getSupplierId()).getName() + ", 库存已扣减", r.getReason());
+        return views(List.of(r)).get(0);
+    }
+
+    /** 采购或仓库登记退货物流信息（需在质量签批完成后；供应商确认收货前可修正）。 */
+    @Transactional
+    public ReturnView ship(Long id, ShipReq req) {
+        SupplierReturn r = returns.lockById(id).orElseThrow(() -> BizException.notFound("退供单"));
+        if (r.getStatus() != SupplierReturnStatus.DONE) {
+            throw new BizException("退供单 " + r.getReturnNo() + " 当前为" + r.getStatus().getLabel() + "，请先完成质量签批再登记退货物流");
+        }
+        if (r.getSupplierConfirmedAt() != null) {
+            throw new BizException("供应商已确认收到退货，不能再修改物流信息");
+        }
+        r.setCarrier(req.carrier().trim());
+        r.setTrackingNo(req.trackingNo().trim());
+        r.setShippedBy(currentUser.usernameOrSystem());
+        r.setShippedAt(time.now());
+        returns.save(r);
+        audit.log("退供物流登记", r.getReturnNo(), lookup.partner(r.getSupplierId()).getName() + ", " + r.getCarrier() + " " + r.getTrackingNo());
+        return views(List.of(r)).get(0);
+    }
+
+    /** 供应商门户：确认收到退回的物料。 */
+    @Transactional
+    public ReturnView confirmReceipt(Long id, ConfirmReturnReq req) {
+        SupplierReturn r = returns.lockById(id).orElseThrow(() -> BizException.notFound("退供单"));
+        if (!currentUser.portalPartnerId().equals(r.getSupplierId()) || r.getStatus() != SupplierReturnStatus.DONE) {
+            throw BizException.notFound("退供单");
+        }
+        if (r.getSupplierConfirmedAt() != null) {
+            throw new BizException("退供单 " + r.getReturnNo() + " 已确认收货，无需重复操作");
+        }
+        String note = req != null && req.note() != null && !req.note().isBlank() ? req.note().trim() : null;
+        r.setSupplierConfirmedBy(currentUser.usernameOrSystem());
+        r.setSupplierConfirmedAt(time.now());
+        r.setSupplierNote(note);
+        returns.save(r);
+        audit.log("供应商确认退货收货", r.getReturnNo(), lookup.partner(r.getSupplierId()).getName(), note);
         return views(List.of(r)).get(0);
     }
 
@@ -187,7 +235,7 @@ public class SupplierReturnService {
 
     private static void requirePending(SupplierReturn r, String action) {
         if (r.getStatus() != SupplierReturnStatus.PENDING) {
-            throw new BizException("退供单 " + r.getReturnNo() + " 当前为" + r.getStatus().getLabel() + "，不能" + action);
+            throw new BizException("退供单 " + r.getReturnNo() + " 当前为" + r.getStatus().getLabel() + ", 不能" + action);
         }
     }
 
@@ -205,7 +253,9 @@ public class SupplierReturnService {
             Warehouse w = wh.computeIfAbsent(r.getWarehouseId(), lookup::warehouse);
             return new ReturnView(r.getId(), r.getReturnNo(), r.getSupplierId(), lookup.partner(r.getSupplierId()).getName(), b.getId(), b.getBatchNo(), b.getExtBatchNo(),
                     i.getName(), i.getUnit(), w.getName(), r.getQty(), r.getReason(), r.getStatus(), r.getStatus().getLabel(), r.getCancelReason(), r.getSignedBy(),
-                    r.getSignedAt(), r.getCreatedBy(), r.getCreatedAt());
+                    r.getSignedAt(), r.getCarrier(), r.getTrackingNo(), r.getShippedBy(), r.getShippedAt(),
+                    r.getSupplierConfirmedBy(), r.getSupplierConfirmedAt(), r.getSupplierNote(),
+                    r.getCreatedBy(), r.getCreatedAt());
         }).toList();
     }
 

@@ -1037,7 +1037,7 @@ test('询价比价到对账付款：询价、报价、开标、定标、收货�
   await sr.getByRole('button', { name: '审批' }).click()
   await dialog(page, '审批：').locator('#ap-password').fill(DEMO)
   await dialog(page, '审批：').getByRole('button', { name: '签批审批' }).click()
-  await toast(page, '可以付款')
+  await toast(page, '已审批')
   await sr.getByRole('button', { name: '登记付款' }).click()
   await dialog(page, '登记付款').getByRole('button', { name: '登记付款' }).click()
   await toast(page, '付款已登记')

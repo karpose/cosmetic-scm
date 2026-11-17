@@ -14,7 +14,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/** 一家供应商对一行的报价。截止前可以改，开标前内部看不到价格。 */
+/** 一家供应商对一行的报价。截止前可以改，开标前内部看不到价格；支持多轮议价记录上轮单价。 */
 @Entity
 @Table(name = "rfq_quote")
 @Getter
@@ -27,26 +27,17 @@ public class RfqQuote {
     private Long id;
 
     private Long rfqId;
-
     private Long rfqLineId;
-
     private Long supplierId;
-
+    private int roundNo = 1;
+    private BigDecimal prevUnitPrice;
     private BigDecimal unitPrice;
-
     private BigDecimal taxRate;
-
     private int leadDays;
-
     private LocalDate validUntil;
-
     private String note;
-
     private boolean awarded;
-
     private Long poId;
-
     private String updatedBy;
-
     private LocalDateTime updatedAt;
 }

@@ -7,6 +7,7 @@ import com.cosmetic.scm.supplierreturn.SupplierReturnService.CancelReq;
 import com.cosmetic.scm.supplierreturn.SupplierReturnService.Candidate;
 import com.cosmetic.scm.supplierreturn.SupplierReturnService.CreateReq;
 import com.cosmetic.scm.supplierreturn.SupplierReturnService.ReturnView;
+import com.cosmetic.scm.supplierreturn.SupplierReturnService.ShipReq;
 
 import jakarta.validation.Valid;
 
@@ -21,7 +22,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 采购、仓库发起和取消，质量签批。查看不含金额，所有内部岗位都能看。 */
+/** 采购、仓库发起、取消并登记退货物流，质量签批。查看不含金额，所有内部岗位都能看。 */
 @RestController
 @RequestMapping("/api/supplier-returns")
 @RequiredArgsConstructor
@@ -52,6 +53,12 @@ public class SupplierReturnController {
     @PreAuthorize("hasAnyRole('QA','QSO')")
     public ReturnView approve(@PathVariable Long id, @Valid @RequestBody ApproveReq req) {
         return returns.approve(id, req);
+    }
+
+    @PostMapping("/{id}/ship")
+    @PreAuthorize(MAKER)
+    public ReturnView ship(@PathVariable Long id, @Valid @RequestBody ShipReq req) {
+        return returns.ship(id, req);
     }
 
     @PostMapping("/{id}/cancel")

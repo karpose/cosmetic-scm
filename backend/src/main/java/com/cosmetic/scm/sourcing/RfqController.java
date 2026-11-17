@@ -5,6 +5,7 @@ import java.util.List;
 import com.cosmetic.scm.sourcing.RfqService.AwardReq;
 import com.cosmetic.scm.sourcing.RfqService.CancelReq;
 import com.cosmetic.scm.sourcing.RfqService.CreateRfqReq;
+import com.cosmetic.scm.sourcing.RfqService.NextRoundReq;
 import com.cosmetic.scm.sourcing.RfqService.RfqView;
 
 import jakarta.validation.Valid;
@@ -45,6 +46,12 @@ public class RfqController {
     @PreAuthorize(BUYER)
     public RfqView open(@PathVariable Long id) {
         return rfqs.open(id);
+    }
+
+    @PostMapping("/{id}/next-round")
+    @PreAuthorize(BUYER)
+    public RfqView nextRound(@PathVariable Long id, @Valid @RequestBody NextRoundReq req) {
+        return rfqs.nextRound(id, req);
     }
 
     @PostMapping("/{id}/cancel")
