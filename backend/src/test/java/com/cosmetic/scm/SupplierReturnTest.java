@@ -255,10 +255,10 @@ class SupplierReturnTest {
         String buyer = login("purchase1");
         Batch a = receive(buyer, s, "10", "10", "0", true);
         call(buyer, "/api/statements", Map.of("supplierId", s, "periodTo", today().toString())).andExpect(status().isOk());
-        // 结算后退货，没有新货款：合计是负数，不能生成，等下次
+        // 结算后退货，没有新货款：未允许红字冲减时不能生成，提示可选的退款流程
         returnDone(buyer, a, "4");
         call(buyer, "/api/statements", Map.of("supplierId", s, "periodTo", today().toString())).andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message", containsString("等有新货款")));
+                .andExpect(jsonPath("$.message", containsString("允许生成红字冲减对账单")));
         // 冲减还在，有新货款时一起算：-40 + 3 × 20 = 20
         receive(buyer, s, "3", "20", "0", true);
         JsonNode st = body(call(buyer, "/api/statements", Map.of("supplierId", s, "periodTo", today().toString())).andExpect(status().isOk()));
