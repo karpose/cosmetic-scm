@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -215,33 +216,40 @@ public class FinanceIntegrationService {
             PaymentCallbackResult result = tx.execute(s -> {
                 SupplierStatement st = statements.lockByStatementNo(stNo)
                         .orElseThrow(() -> BizException.notFound("对账单 " + stNo + " "));
+                String requestedType = trimOrNull(req.paymentType());
+                String type = requestedType == null
+                        ? (st.getTotalAmount().signum() < 0 ? "REFUND" : "PAY")
+                        : requestedType.toUpperCase(Locale.ROOT);
+                boolean refund = "REFUND".equals(type);
+                if (!refund && !"PAY".equals(type)) {
+                    throw new BizException("不支持的收付款类型：" + type + "（仅支持 PAY 或 REFUND）");
+                }
+                String typeLabel = refund ? "供应商退款" : "付款";
+                String reference = trimOrNull(req.referenceNo());
                 Optional<SupplierPayment> existing = payments.findByExtPaymentNo(extNo);
                 if (existing.isPresent()) {
                     SupplierPayment p = existing.get();
                     if (!p.getStatementId().equals(st.getId())) {
                         throw new BizException("外部付款单号 " + extNo + " 已关联其他对账单，不能重复使用");
                     }
-                    String type = p.getPaymentType() == null ? "PAY" : p.getPaymentType();
+                    String recordedType = p.getPaymentType() == null ? "PAY" : p.getPaymentType();
+                    BigDecimal recordedAmount = p.getAmount().abs();
+                    boolean referenceChanged = reference != null && !reference.equals(p.getReferenceNo());
+                    if (!type.equals(recordedType) || !req.payDate().equals(p.getPayDate())
+                            || req.amount().compareTo(recordedAmount) != 0 || referenceChanged) {
+                        throw new BizException(HttpStatus.CONFLICT,
+                                "外部付款单号 " + extNo + " 与已登记的付款水单信息不一致，请核对收付类型、日期、金额和参考号");
+                    }
                     return new PaymentCallbackResult(
-                            st.getStatementNo(), extNo, type, "REFUND".equals(type) ? "供应商退款" : "付款",
-                            p.getPayDate(), p.getAmount().abs(), p.getReferenceNo(),
+                            st.getStatementNo(), p.getExtPaymentNo(), type, typeLabel,
+                            p.getPayDate(), recordedAmount, p.getReferenceNo(),
                             st.getStatus(), st.statusLabel(), st.getPaidAmount(), st.outstandingAmount(), true);
                 }
-                String type = req.paymentType() == null || req.paymentType().isBlank()
-                        ? (st.getTotalAmount().signum() < 0 ? "REFUND" : "PAY")
-                        : req.paymentType().trim().toUpperCase();
-                String refNo = req.referenceNo() == null || req.referenceNo().isBlank() ? extNo : req.referenceNo().trim();
+                String refNo = reference == null ? extNo : reference;
                 PayReq payReq = new PayReq(req.payDate(), req.amount(), refNo);
-                StatementView sv;
-                if ("PAY".equals(type)) {
-                    sv = settlement.pay(st.getId(), payReq, extNo);
-                } else if ("REFUND".equals(type)) {
-                    sv = settlement.refund(st.getId(), payReq, extNo);
-                } else {
-                    throw new BizException("不支持的收付款类型：" + type + "（仅支持 PAY 或 REFUND）");
-                }
+                StatementView sv = refund ? settlement.refund(st.getId(), payReq, extNo) : settlement.pay(st.getId(), payReq, extNo);
                 return new PaymentCallbackResult(
-                        sv.statementNo(), extNo, type, "REFUND".equals(type) ? "供应商退款" : "付款",
+                        sv.statementNo(), extNo, type, typeLabel,
                         req.payDate(), req.amount(), refNo,
                         sv.status(), sv.statusLabel(), sv.paidAmount(), sv.unpaid(), false);
             });

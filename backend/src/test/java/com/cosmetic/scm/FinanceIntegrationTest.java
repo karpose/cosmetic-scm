@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -154,6 +155,11 @@ class FinanceIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(request)));
     }
 
+    private ResultActions payCallback(Map<String, Object> request) throws Exception {
+        return mvc.perform(post("/api/integration/finance/payments").header("X-Api-Key", API_KEY)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(request)));
+    }
+
     @Test
     void integrationEndpointsRequireApiKeyAndInternalExportRequiresFinanceRole() throws Exception {
         mvc.perform(get("/api/integration/finance/vouchers")).andExpect(status().isUnauthorized());
@@ -248,10 +254,7 @@ class FinanceIntegrationTest {
                 "amount", new BigDecimal("60.00"),
                 "referenceNo", "REF-BANK-001"
         );
-        mvc.perform(post("/api/integration/finance/payments")
-                        .header("X-Api-Key", API_KEY)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(pay1)))
+        payCallback(pay1)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.duplicate").value(false))
                 .andExpect(jsonPath("$.status").value("APPROVED"))
@@ -259,12 +262,26 @@ class FinanceIntegrationTest {
                 .andExpect(jsonPath("$.unpaid").value(40.0));
 
         // 相同 extPaymentNo 重复回调：幂等返回，不重复扣减
-        mvc.perform(post("/api/integration/finance/payments")
-                        .header("X-Api-Key", API_KEY)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(pay1)))
+        Map<String, Object> retry = new HashMap<>(pay1);
+        retry.put("amount", 60);
+        retry.put("paymentType", " pay ");
+        retry.remove("referenceNo");
+        payCallback(retry)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.duplicate").value(true))
+                .andExpect(jsonPath("$.paidAmount").value(60.0))
+                .andExpect(jsonPath("$.unpaid").value(40.0));
+
+        // 同一付款单号的核心字段变更必须报错，不能假装核销成功。
+        for (var field : Map.<String, Object>of("amount", 61, "payDate", d(-1).toString(),
+                "paymentType", "REFUND", "referenceNo", "REF-OTHER").entrySet()) {
+            Map<String, Object> conflicting = new HashMap<>(pay1);
+            conflicting.put(field.getKey(), field.getValue());
+            payCallback(conflicting).andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.message", containsString("与已登记的付款水单信息不一致")));
+        }
+        payCallback(pay1).andExpect(status().isOk()).andExpect(jsonPath("$.duplicate").value(true))
+                .andExpect(jsonPath("$.referenceNo").value("REF-BANK-001"))
                 .andExpect(jsonPath("$.paidAmount").value(60.0))
                 .andExpect(jsonPath("$.unpaid").value(40.0));
 
@@ -297,6 +314,7 @@ class FinanceIntegrationTest {
         read(login("finance1"), "/api/statements?statementNo=" + stNo)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].status").value("PAID"))
+                .andExpect(jsonPath("$[0].payments.length()").value(2))
                 .andExpect(jsonPath("$[0].payments[0].extPaymentNo").value("BANK-PAY-001"))
                 .andExpect(jsonPath("$[0].payments[1].extPaymentNo").value("BANK-PAY-002"));
 
