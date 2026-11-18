@@ -7,6 +7,7 @@
       </div>
       <div class="toolbar">
         <ExportButton report="statements" />
+        <el-button v-if="canFinance" @click="exportVouchers">导出应付凭证</el-button>
         <el-button v-if="canBuy" type="primary" @click="openCreate">生成对账单</el-button>
       </div>
     </div>
@@ -55,6 +56,11 @@
         <el-table-column label="状态" min-width="150">
           <template #default="{ row }">
             <StatusTag :status="row.status" :label="row.statusLabel" />
+            <div v-if="(row.status === 'APPROVED' || row.status === 'PAID') && (row.extVoucherNo || row.financeSyncStatus !== 'PENDING')" class="small" style="margin-top:2px">
+              <el-tag size="small" :type="row.financeSyncStatus === 'SYNCED' ? 'success' : row.financeSyncStatus === 'FAILED' ? 'danger' : 'info'" disable-transitions>
+                {{ row.extVoucherNo ? `凭证 ${row.extVoucherNo}` : row.financeSyncLabel }}
+              </el-tag>
+            </div>
             <div v-if="row.receiptDisputes?.length" class="small"><el-tag size="small" type="warning" disable-transitions>收货异议 {{ row.receiptDisputes.length }}</el-tag></div>
             <div v-if="row.status === 'DISPUTED'" class="late small">{{ row.disputeNote }}</div>
             <div v-if="row.cancelReason" class="muted small">{{ row.cancelReason }}</div>
@@ -136,6 +142,12 @@
           <el-descriptions-item label="供应商确认">{{ dt.s.confirmedBy ? `${dt.s.confirmedBy} · ${fmtTime(dt.s.confirmedAt)}` : '-' }}</el-descriptions-item>
           <el-descriptions-item label="发票汇总">{{ dt.s.invoiceNo ? `${dt.s.invoiceNo} · ${dt.s.invoiceDate} · ${fmtMoney(dt.s.invoiceAmount)}` : '-' }}</el-descriptions-item>
           <el-descriptions-item label="审批">{{ dt.s.approvedBy ? `${dt.s.approvedBy} · ${fmtTime(dt.s.approvedAt)}` : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="财务凭证同步" :span="2">
+            {{ dt.s.financeSyncLabel || '待同步' }}
+            <span v-if="dt.s.extVoucherNo" class="mono"> · 凭证 {{ dt.s.extVoucherNo }}</span>
+            <span v-if="dt.s.financeSyncedAt" class="muted"> · {{ fmtTime(dt.s.financeSyncedAt) }}</span>
+            <span v-if="dt.s.financeSyncNote" class="muted"> · {{ dt.s.financeSyncNote }}</span>
+          </el-descriptions-item>
         </el-descriptions>
         <div v-if="dt.s.taxBreakdown?.length" class="muted small" style="margin-top:8px">
           <b>分税率拆分：</b>
@@ -164,7 +176,7 @@
           <div v-for="(p, i) in dt.s.payments" :key="i" class="small">
             <el-tag size="small" :type="p.paymentType === 'REFUND' ? 'warning' : 'success'" disable-transitions>{{ p.paymentTypeLabel || '付款' }}</el-tag>
             <span class="mono" style="margin-left:6px">{{ p.payDate }} · {{ fmtMoney(Math.abs(Number(p.amount))) }}</span>
-            <span class="muted"> · {{ p.referenceNo || '无凭证号' }} · {{ p.createdBy }}</span>
+            <span class="muted"> · {{ p.referenceNo || '无凭证号' }}<span v-if="p.extPaymentNo" class="mono">（水单 {{ p.extPaymentNo }}）</span> · {{ p.createdBy }}</span>
           </div>
         </div>
         <StatementInvoiceReturns :statement="dt.s" />
@@ -464,6 +476,19 @@ async function submitPay() {
   } finally {
     pa.saving = false
   }
+}
+
+async function exportVouchers() {
+  const data = await http.get('/statements/finance-vouchers')
+  if (!data.length) return ElMessage.info('暂无已审批的应付凭证可导出')
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `ap-vouchers-${today()}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success(`已导出 ${data.length} 张应付凭证`)
 }
 </script>
 

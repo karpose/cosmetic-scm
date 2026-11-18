@@ -37,6 +37,9 @@ public class SupplierPayment {
 
     private String referenceNo;
 
+    /** 外部财务/银企直连付款水单号，用于回调核销幂等。 */
+    private String extPaymentNo;
+
     private String createdBy;
 
     private LocalDateTime createdAt;

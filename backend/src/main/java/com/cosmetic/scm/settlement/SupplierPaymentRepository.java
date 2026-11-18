@@ -14,4 +14,6 @@ import org.springframework.data.repository.query.Param;
 public interface SupplierPaymentRepository extends JpaRepository<SupplierPayment, Long> {
 
     List<SupplierPayment> findByStatementIdInOrderById(Collection<Long> statementIds);
+
+    Optional<SupplierPayment> findByExtPaymentNo(String extPaymentNo);
 }

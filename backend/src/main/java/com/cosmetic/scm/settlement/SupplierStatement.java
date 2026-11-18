@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+import com.cosmetic.scm.domain.FinanceSyncStatus;
 import com.cosmetic.scm.domain.StatementStatus;
 import com.cosmetic.scm.domain.rules.SettlementRule;
 
@@ -80,6 +81,19 @@ public class SupplierStatement {
     private String createdBy;
 
     private LocalDateTime createdAt;
+
+    @Enumerated(EnumType.STRING)
+    private FinanceSyncStatus financeSyncStatus = FinanceSyncStatus.PENDING;
+
+    private String extVoucherNo;
+
+    private LocalDateTime financeSyncedAt;
+
+    private String financeSyncNote;
+
+    public FinanceSyncStatus effectiveFinanceSyncStatus() {
+        return financeSyncStatus != null ? financeSyncStatus : FinanceSyncStatus.PENDING;
+    }
 
     /** V28 之前的单据没有单独存到期日。 */
     public LocalDate effectiveDueDate() {
