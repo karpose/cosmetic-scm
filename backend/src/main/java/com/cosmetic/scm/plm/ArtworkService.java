@@ -66,10 +66,22 @@ public class ArtworkService {
     private final AuditService audit;
     private final TimeProvider time;
     private final CurrentUser currentUser;
+    private final ChangeRequestRepository changeRequests;
 
+    @org.springframework.beans.factory.annotation.Value("${scm.change.require-for-artwork:false}")
+    private boolean requireChange;
+
+    /** changeId：关联的变更；打开 scm.change.require-for-artwork 后，改版（第 2 版起）必填。 */
     public record CreateReq(@NotNull(message = "请选择包材") Long pkItemId, @NotNull(message = "请选择成品") Long fgItemId,
-                            @NotBlank(message = "请写明设计稿内容或改了什么") @Size(max = 300) String changeNote) {
+                            @NotBlank(message = "请写明设计稿内容或改了什么") @Size(max = 300) String changeNote, Long changeId) {
+        public CreateReq(Long pkItemId, Long fgItemId, String changeNote) {
+            this(pkItemId, fgItemId, changeNote, null);
+        }
     }
+
+    /** 能关联设计稿的变更类型。 */
+    public static final java.util.Set<com.cosmetic.scm.domain.ChangeType> LINKABLE = java.util.EnumSet.of(com.cosmetic.scm.domain.ChangeType.LABEL,
+            com.cosmetic.scm.domain.ChangeType.PACKAGE, com.cosmetic.scm.domain.ChangeType.FORMULA);
 
     public record ApproveReq(List<String> checked, @NotBlank(message = "请输入签批密码") String password) {
     }
@@ -83,7 +95,8 @@ public class ArtworkService {
     /** stale：已批准的版本对应的配方已不是现行生效版本，要重新评审。 */
     public record ArtworkView(Long id, String artworkNo, Long pkItemId, String pkCode, String pkName, Long fgItemId, String fgCode, String fgName,
                               Long formulaVersionId, Integer formulaVersionNo, int versionNo, ArtworkStatus status, String statusLabel, boolean stale,
-                              String changeNote, List<String> checked, String rejectNote, String createdBy, LocalDateTime createdAt, String approvedBy, LocalDateTime approvedAt) {
+                              String changeNote, List<String> checked, String rejectNote, String createdBy, LocalDateTime createdAt, String approvedBy, LocalDateTime approvedAt,
+                              Long changeId, String changeNo) {
     }
 
     public record Overview(List<ArtworkView> artworks, List<CheckItem> checklist) {
@@ -113,7 +126,17 @@ public class ArtworkService {
 
     @Transactional
     public ArtworkView create(CreateReq req) {
-        // 同一包材只能有一版待签批：先锁包材行，而且是事务第一句
+        // 关联变更时先锁变更行（事务第一句），和关闭变更互斥；再锁包材行，同一包材只能有一版待签批
+        ChangeRequest change = req.changeId() == null ? null : changeRequests.lockById(req.changeId()).orElseThrow(() -> BizException.notFound("变更"));
+        if (change != null) {
+            if (change.getStatus() != com.cosmetic.scm.domain.ChangeStatus.APPROVED) {
+                boolean notYet = change.getStatus() == com.cosmetic.scm.domain.ChangeStatus.SUBMITTED || change.getStatus() == com.cosmetic.scm.domain.ChangeStatus.ASSESSED;
+                throw new BizException("变更 " + change.getChangeNo() + " 当前为" + change.getStatus().getLabel() + (notYet ? "，批准后才能关联设计稿" : "，不能再关联设计稿"));
+            }
+            if (!LINKABLE.contains(change.getChangeType())) {
+                throw new BizException("变更 " + change.getChangeNo() + " 是" + change.getChangeType().getLabel() + "变更，设计稿只能关联标签、包材或配方变更");
+            }
+        }
         Item pk = items.lockById(req.pkItemId()).orElseThrow(() -> BizException.notFound("包材"));
         if (pk.getItemType() != ItemType.PK) {
             throw new BizException(pk.getName() + " 不是包材");
@@ -130,18 +153,24 @@ public class ArtworkService {
         if (artworks.findFirstByPkItemIdAndStatus(pk.getId(), ArtworkStatus.PENDING).isPresent()) {
             throw new BizException(pk.getName() + " 已有一版设计稿待签批，签批或退回后再提交");
         }
+        int nextVersion = artworks.maxVersion(pk.getId()) + 1;
+        if (change == null && requireChange && nextVersion > 1) {
+            throw new BizException(pk.getName() + " 已有设计稿，改版要先关联一项已批准的标签、包材或配方变更，请先到“变更控制”提出并批准");
+        }
         LabelArtwork a = new LabelArtwork();
         a.setArtworkNo(docNo.next("LA", time.today()));
         a.setPkItemId(pk.getId());
         a.setFgItemId(fg.getId());
         a.setFormulaVersionId(v.getId());
-        a.setVersionNo(artworks.maxVersion(pk.getId()) + 1);
+        a.setVersionNo(nextVersion);
+        a.setChangeId(change == null ? null : change.getId());
         a.setStatus(ArtworkStatus.PENDING);
         a.setChangeNote(req.changeNote().trim());
         a.setCreatedBy(currentUser.usernameOrSystem());
         a.setCreatedAt(time.now());
         artworks.save(a);
-        audit.log("提交标签设计稿", a.getArtworkNo(), pk.getCode() + " 第 " + a.getVersionNo() + " 版，" + fg.getCode() + " V" + v.getVersionNo() + "：" + a.getChangeNote());
+        audit.log("提交标签设计稿", a.getArtworkNo(), pk.getCode() + " 第 " + a.getVersionNo() + " 版，" + fg.getCode() + " V" + v.getVersionNo() + "：" + a.getChangeNote()
+                + (change == null ? "" : "，关联变更 " + change.getChangeNo()));
         return views(List.of(a)).get(0);
     }
 
@@ -219,6 +248,9 @@ public class ArtworkService {
         Map<Long, Item> itemMap = lookup.itemMap();
         Map<Long, FormulaVersion> vmap = new HashMap<>();
         versions.findAllById(list.stream().map(LabelArtwork::getFormulaVersionId).distinct().toList()).forEach(v -> vmap.put(v.getId(), v));
+        Map<Long, String> changeNos = new HashMap<>();
+        changeRequests.findAllById(list.stream().map(LabelArtwork::getChangeId).filter(java.util.Objects::nonNull).distinct().toList())
+                .forEach(c -> changeNos.put(c.getId(), c.getChangeNo()));
         Map<Long, Long> effective = versions.findByStatus(FormulaStatus.EFFECTIVE).stream().collect(Collectors.toMap(FormulaVersion::getFgItemId, FormulaVersion::getId, (x, y) -> x));
         return list.stream().map(a -> {
             Item pk = itemMap.get(a.getPkItemId());
@@ -228,7 +260,7 @@ public class ArtworkService {
             FormulaVersion v = vmap.get(a.getFormulaVersionId());
             return new ArtworkView(a.getId(), a.getArtworkNo(), a.getPkItemId(), pk.getCode(), pk.getName(), a.getFgItemId(), fg.getCode(), fg.getName(), a.getFormulaVersionId(),
                     v == null ? null : v.getVersionNo(), a.getVersionNo(), a.getStatus(), a.getStatus().getLabel(), stale, a.getChangeNote(), checked, a.getRejectNote(),
-                    a.getCreatedBy(), a.getCreatedAt(), a.getApprovedBy(), a.getApprovedAt());
+                    a.getCreatedBy(), a.getCreatedAt(), a.getApprovedBy(), a.getApprovedAt(), a.getChangeId(), changeNos.get(a.getChangeId()));
         }).toList();
     }
 }

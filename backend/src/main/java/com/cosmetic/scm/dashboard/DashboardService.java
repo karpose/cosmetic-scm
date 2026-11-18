@@ -245,6 +245,10 @@ public class DashboardService {
         for (com.cosmetic.scm.plm.DocControlService.DocRow d : docControl.reviewDue()) {
             todos.add(new Todo("DOC_REVIEW", d.reviewOverdue() ? "受控文件复审已超期" : "受控文件复审快到期", d.reviewOverdue() ? "bad" : "warn", d.title(), d.docCode(), "复审期限 " + d.reviewDue(), "/docs"));
         }
+        for (com.cosmetic.scm.plm.DocControlService.DocRow d : docControl.copiesToRetrieve()) {
+            todos.add(new Todo("DOC_COPY_RETRIEVE", d.retrieveOverdue() ? "纸质受控文件回收已超期" : "纸质受控文件待回收", d.retrieveOverdue() ? "bad" : "warn", d.title(), d.docCode(),
+                    d.copiesToRetrieve() + " 份旧版或已作废的纸质副本要收回，期限 " + d.retrieveDue(), "/docs"));
+        }
         for (com.cosmetic.scm.plm.ChangeService.ChangeRow c : changeControl.byStatus(com.cosmetic.scm.domain.ChangeStatus.SUBMITTED)) {
             todos.add(new Todo("CHANGE_ASSESS", "变更待评估", "warn", c.title(), c.changeNo(), c.changeTypeLabel() + "，" + c.createdBy() + " 提出", "/changes"));
         }

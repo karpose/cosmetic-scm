@@ -105,6 +105,14 @@
           </div>
           <p v-if="dt.data.formulas.some((f) => ['DRAFT', 'PENDING'].includes(f.status))" class="muted small">关联的配方签批或放弃之前，这项变更不能关闭。</p>
         </template>
+        <template v-if="dt.data.artworks.length">
+          <div class="sub-head"><b>关联的标签设计稿</b></div>
+          <div v-for="w in dt.data.artworks" :key="w.artworkId" class="small">
+            <router-link to="/artworks">{{ w.pkName }} <span class="mono">{{ w.artworkNo }}</span> 第 {{ w.versionNo }} 版</router-link>
+            <StatusTag :status="w.status" :label="w.statusLabel" style="margin-left:6px" />
+          </div>
+          <p v-if="dt.data.artworks.some((w) => w.status === 'PENDING')" class="muted small">关联的设计稿批准或退回之前，这项变更不能关闭。</p>
+        </template>
         <div style="margin-top:12px"><AttachmentList owner-type="CHANGE_REQUEST" :owner-id="c.id" :can-upload="auth.canAttach()" title="评估和实施资料" /></div>
 
         <el-form v-if="isQso && ['ASSESSED', 'APPROVED'].includes(c.status)" label-position="top" style="margin-top:8px" @submit.prevent>

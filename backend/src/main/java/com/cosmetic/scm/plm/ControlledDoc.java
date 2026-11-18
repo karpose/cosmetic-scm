@@ -48,6 +48,9 @@ public class ControlledDoc {
 
     private String obsoleteReason;
 
+    /** 作废日期，在用的纸质副本从这天起算回收期限。 */
+    private java.time.LocalDate obsoletedOn;
+
     /** 需要确认已读的岗位，逗号分隔的 Role 名称。为空表示不需要确认。 */
     private String trainRoles;
 

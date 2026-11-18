@@ -55,7 +55,8 @@ export const STATUS_TAG = {
   CLOSED: 'info', PENDING: 'warning', RESTOCK: 'success', SCRAP: 'danger',
   TRANSFER: 'primary', ADJUST: 'warning',
   SUBMITTED: 'warning', APPROVED: 'success', CANCELLED: 'info', ACTIVE: 'primary', REVIEW: 'warning', EFFECTIVE: 'success', SUPERSEDED: 'info', PROPOSED: 'warning', LAUNCH_REVIEW: 'warning', LAUNCHED: 'success', ASSESSED: 'warning', OBSOLETE: 'info', DRAFT: 'info',
-  SHIPPED: 'success', FAILED: 'danger', ACCEPTED: 'success', RETURNED: 'danger'
+  SHIPPED: 'success', FAILED: 'danger', ACCEPTED: 'success', RETURNED: 'danger',
+  RETRIEVED: 'info', LOST: 'danger'
 }
 export const COMPLAINT_CATEGORY = { ADVERSE: '不良反应', QUALITY: '质量问题', PACKAGE: '包装 / 标签', LOGISTICS: '物流 / 破损', OTHER: '其他' }
 export const SEVERITY = { NORMAL: '一般', SERIOUS: '严重' }

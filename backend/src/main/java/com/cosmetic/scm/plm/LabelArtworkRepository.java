@@ -17,6 +17,8 @@ public interface LabelArtworkRepository extends JpaRepository<LabelArtwork, Long
 
     List<LabelArtwork> findTop300ByOrderByIdDesc();
 
+    List<LabelArtwork> findByChangeIdOrderById(Long changeId);
+
     List<LabelArtwork> findByStatusInOrderById(Collection<ArtworkStatus> statuses);
 
     Optional<LabelArtwork> findFirstByPkItemIdAndStatus(Long pkItemId, ArtworkStatus status);

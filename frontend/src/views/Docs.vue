@@ -36,6 +36,7 @@
             <div v-if="row.upcomingRev" class="small">第 {{ row.upcomingRev }} 版 {{ row.upcomingEffective }} 生效</div>
             <div v-if="row.pendingRevisionId" class="small warn">有一版待签批</div>
             <div v-if="row.ackPending" class="small" :class="row.ackOverdue ? 'late' : 'muted'">{{ row.ackPending }} 人待确认</div>
+            <div v-if="row.copiesToRetrieve" class="small" :class="row.retrieveOverdue ? 'late' : 'warn'">{{ row.copiesToRetrieve }} 份纸质副本待收回</div>
           </template>
         </el-table-column>
         <el-table-column label="复审" width="130"><template #default="{ row }"><template v-if="row.reviewDue"><span :class="{ late: row.reviewOverdue }">{{ row.reviewDue }}</span><div class="muted small">每 {{ row.reviewMonths }} 个月</div></template><span v-else class="muted">—</span></template></el-table-column>
@@ -107,6 +108,32 @@
         <p class="muted small">点一行查看这一版的文件。</p>
         <AttachmentList v-if="dt.rev" owner-type="DOC_REVISION" :owner-id="dt.rev.id" :can-upload="canEdit && dt.rev.status === 'PENDING'" :title="`第 ${dt.rev.revNo} 版的文件`" empty-text="还没有上传文件" />
 
+        <div class="copies-head">
+          <b>纸质副本</b>
+          <span class="muted small">在用 {{ d.copiesOut }} 份<template v-if="d.copiesToRetrieve">，<span :class="d.retrieveOverdue ? 'late' : 'warn'">{{ d.copiesToRetrieve }} 份要在 {{ d.retrieveDue }} 前收回</span></template></span>
+          <el-button v-if="isQuality && d.status === 'ACTIVE' && d.currentRev" size="small" @click="openIssue">发放纸质副本</el-button>
+        </div>
+        <el-table v-if="dt.data.copies.length" :data="dt.data.copies" size="small" scrollbar-tabindex="0">
+          <el-table-column label="副本" width="130"><template #default="{ row }">第 {{ row.revNo }} 版第 {{ row.copyNo }} 份</template></el-table-column>
+          <el-table-column label="持有人或地点" min-width="150"><template #default="{ row }">{{ row.holder }}<div class="muted small">{{ row.issuedBy }} {{ fmtTime(row.issuedAt) }} 发放</div></template></el-table-column>
+          <el-table-column label="状态" min-width="170">
+            <template #default="{ row }">
+              <StatusTag :status="row.status" :label="row.statusLabel" />
+              <div v-if="row.mustRetrieve" class="small" :class="row.overdue ? 'late' : 'warn'">{{ row.overdue ? '回收已超期' : '要收回' }}，期限 {{ row.retrieveDue }}</div>
+              <div v-if="row.closedBy" class="muted small">{{ row.closedBy }} {{ fmtTime(row.closedAt) }}<template v-if="row.closeNote">：{{ row.closeNote }}</template></div>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="isQuality" label="" width="130">
+            <template #default="{ row }">
+              <template v-if="row.status === 'ISSUED'">
+                <el-button size="small" text type="primary" @click="retrieveCopy(row)">收回</el-button>
+                <el-button size="small" text @click="loseCopy(row)">遗失</el-button>
+              </template>
+            </template>
+          </el-table-column>
+        </el-table>
+        <p v-else class="muted small">还没有发放纸质副本。</p>
+
         <template v-if="isQso && pending">
           <p v-if="pending.draftedBy === auth.user?.username" class="late small">第 {{ pending.revNo }} 版是您起草的，要由另一位质量安全负责人签批。</p>
           <el-form label-position="top" style="margin-top:8px" @submit.prevent>
@@ -125,6 +152,18 @@
           </template>
         </template>
         <el-button @click="dt.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="is.visible" :title="`发放纸质副本：第 ${d?.currentRev || ''} 版`" width="460px" :close-on-click-modal="false" append-to-body>
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="持有人、部门或存放地点"><el-input id="dc-holder" v-model="is.holder" maxlength="100" placeholder="如：灌装车间 2 号线" /></el-form-item>
+        <el-form-item label="份数"><el-input-number id="dc-qty" v-model="is.quantity" :min="1" :max="20" :precision="0" /></el-form-item>
+        <p class="muted small">只发现行版本，按版本连续编号。出新版或作废后，旧版副本要在 7 天内收回。</p>
+      </el-form>
+      <template #footer>
+        <el-button @click="is.visible = false">取消</el-button>
+        <el-button type="primary" :loading="is.saving" @click="submitIssue">发放</el-button>
       </template>
     </el-dialog>
 
@@ -152,7 +191,7 @@ import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
-import { startOfBusinessDay } from '../utils/format'
+import { fmtTime, startOfBusinessDay } from '../utils/format'
 import { latestOnly } from '../utils/latest'
 import { useLoader } from '../utils/loader'
 import { textMatch, usePaged } from '../utils/table'
@@ -274,6 +313,39 @@ async function noteAction(path, title, hint) {
   ElMessage.success(`已${title}`)
 }
 
+// 纸质副本
+const is = reactive({ visible: false, saving: false, holder: '', quantity: 1 })
+function openIssue() {
+  Object.assign(is, { visible: true, saving: false, holder: '', quantity: 1 })
+}
+async function submitIssue() {
+  if (!is.holder.trim()) return ElMessage.warning('请填写持有人或存放地点')
+  is.saving = true
+  try {
+    apply(await http.post(`/docs/${d.value.id}/copies`, { holder: is.holder, quantity: is.quantity }))
+    ElMessage.success(`已发放 ${is.quantity} 份`)
+    is.visible = false
+  } finally {
+    is.saving = false
+  }
+}
+async function retrieveCopy(row) {
+  let note
+  try {
+    note = (await ElMessageBox.prompt('可以写明收回后怎么处理（选填）。', `收回第 ${row.revNo} 版第 ${row.copyNo} 份`, { confirmButtonText: '收回', cancelButtonText: '不了', inputPlaceholder: '如：已销毁' })).value
+  } catch {
+    return
+  }
+  apply(await http.post(`/docs/${d.value.id}/copies/${row.id}/retrieve`, { note }))
+  ElMessage.success('已收回')
+}
+async function loseCopy(row) {
+  const note = await prompt('登记遗失', `写明第 ${row.revNo} 版第 ${row.copyNo} 份怎么丢的、是否有风险。`)
+  if (note == null) return
+  apply(await http.post(`/docs/${d.value.id}/copies/${row.id}/lost`, { note }))
+  ElMessage.success('已登记遗失')
+}
+
 const rv = reactive({ visible: false, saving: false, changeSummary: '', effectiveDate: null })
 function openRevise() {
   Object.assign(rv, { visible: true, saving: false, changeSummary: '', effectiveDate: null })
@@ -301,4 +373,5 @@ async function submitRevise() {
 .ack-box { margin: 8px 0; padding: 10px 12px; border-radius: 12px; background: var(--lg-tint); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .ack-box > .small { flex: 1 1 100%; }
 .person { margin-right: 12px; }
+.copies-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 14px 0 6px; }
 </style>

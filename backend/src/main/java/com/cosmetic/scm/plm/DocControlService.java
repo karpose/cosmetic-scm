@@ -14,6 +14,7 @@ import com.cosmetic.scm.audit.AuditService;
 import com.cosmetic.scm.common.BizException;
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.domain.DocCategory;
+import com.cosmetic.scm.domain.DocCopyStatus;
 import com.cosmetic.scm.domain.DocStatus;
 import com.cosmetic.scm.domain.OwnerType;
 import com.cosmetic.scm.domain.RevisionStatus;
@@ -49,10 +50,17 @@ public class DocControlService {
     /** 复审到期前多少天开始提醒。 */
     public static final int REVIEW_WARN_DAYS = 30;
 
+    /** 新版生效或文件作废后，旧版纸质副本要在多少天内收回，超过算超期。 */
+    public static final int RETRIEVE_DAYS = 7;
+
+    /** 一次最多发几份。 */
+    public static final int MAX_COPIES_PER_ISSUE = 20;
+
     private final ControlledDocRepository docs;
     private final DocRevisionRepository revisions;
     private final AttachmentRepository attachments;
     private final DocAckRepository acks;
+    private final DocCopyRepository copies;
     private final UserRepository users;
     private final SignatureService signature;
     private final AuditService audit;
@@ -94,13 +102,26 @@ public class DocControlService {
                                String rejectNote, String draftedBy, LocalDateTime draftedAt, String approvedBy, LocalDateTime approvedAt) {
     }
 
+    /** copiesOut：在用的纸质副本；copiesToRetrieve：其中已经不是现行版本（或文件已作废）要收回的；retrieveDue：最早的回收期限。 */
     public record DocRow(Long id, String docCode, String title, DocCategory category, String categoryLabel, String ownerDept, int reviewMonths, DocStatus status, String statusLabel,
                          Integer currentRev, LocalDate currentEffective, Long pendingRevisionId, Integer upcomingRev, LocalDate upcomingEffective,
                          LocalDate lastReviewedOn, LocalDate reviewDue, boolean reviewOverdue, String obsoleteReason,
-                         List<Role> trainRoles, int ackPending, boolean ackOverdue) {
+                         List<Role> trainRoles, int ackPending, boolean ackOverdue, int copiesOut, int copiesToRetrieve, LocalDate retrieveDue, boolean retrieveOverdue) {
     }
 
-    public record DocDetail(DocRow doc, List<RevisionView> revisions, AckStatus ack) {
+    /** mustRetrieve：在用但已不是现行版本（或文件已作废），要收回；retrieveDue：收回期限。 */
+    public record CopyView(Long id, Long revisionId, int revNo, int copyNo, String holder, DocCopyStatus status, String statusLabel, String issuedBy, LocalDateTime issuedAt,
+                           String closedBy, LocalDateTime closedAt, String closeNote, boolean mustRetrieve, LocalDate retrieveDue, boolean overdue) {
+    }
+
+    public record DocDetail(DocRow doc, List<RevisionView> revisions, AckStatus ack, List<CopyView> copies) {
+    }
+
+    public record IssueReq(@NotBlank(message = "请填写持有人或存放地点") @Size(max = 100) String holder,
+                           @jakarta.validation.constraints.Min(value = 1, message = "份数至少 1") @jakarta.validation.constraints.Max(value = MAX_COPIES_PER_ISSUE, message = "一次最多发 20 份") int quantity) {
+    }
+
+    public record CloseReq(@Size(max = 300) String note) {
     }
 
     @Transactional(readOnly = true)
@@ -223,6 +244,7 @@ public class DocControlService {
         }
         d.setStatus(DocStatus.OBSOLETE);
         d.setObsoleteReason(req.note().trim());
+        d.setObsoletedOn(time.today());
         docs.save(d);
         audit.log("作废受控文件", d.getDocCode(), d.getTitle(), req.note().trim());
         return detailOf(d);
@@ -237,6 +259,83 @@ public class DocControlService {
         docs.save(d);
         audit.log("修改文件确认岗位", d.getDocCode(), roleLabels(old) + " 改为 " + roleLabels(d.getTrainRoles()));
         return detailOf(d);
+    }
+
+    /** 发放纸质副本：只发现行版本，按版本连续编号。先锁文件，同时发放不会重号。 */
+    @Transactional
+    public DocDetail issueCopies(Long docId, IssueReq req) {
+        ControlledDoc d = lockActive(docId, "发放纸质副本");
+        DocRevision cur = current(revisions.findByDocIdOrderByRevNoDesc(docId))
+                .orElseThrow(() -> new BizException(d.getDocCode() + " 还没有生效的版本，不能发放纸质副本"));
+        int next = copies.maxCopyNo(cur.getId()) + 1;
+        String holder = req.holder().trim();
+        for (int i = 0; i < req.quantity(); i++) {
+            DocCopy c = new DocCopy();
+            c.setDocId(d.getId());
+            c.setRevisionId(cur.getId());
+            c.setCopyNo(next + i);
+            c.setHolder(holder);
+            c.setStatus(DocCopyStatus.ISSUED);
+            c.setIssuedBy(currentUser.usernameOrSystem());
+            c.setIssuedAt(time.now());
+            copies.save(c);
+        }
+        audit.log("发放受控文件纸质副本", d.getDocCode(), "第 " + cur.getRevNo() + " 版第 " + copyRange(next, req.quantity()) + " 份，持有人 " + holder);
+        return detailOf(d);
+    }
+
+    /** 收回纸质副本。文件作废后也要能收回，所以不要求文件在用。 */
+    @Transactional
+    public DocDetail retrieveCopy(Long docId, Long copyId, CloseReq req) {
+        return closeCopy(docId, copyId, DocCopyStatus.RETRIEVED, blankToNull(req.note()));
+    }
+
+    /** 登记遗失：要写原因。 */
+    @Transactional
+    public DocDetail loseCopy(Long docId, Long copyId, NoteReq req) {
+        return closeCopy(docId, copyId, DocCopyStatus.LOST, req.note().trim());
+    }
+
+    private DocDetail closeCopy(Long docId, Long copyId, DocCopyStatus to, String note) {
+        // 先锁文件（事务第一句），和发放、作废串行；副本 id 来自路径，属于这份文件才处理
+        ControlledDoc d = docs.lockById(docId).orElseThrow(() -> BizException.notFound("受控文件"));
+        DocCopy c = copies.findById(copyId).filter(x -> x.getDocId().equals(d.getId())).orElseThrow(() -> BizException.notFound("纸质副本"));
+        DocRevision r = revisions.findById(c.getRevisionId()).orElseThrow();
+        if (c.getStatus() != DocCopyStatus.ISSUED) {
+            throw new BizException("第 " + r.getRevNo() + " 版第 " + c.getCopyNo() + " 份当前为" + c.getStatus().getLabel());
+        }
+        c.setStatus(to);
+        c.setClosedBy(currentUser.usernameOrSystem());
+        c.setClosedAt(time.now());
+        c.setCloseNote(note);
+        copies.save(c);
+        audit.log(to == DocCopyStatus.RETRIEVED ? "收回受控文件纸质副本" : "受控文件纸质副本遗失", d.getDocCode(),
+                "第 " + r.getRevNo() + " 版第 " + c.getCopyNo() + " 份，持有人 " + c.getHolder(), note);
+        return detailOf(d);
+    }
+
+    private static String copyRange(int from, int n) {
+        return n == 1 ? String.valueOf(from) : from + "～" + (from + n - 1);
+    }
+
+    /** 要收回的在用副本：版本已不是现行（以新版生效日期起算），或文件已作废（以作废日期起算）。返回期限，不用收回的返回 null。 */
+    private LocalDate retrieveDue(ControlledDoc d, DocCopy c, Optional<DocRevision> cur) {
+        if (c.getStatus() != DocCopyStatus.ISSUED) {
+            return null;
+        }
+        if (d.getStatus() == DocStatus.OBSOLETE) {
+            return (d.getObsoletedOn() == null ? time.today() : d.getObsoletedOn()).plusDays(RETRIEVE_DAYS);
+        }
+        if (cur.isPresent() && !cur.get().getId().equals(c.getRevisionId())) {
+            return cur.get().getEffectiveDate().plusDays(RETRIEVE_DAYS);
+        }
+        return null;
+    }
+
+    /** 有纸质副本要收回的文件，在用和已作废的都算。 */
+    @Transactional(readOnly = true)
+    public List<DocRow> copiesToRetrieve() {
+        return rows(docs.findAllById(copies.findDocIdsByStatus(DocCopyStatus.ISSUED))).stream().filter(d -> d.copiesToRetrieve() > 0).toList();
     }
 
     /** 本人确认已阅读。只有应确认的人能确认，每人每版一次。先锁文件，避免重复确认撞唯一约束。 */
@@ -385,6 +484,8 @@ public class DocControlService {
         List<Long> targetIds = list.stream().map(d -> ackTarget(byDoc.getOrDefault(d.getId(), List.of())).map(DocRevision::getId).orElse(null)).filter(java.util.Objects::nonNull).toList();
         Map<Long, java.util.Set<String>> ackedBy = acks.findByRevisionIdIn(targetIds).stream()
                 .collect(Collectors.groupingBy(DocAck::getRevisionId, Collectors.mapping(DocAck::getUsername, Collectors.toSet())));
+        Map<Long, List<DocCopy>> outBy = copies.findByDocIdInAndStatus(list.stream().map(ControlledDoc::getId).toList(), DocCopyStatus.ISSUED).stream()
+                .collect(Collectors.groupingBy(DocCopy::getDocId));
         return list.stream().map(d -> {
             List<DocRevision> revs = byDoc.getOrDefault(d.getId(), List.of());
             Optional<DocRevision> cur = current(revs);
@@ -399,9 +500,24 @@ public class DocControlService {
                 ackPending = (int) internal.stream().filter(u -> roles.stream().anyMatch(u::hasRole) && !done.contains(u.getUsername())).count();
             }
             boolean ackOverdue = ackPending > 0 && cur.isPresent() && cur.get().getEffectiveDate().plusDays(ACK_DAYS).isBefore(today);
+            List<DocCopy> out = outBy.getOrDefault(d.getId(), List.of());
+            List<LocalDate> dues = out.stream().map(c -> retrieveDue(d, c, cur)).filter(java.util.Objects::nonNull).sorted().toList();
+            LocalDate retrieveDue = dues.isEmpty() ? null : dues.get(0);
             return new DocRow(d.getId(), d.getDocCode(), d.getTitle(), d.getCategory(), d.getCategory().getLabel(), d.getOwnerDept(), d.getReviewMonths(), d.getStatus(), d.getStatus().getLabel(),
                     cur.map(DocRevision::getRevNo).orElse(null), cur.map(DocRevision::getEffectiveDate).orElse(null), pending, up.map(DocRevision::getRevNo).orElse(null),
-                    up.map(DocRevision::getEffectiveDate).orElse(null), d.getLastReviewedOn(), due, due != null && due.isBefore(today), d.getObsoleteReason(), roles, ackPending, ackOverdue);
+                    up.map(DocRevision::getEffectiveDate).orElse(null), d.getLastReviewedOn(), due, due != null && due.isBefore(today), d.getObsoleteReason(), roles, ackPending, ackOverdue,
+                    out.size(), dues.size(), retrieveDue, retrieveDue != null && retrieveDue.isBefore(today));
+        }).toList();
+    }
+
+    private List<CopyView> copyViews(ControlledDoc d, List<DocRevision> revs) {
+        Map<Long, Integer> revNos = revs.stream().collect(Collectors.toMap(DocRevision::getId, DocRevision::getRevNo));
+        Optional<DocRevision> cur = current(revs);
+        LocalDate today = time.today();
+        return copies.findByDocIdOrderByIdDesc(d.getId()).stream().map(c -> {
+            LocalDate due = retrieveDue(d, c, cur);
+            return new CopyView(c.getId(), c.getRevisionId(), revNos.get(c.getRevisionId()), c.getCopyNo(), c.getHolder(), c.getStatus(), c.getStatus().getLabel(), c.getIssuedBy(),
+                    c.getIssuedAt(), c.getClosedBy(), c.getClosedAt(), c.getCloseNote(), due != null, due, due != null && due.isBefore(today));
         }).toList();
     }
 
@@ -418,6 +534,6 @@ public class DocControlService {
             ack = new AckStatus(target.get().getId(), target.get().getRevNo(), views, (int) views.stream().filter(v -> v.ackedAt() != null).count(), views.size());
         }
         return new DocDetail(rows(List.of(d)).get(0), revs.stream().map(r -> new RevisionView(r.getId(), r.getRevNo(), r.getChangeSummary(), r.getEffectiveDate(), r.getStatus(), r.getStatus().getLabel(),
-                r.getId().equals(cur), r.getId().equals(up), r.getRejectNote(), r.getDraftedBy(), r.getDraftedAt(), r.getApprovedBy(), r.getApprovedAt())).toList(), ack);
+                r.getId().equals(cur), r.getId().equals(up), r.getRejectNote(), r.getDraftedBy(), r.getDraftedAt(), r.getApprovedBy(), r.getApprovedAt())).toList(), ack, copyViews(d, revs));
     }
 }
