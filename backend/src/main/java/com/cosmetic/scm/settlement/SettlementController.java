@@ -7,9 +7,11 @@ import com.cosmetic.scm.settlement.SettlementService.ApproveReq;
 import com.cosmetic.scm.settlement.SettlementService.BatchInvoiceReq;
 import com.cosmetic.scm.settlement.SettlementService.CancelReq;
 import com.cosmetic.scm.settlement.SettlementService.CreateReq;
+import com.cosmetic.scm.settlement.SettlementService.FollowUp;
 import com.cosmetic.scm.settlement.SettlementService.InvoiceReq;
 import com.cosmetic.scm.settlement.SettlementService.PayReq;
 import com.cosmetic.scm.settlement.SettlementService.PreviewView;
+import com.cosmetic.scm.settlement.SettlementService.ReturnInvoiceReq;
 import com.cosmetic.scm.settlement.SettlementService.StatementView;
 
 import jakarta.validation.Valid;
@@ -39,8 +41,8 @@ public class SettlementController {
 
     @GetMapping
     @PreAuthorize(READ)
-    public List<StatementView> list() {
-        return settlement.list();
+    public List<StatementView> list(@RequestParam(required = false) String statementNo, @RequestParam(required = false) FollowUp followUp) {
+        return settlement.list(statementNo, followUp);
     }
 
     @GetMapping("/preview")
@@ -77,6 +79,12 @@ public class SettlementController {
     @PreAuthorize(FINANCE)
     public StatementView approve(@PathVariable Long id, @Valid @RequestBody ApproveReq req) {
         return settlement.approve(id, req);
+    }
+
+    @PostMapping("/{id}/return-invoice")
+    @PreAuthorize(FINANCE)
+    public StatementView returnInvoice(@PathVariable Long id, @Valid @RequestBody ReturnInvoiceReq req) {
+        return settlement.returnInvoice(id, req);
     }
 
     @PostMapping("/{id}/pay")

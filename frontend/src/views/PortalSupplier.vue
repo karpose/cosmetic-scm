@@ -13,7 +13,7 @@
       <el-tab-pane :label="`已结束 (${finished.length})`" name="done" />
       <el-tab-pane :label="`询价 (${openRfqs})`" name="rfq" />
       <el-tab-pane :label="`对账 (${pendingStatements})`" name="statement" />
-      <el-tab-pane :label="`退货 (${returns.length})`" name="returns" />
+      <el-tab-pane :label="pendingReceipts ? `退货 (${pendingReceipts} 待签收)` : '退货'" name="returns" />
       <el-tab-pane label="本单位资料" name="profile" />
     </el-tabs>
 
@@ -38,15 +38,17 @@
             <div v-for="l in r.lines" :key="l.id" class="mat">
               <span>{{ l.itemName }} <span class="muted small mono">{{ l.itemCode }}</span> × {{ fmtQty(l.qty) }} {{ l.unit }}</span>
               <span v-if="l.myQuote" class="small mono">
-                贵司报价 ¥{{ fmtQty(l.myQuote.unitPrice) }} (税率 {{ fmtQty(l.myQuote.taxRate) }}%) · {{ l.myQuote.leadDays }} 天交货
-                <template v-if="l.myQuote.prevUnitPrice != null && Number(l.myQuote.prevUnitPrice) !== Number(l.myQuote.unitPrice)"> · 上轮 ¥{{ fmtQty(l.myQuote.prevUnitPrice) }}</template>
+                <template v-if="l.myQuote.roundNo === r.roundNo">贵司报价</template>
+                <template v-else>本轮未报价 · 第 {{ l.myQuote.roundNo }} 轮报价</template>
+                ¥{{ fmtQty(l.myQuote.unitPrice) }} (税率 {{ fmtQty(l.myQuote.taxRate) }}%) · {{ l.myQuote.leadDays }} 天交货
+                <template v-if="l.myQuote.roundNo === r.roundNo && l.myQuote.prevUnitPrice != null && Number(l.myQuote.prevUnitPrice) !== Number(l.myQuote.unitPrice)"> · 此前 ¥{{ fmtQty(l.myQuote.prevUnitPrice) }}</template>
                 <template v-if="l.myQuote.poNo"> · 采购单 {{ l.myQuote.poNo }}</template>
               </span>
               <span v-else class="muted small">未报价</span>
             </div>
           </div>
           <footer v-if="r.canQuote" class="toolbar">
-            <el-button type="primary" @click="openQuote(r)">{{ r.lines.some((l) => l.myQuote) ? '修改/提交本轮报价' : '填写报价' }}</el-button>
+            <el-button type="primary" @click="openQuote(r)">{{ r.lines.some((l) => l.myQuote?.roundNo === r.roundNo) ? '修改/提交本轮报价' : '填写报价' }}</el-button>
             <span class="muted small">截止前可以修改。报价只有品牌方在开标后能看到，其它供应商看不到。</span>
           </footer>
         </section>
@@ -62,7 +64,7 @@
               <h3 class="mono">{{ s.statementNo }}</h3>
               <div class="muted small">
                 对账截止 {{ s.periodTo }} · 账期 {{ s.creditDays ?? 30 }} 天（到期 {{ s.dueDate || '-' }}） · 合计 <b class="mono">¥{{ fmtMoney(s.totalAmount) }}</b>
-                <template v-if="Number(s.paidAmount) !== 0"> · 已结 ¥{{ fmtMoney(s.paidAmount) }}</template>
+                <template v-if="Number(s.paidAmount) !== 0"> · {{ Number(s.totalAmount) < 0 ? '已退' : '已收' }} ¥{{ fmtMoney(Math.abs(Number(s.paidAmount))) }}</template>
               </div>
             </div>
             <StatusTag :status="s.status" :label="s.statusLabel" />
@@ -82,14 +84,20 @@
               {{ fmtQty(tb.taxRate) }}% 税率：含税 ¥{{ fmtMoney(tb.goodsAmount) }}（税额 ¥{{ fmtMoney(tb.taxAmount) }}）
             </span>
           </div>
-          <div v-if="s.invoiceNo" class="small">发票 <span class="mono">{{ s.invoiceNo }}</span> · {{ s.invoiceDate }} · ¥{{ fmtMoney(s.invoiceAmount) }}</div>
+          <div v-if="s.invoices?.length" class="small">
+            <div v-for="inv in s.invoices" :key="inv.id">
+              {{ inv.invoiceTypeLabel }} <span class="mono">{{ inv.invoiceNo }} · {{ inv.invoiceDate }} · 税率 {{ fmtQty(inv.taxRate) }}% · ¥{{ fmtMoney(inv.amount) }}</span>
+            </div>
+          </div>
+          <div v-else-if="s.invoiceNo" class="small">发票 <span class="mono">{{ s.invoiceNo }}</span> · {{ s.invoiceDate }} · ¥{{ fmtMoney(s.invoiceAmount) }}</div>
+          <StatementInvoiceReturns :statement="s" />
           <AttachmentList owner-type="SUPPLIER_STATEMENT" :owner-id="s.id" :list-path="`/portal/supplier/statements/${s.id}/attachments`" download-prefix="/portal/supplier/attachments" :can-upload="s.status !== 'CANCELLED'" title="附件（发票扫描件）" empty-text="开票后请上传发票扫描件" />
           <footer v-if="s.status === 'SENT' || s.status === 'CONFIRMED'" class="toolbar">
             <template v-if="s.status === 'SENT'">
               <el-button type="primary" @click="confirmStatement(s)">确认对账单</el-button>
               <el-button @click="disputeStatement(s)">提出异议</el-button>
             </template>
-            <el-button v-else type="primary" @click="openInvoice(s)">登记发票</el-button>
+            <el-button v-else type="primary" @click="openInvoice(s)">{{ s.invoiceCorrectionPending ? '更正发票' : '登记发票' }}</el-button>
           </footer>
         </section>
       </div>
@@ -102,20 +110,24 @@
           <header class="oh">
             <div>
               <h3 class="mono">{{ r.returnNo }}</h3>
-              <div class="muted small">{{ fmtTime(r.signedAt) }} 退回</div>
+              <div class="muted small">品牌方签批 {{ fmtTime(r.signedAt) }}</div>
             </div>
             <div class="tags">
-              <StatusTag :status="r.status" :label="r.statusLabel" />
-              <el-tag v-if="r.supplierConfirmedAt" size="small" type="success" disable-transitions>已确认收货</el-tag>
-              <el-tag v-else size="small" type="warning" disable-transitions>待确认收货</el-tag>
+              <el-tag v-if="r.supplierConfirmedAt" size="small" type="success" disable-transitions>{{ r.receiptSource === 'OFFLINE' ? '采购已代录签收' : '已确认收货' }}</el-tag>
+              <el-tag v-else-if="awaitingReceipt(r)" size="small" type="warning" disable-transitions>待确认收货</el-tag>
+              <el-tag v-else size="small" type="info" disable-transitions>待品牌方登记物流</el-tag>
             </div>
           </header>
           <div>{{ r.itemName }} × <span class="mono">{{ fmtQty(r.qty) }} {{ r.unit }}</span> · 贵司批号 <span class="mono">{{ r.extBatchNo }}</span></div>
           <div class="small">原因：{{ r.reason }}</div>
           <div v-if="r.trackingNo" class="small">退货物流：{{ r.carrier }} <span class="mono">{{ r.trackingNo }}</span>（{{ fmtTime(r.shippedAt) }} 发出）</div>
-          <div v-if="r.supplierConfirmedAt" class="muted small">贵司已于 {{ fmtTime(r.supplierConfirmedAt) }} 确认收货<template v-if="r.supplierNote"> · {{ r.supplierNote }}</template></div>
+          <div v-if="r.supplierConfirmedAt" class="muted small">
+            <template v-if="r.receiptSource === 'OFFLINE'">回单签收日期 {{ r.receivedOn }} · 凭证 {{ r.receiptReference }}</template>
+            <template v-else>贵司已于 {{ fmtTime(r.supplierConfirmedAt) }} 确认收货</template>
+            <template v-if="r.supplierNote"> · {{ r.supplierNote }}</template>
+          </div>
           <div class="muted small">结算前退的不计货款，已结算的在下一张对账单冲减。</div>
-          <footer v-if="!r.supplierConfirmedAt" class="toolbar">
+          <footer v-if="awaitingReceipt(r)" class="toolbar">
             <el-button type="primary" size="small" @click="confirmReturn(r)">确认收到退货</el-button>
           </footer>
         </section>
@@ -148,15 +160,33 @@
           <div v-if="o.shipments.length">
             <h4>送货通知</h4>
             <div v-for="s in o.shipments" :key="s.id" class="mat">
-              <span class="small">
+              <div class="small">
                 <span class="mono">{{ s.shipmentNo }}</span> · 发货 {{ s.shipDate }}
                 <el-tag size="small" :type="SHIP_TAG[s.status]" disable-transitions>{{ s.statusLabel }}</el-tag>
                 <div v-for="l in s.lines" :key="l.poLineId" class="muted">{{ l.itemName }} {{ fmtQty(l.qty) }} {{ l.unit }} · 批号 <span class="mono">{{ l.extBatchNo }}</span> · 生产 {{ l.mfgDate }}<template v-if="l.expDate"> · 有效期 {{ l.expDate }}</template></div>
                 <div v-if="s.note" class="muted">{{ s.note }}</div>
-              </span>
+                <template v-if="o.receiptDifferences?.[s.id]">
+                  <div v-for="d in o.receiptDifferences[s.id]" :key="d.poLineId" class="receipt-difference">
+                    {{ d.itemName }} · 通知 {{ fmtQty(d.notifiedQty) }} {{ d.unit }} · 实收 {{ fmtQty(d.receivedQty) }} {{ d.unit }}<template v-if="d.batchChanged"> · 批号有差异</template>
+                  </div>
+                  <div v-if="!o.receiptDifferences[s.id].length" class="muted">实收数量与批号一致</div>
+                </template>
+                <div v-else-if="s.status === 'RECEIVED'" class="muted">该通知没有关联收货明细</div>
+              </div>
               <el-button v-if="s.status === 'OPEN'" size="small" text @click="cancelShipment(s)">取消通知</el-button>
             </div>
           </div>
+
+          <details v-if="o.receipts?.length" class="receipts">
+            <summary>收货回执（{{ o.receipts.length }} 批）</summary>
+            <div v-for="(r, index) in o.receipts" :key="index" class="mat">
+              <div class="small">
+                <div>{{ r.itemName }} <span class="muted mono">{{ r.itemCode }}</span> · 实收 {{ fmtQty(r.qty) }} {{ r.unit }}</div>
+                <div class="muted">{{ r.receivedOn }} · 批号 <span class="mono">{{ r.extBatchNo || '未记录' }}</span><template v-if="r.shipmentNo"> · 送货通知 {{ r.shipmentNo }}</template></div>
+              </div>
+              <StatusTag :status="r.qualityStatus" :label="r.qualityLabel" />
+            </div>
+          </details>
 
           <div v-if="o.promises.length > 1">
             <h4>交期记录</h4>
@@ -199,11 +229,12 @@
 
     <el-dialog v-model="qt.visible" :title="`报价：${qt.rfq?.title || ''}（第 ${qt.rfq?.roundNo || 1} 轮）`" width="720px" :close-on-click-modal="false">
       <el-form label-position="top" @submit.prevent>
-        <p class="muted small" style="margin-top:0">含税单价。不报的物料把单价留空。报价有效期不能早于截止日期 {{ qt.rfq?.deadline }}。</p>
+        <p class="muted small" style="margin-top:0">含税单价。本次不提交的物料将单价留空。报价有效期不能早于截止日期 {{ qt.rfq?.deadline }}。</p>
         <el-card v-for="l in qt.lines" :key="l.rfqLineId" shadow="never" class="ship-line">
           <div class="ship-h">
             <b>{{ l.itemName }}</b> <span class="muted small mono">× {{ fmtQty(l.qty) }} {{ l.unit }}</span>
-            <span v-if="l.prevUnitPrice != null" class="muted small mono" style="margin-left:8px">（上轮报价 ¥{{ fmtQty(l.prevUnitPrice) }}）</span>
+            <span v-if="l.prevUnitPrice != null" class="muted small mono" style="margin-left:8px">（此前报价 ¥{{ fmtQty(l.prevUnitPrice) }}）</span>
+            <el-button v-if="l.previousQuote" size="small" text @click="reuseQuote(l)">沿用此前报价</el-button>
           </div>
           <div class="form-grid">
             <el-form-item label="含税单价（元）"><el-input-number :id="`qt-price-${l.rfqLineId}`" v-model="l.unitPrice" :min="0" :precision="4" :controls="false" style="width:100%" /></el-form-item>
@@ -220,32 +251,36 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="iv.visible" :title="`登记发票：${iv.st?.statementNo || ''}`" width="600px" :close-on-click-modal="false">
+    <el-dialog v-model="iv.visible" :title="`${iv.st?.invoiceCorrectionPending ? '更正发票' : '登记发票'}：${iv.st?.statementNo || ''}`" width="600px" :close-on-click-modal="false">
       <el-form label-position="top" @submit.prevent>
+        <el-alert v-if="iv.st?.invoiceCorrectionPending" type="warning" :closable="false" :title="`退回原因：${iv.st.invoiceReturns[0].reason}`" />
         <p class="muted small" style="margin-top:0">支持一单多票及蓝字/红字发票组合，合计须等于对账单金额 <b class="mono">¥{{ fmtMoney(iv.st?.totalAmount) }}</b>。</p>
         <div v-for="(item, idx) in iv.items" :key="idx" class="form-grid" style="margin-bottom:8px;align-items:end">
-          <el-form-item :label="idx === 0 ? '发票号' : ''">
+          <el-form-item label="发票号">
             <el-input :id="idx === 0 ? 'iv-no' : `iv-no-${idx}`" v-model="item.invoiceNo" maxlength="60" />
           </el-form-item>
-          <el-form-item :label="idx === 0 ? '类型' : ''">
+          <el-form-item label="类型">
             <el-select v-model="item.invoiceType" style="width:100%">
               <el-option value="BLUE" label="蓝字发票(正)" />
               <el-option value="RED" label="红字发票(负)" />
             </el-select>
           </el-form-item>
-          <el-form-item :label="idx === 0 ? '开票日期' : ''">
+          <el-form-item label="开票日期">
             <el-date-picker :id="idx === 0 ? 'iv-date' : `iv-date-${idx}`" v-model="item.invoiceDate" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d > startOfToday" />
           </el-form-item>
-          <el-form-item :label="idx === 0 ? '含税金额' : ''">
+          <el-form-item label="税率 %">
+            <el-input-number :id="`iv-rate-${idx}`" v-model="item.taxRate" :min="0" :max="100" :precision="2" :controls="false" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="含税金额（红字填负数）">
             <el-input-number :id="idx === 0 ? 'iv-amount' : `iv-amount-${idx}`" v-model="item.amount" :precision="2" :controls="false" style="width:100%" />
           </el-form-item>
           <el-button v-if="iv.items.length > 1" text type="danger" @click="iv.items.splice(idx, 1)">删除</el-button>
         </div>
-        <el-button size="small" @click="iv.items.push({ invoiceNo: '', invoiceType: 'BLUE', invoiceDate: today(), taxRate: 13, amount: undefined })">添加一张发票</el-button>
+        <el-button size="small" @click="iv.items.push(newInvoiceItem(iv.st))">添加一张发票</el-button>
       </el-form>
       <template #footer>
         <el-button @click="iv.visible = false">取消</el-button>
-        <el-button type="primary" :loading="iv.saving" @click="submitInvoice">登记发票</el-button>
+        <el-button type="primary" :loading="iv.saving" @click="submitInvoice">{{ iv.st?.invoiceCorrectionPending ? '重新提交发票' : '登记发票' }}</el-button>
       </template>
     </el-dialog>
 
@@ -296,10 +331,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
 import LoadError from '../components/LoadError.vue'
+import StatementInvoiceReturns from '../components/StatementInvoiceReturns.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
 import { daysFromToday, fmtMoney, fmtQty, fmtTime, startOfBusinessDay, today } from '../utils/format'
 import { useLoader } from '../utils/loader'
+import { invoiceDraft, invoicesComplete, newInvoiceItem } from '../utils/settlement'
 
 const auth = useAuth()
 const orders = ref([])
@@ -327,7 +364,9 @@ const load = () => loader.run()
 
 const openRfqs = computed(() => rfqs.value.filter((r) => r.canQuote).length)
 const pendingStatements = computed(() => statements.value.filter((s) => s.status === 'SENT' || s.status === 'CONFIRMED').length)
-const SHIP_TAG = { OPEN: 'primary', RECEIVED: 'success', CANCELLED: 'info' }
+const awaitingReceipt = (r) => r.shippedAt && !r.supplierConfirmedAt
+const pendingReceipts = computed(() => returns.value.filter(awaitingReceipt).length)
+const SHIP_TAG = { OPEN: 'primary', RECEIVED: 'success', CLOSED: 'info', CANCELLED: 'info' }
 const isOpen = (o) => o.status === 'OPEN' || o.status === 'PARTIAL'
 const active = computed(() => orders.value.filter(isOpen))
 const finished = computed(() => orders.value.filter((o) => !isOpen(o)))
@@ -368,22 +407,38 @@ async function submitPromise() {
 // ----------- 报价 -----------
 const qt = reactive({ visible: false, saving: false, rfq: null, lines: [] })
 function openQuote(r) {
+  const defaultDate = daysFromToday(30)
   Object.assign(qt, {
     visible: true,
     saving: false,
     rfq: r,
-    lines: r.lines.map((l) => ({
-      rfqLineId: l.id,
-      itemName: l.itemName,
-      unit: l.unit,
-      qty: l.qty,
-      prevUnitPrice: l.myQuote?.prevUnitPrice ?? l.myQuote?.unitPrice ?? null,
-      unitPrice: l.myQuote?.unitPrice ?? undefined,
-      taxRate: l.myQuote?.taxRate ?? 13,
-      leadDays: l.myQuote?.leadDays ?? undefined,
-      validUntil: l.myQuote?.validUntil && l.myQuote.validUntil >= r.deadline ? l.myQuote.validUntil : daysFromToday(30),
-      note: l.myQuote?.note || ''
-    }))
+    lines: r.lines.map((l) => {
+      const current = l.myQuote?.roundNo === r.roundNo ? l.myQuote : null
+      const previous = current ? null : l.myQuote
+      return {
+        rfqLineId: l.id,
+        itemName: l.itemName,
+        unit: l.unit,
+        qty: l.qty,
+        previousQuote: previous,
+        prevUnitPrice: current?.prevUnitPrice ?? previous?.unitPrice,
+        unitPrice: current?.unitPrice,
+        taxRate: current?.taxRate ?? 13,
+        leadDays: current?.leadDays,
+        validUntil: current?.validUntil ?? (defaultDate < r.deadline ? r.deadline : defaultDate),
+        note: current?.note ?? ''
+      }
+    })
+  })
+}
+function reuseQuote(line) {
+  const q = line.previousQuote
+  Object.assign(line, {
+    unitPrice: q.unitPrice,
+    taxRate: q.taxRate,
+    leadDays: q.leadDays,
+    validUntil: q.validUntil >= qt.rfq.deadline ? q.validUntil : null,
+    note: q.note ?? ''
   })
 }
 async function submitQuote() {
@@ -393,6 +448,7 @@ async function submitQuote() {
   qt.saving = true
   try {
     rfqs.value = await http.post(`/portal/supplier/rfqs/${qt.rfq.id}/quote`, {
+      roundNo: qt.rfq.roundNo,
       lines: lines.map(({ rfqLineId, unitPrice, taxRate, leadDays, validUntil, note }) => ({
         rfqLineId, unitPrice, taxRate: taxRate ?? 0, leadDays, validUntil, note
       }))
@@ -428,30 +484,20 @@ async function disputeStatement(s) {
 }
 const iv = reactive({ visible: false, saving: false, st: null, items: [] })
 function openInvoice(s) {
-  const amt = Number(s.totalAmount)
   Object.assign(iv, {
     visible: true,
     saving: false,
     st: s,
-    items: [{ invoiceNo: '', invoiceType: amt < 0 ? 'RED' : 'BLUE', invoiceDate: today(), taxRate: 13, amount: amt }]
+    items: invoiceDraft(s)
   })
 }
 async function submitInvoice() {
-  if (iv.items.some((x) => !x.invoiceNo?.trim() || !x.invoiceDate || !x.amount)) {
-    return ElMessage.warning('请填写每张发票的发票号、日期和金额')
+  if (!invoicesComplete(iv.items)) {
+    return ElMessage.warning('请填写每张发票的发票号、开票日期、税率和金额')
   }
   iv.saving = true
   try {
-    let updated
-    if (iv.items.length === 1 && iv.items[0].invoiceType === 'BLUE' && iv.items[0].amount > 0) {
-      updated = await http.post(`/portal/supplier/statements/${iv.st.id}/invoice`, {
-        invoiceNo: iv.items[0].invoiceNo,
-        invoiceDate: iv.items[0].invoiceDate,
-        amount: iv.items[0].amount
-      })
-    } else {
-      updated = await http.post(`/portal/supplier/statements/${iv.st.id}/invoices`, { invoices: iv.items })
-    }
+    const updated = await http.post(`/portal/supplier/statements/${iv.st.id}/invoices`, { invoices: iv.items })
     replaceStatement(updated)
     ElMessage.success('发票已登记，等品牌方财务审批')
     iv.visible = false
@@ -525,6 +571,8 @@ async function cancelShipment(s) {
 h4 { margin: 0 0 8px; font-size: 13px; color: var(--el-text-color-secondary); font-weight: 600; }
 .mat { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--lg-hairline); flex-wrap: wrap; }
 .mat:last-child { border-bottom: 0; }
+.receipt-difference { font-weight: 600; }
+.receipts > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 .ship-line { margin-bottom: 12px; }
 .ship-h { margin-bottom: 8px; }
 footer { padding-top: 4px; }

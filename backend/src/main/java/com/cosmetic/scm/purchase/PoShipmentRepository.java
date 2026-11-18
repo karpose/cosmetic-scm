@@ -17,9 +17,10 @@ public interface PoShipmentRepository extends JpaRepository<PoShipment, Long> {
 
     List<PoShipment> findByPoIdInOrderByIdDesc(Collection<Long> poIds);
 
-    List<PoShipment> findByPoIdAndStatus(Long poId, ShipmentStatus status);
-
     List<PoShipment> findByStatusOrderById(ShipmentStatus status);
+
+    @Query("select x.id from PoShipment x where x.poId = :poId and x.status = :status order by x.id")
+    List<Long> findIdsByPoIdAndStatus(@Param("poId") Long poId, @Param("status") ShipmentStatus status);
 
     /** 只在写事务里用。 */
     @Lock(LockModeType.PESSIMISTIC_WRITE)

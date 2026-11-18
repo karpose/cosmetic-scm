@@ -21,6 +21,7 @@ import com.cosmetic.scm.demo.DemoDataLoader;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.PoStatus;
 import com.cosmetic.scm.domain.Role;
+import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.master.ItemRepository;
 import com.cosmetic.scm.master.Partner;
 import com.cosmetic.scm.master.PartnerRepository;
@@ -63,6 +64,8 @@ class SupplierPortalTest {
     WarehouseRepository warehouses;
     @Autowired
     PurchaseOrderRepository orders;
+    @Autowired
+    BatchRepository batches;
     @Autowired
     UserRepository users;
     @Autowired
@@ -250,6 +253,8 @@ class SupplierPortalTest {
         }
         assertThat(mine.get("lines").get(0).get("remaining").decimalValue()).isEqualByComparingTo("4");
         assertThat(mine.get("lines").get(0).get("notifiedQty").decimalValue()).isEqualByComparingTo("4");
+        assertThat(mine.path("receiptDifferences").path(Long.toString(firstShipment)).isArray()).isTrue();
+        assertThat(mine.path("receiptDifferences").path(Long.toString(firstShipment)).isEmpty()).isTrue();
 
         // 关闭采购单：没收的通知作废，总览不会一直显示待收货
         call(wms, "/api/purchase-orders/" + id + "/close", Map.of("reason", "余量不要了")).andExpect(status().isOk());
@@ -261,6 +266,85 @@ class SupplierPortalTest {
         }
         assertThat(mine.get("lines").get(0).get("notifiedQty").decimalValue()).isEqualByComparingTo("0");
         call(sup, url, shipment(shipLine(po, "1", "B4"))).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void receiptsShowActualLotsDifferencesAndCurrentQualityOnlyToTheSupplier() throws Exception {
+        String supplier = login("sup1");
+        String purchase = login("purchase1");
+        var itemIds = items.findAll().stream().filter(i -> List.of("RM-GLY-002", "RM-NIA-001").contains(i.getCode()))
+                .collect(java.util.stream.Collectors.toMap(i -> i.getCode(), i -> i.getId()));
+        LocalDate expected = today().plusDays(5);
+        JsonNode po = body(call(purchase, "/api/purchase-orders", Map.of("supplierId", supplierId("sup1"), "expectedDate", expected,
+                "lines", List.of(Map.of("itemId", itemIds.get("RM-GLY-002"), "qty", 10), Map.of("itemId", itemIds.get("RM-NIA-001"), "qty", 3))))
+                .andExpect(status().isOk()));
+        long id = po.path("id").asLong();
+        String portal = "/api/portal/supplier/orders/" + id;
+        String receive = "/api/purchase-orders/" + id + "/receipts";
+        call(supplier, portal + "/promise", Map.of("promisedDate", expected)).andExpect(status().isOk());
+        JsonNode notice = body(call(supplier, portal + "/shipments", shipment(shipLine(po, "6", "DECLARED-LOT")))
+                .andExpect(status().isOk())).path("shipments").get(0);
+        long shipmentId = notice.path("id").asLong();
+        long wh = warehouses.findAll().stream().filter(w -> "WH-MAIN".equals(w.getCode())).findFirst().orElseThrow().getId();
+        long notifiedLine = po.path("lines").get(0).path("id").asLong();
+        long otherLine = po.path("lines").get(1).path("id").asLong();
+        var actual = Map.of("poLineId", notifiedLine, "qty", 4, "extBatchNo", "ACTUAL-LOT", "warehouseId", wh);
+        var other = Map.of("poLineId", otherLine, "qty", 3, "extBatchNo", "MANUAL-OTHER", "warehouseId", wh);
+        call(purchase, receive, Map.of("shipmentId", shipmentId, "lines", List.of(actual, other))).andExpect(status().isBadRequest());
+        assertThat(supplierOrder(supplier, id).path("receipts").isEmpty()).isTrue();
+
+        String batchNo = body(call(purchase, receive, Map.of("shipmentId", shipmentId, "lines", List.of(actual)))
+                .andExpect(status().isOk())).path("batchNos").get(0).asText();
+        JsonNode afterReceipt = supplierOrder(supplier, id);
+        JsonNode receipt = afterReceipt.path("receipts").get(0);
+        assertThat(receipt.path("receivedOn").asText()).isEqualTo(today().toString());
+        assertThat(receipt.path("itemCode").asText()).isEqualTo("RM-GLY-002");
+        assertThat(receipt.path("extBatchNo").asText()).isEqualTo("ACTUAL-LOT");
+        assertThat(receipt.path("shipmentNo").asText()).isEqualTo(notice.path("shipmentNo").asText());
+        assertThat(receipt.path("qty").decimalValue()).isEqualByComparingTo("4");
+        assertThat(receipt.path("qualityStatus").asText()).isEqualTo("QUARANTINE");
+        JsonNode diff = afterReceipt.path("receiptDifferences").path(Long.toString(shipmentId)).get(0);
+        assertThat(diff.path("notifiedQty").decimalValue()).isEqualByComparingTo("6");
+        assertThat(diff.path("receivedQty").decimalValue()).isEqualByComparingTo("4");
+        assertThat(diff.path("batchChanged").asBoolean()).isTrue();
+
+        long batchId = batches.findByBatchNo(batchNo).orElseThrow().getId();
+        call(login("qa1"), "/api/quality/batches/" + batchId + "/material-decision",
+                Map.of("decision", "REJECTED", "reportNo", "INTERNAL-REPORT", "note", "内部检验说明", "password", DemoDataLoader.DEMO_PASSWORD))
+                .andExpect(status().isOk());
+        JsonNode checked = supplierOrder(supplier, id).path("receipts").get(0);
+        assertThat(checked.path("qualityStatus").asText()).isEqualTo("REJECTED");
+        assertThat(checked.path("qualityLabel").asText()).isEqualTo("不合格");
+        assertThat(checked.toString()).doesNotContain(batchNo, "INTERNAL-REPORT", "内部检验说明", "warehouse");
+
+        JsonNode unusedNotice = body(call(supplier, portal + "/shipments", shipment(shipLine(po, "4", "UNUSED-LOT")))
+                .andExpect(status().isOk())).path("shipments").get(0);
+        var manual = Map.of("poLineId", notifiedLine, "qty", 6, "extBatchNo", "MANUAL-LOT", "warehouseId", wh);
+        call(purchase, receive, Map.of("lines", List.of(manual, other))).andExpect(status().isOk());
+        JsonNode done = supplierOrder(supplier, id);
+        assertThat(done.path("status").asText()).isEqualTo("RECEIVED");
+        assertThat(done.path("shipments").get(0).path("status").asText()).isEqualTo("CLOSED");
+        assertThat(done.path("shipments").get(1).path("status").asText()).isEqualTo("RECEIVED");
+        assertThat(done.path("receiptDifferences").has(unusedNotice.path("id").asText())).isFalse();
+        assertThat(done.path("receipts").size()).isEqualTo(3);
+        for (JsonNode row : done.path("receipts")) {
+            if (row.path("extBatchNo").asText().startsWith("MANUAL-")) {
+                assertThat(row.path("shipmentNo").isNull()).isTrue();
+            }
+        }
+
+        ensureOtherSupplierAccount();
+        JsonNode otherOrders = body(read(login("sup2"), "/api/portal/supplier/orders").andExpect(status().isOk()));
+        assertThat(otherOrders.toString()).doesNotContain(po.path("poNo").asText(), "ACTUAL-LOT", "MANUAL-LOT", "DECLARED-LOT");
+    }
+
+    private JsonNode supplierOrder(String token, long poId) throws Exception {
+        for (JsonNode order : body(read(token, "/api/portal/supplier/orders").andExpect(status().isOk()))) {
+            if (order.path("id").asLong() == poId) {
+                return order;
+            }
+        }
+        throw new AssertionError("找不到供应商采购单 " + poId);
     }
 
     @Test

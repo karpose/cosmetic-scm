@@ -10,6 +10,7 @@ import java.util.Optional;
 
 import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.ItemType;
+import com.cosmetic.scm.domain.SourceType;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -18,6 +19,8 @@ public interface BatchRepository extends JpaRepository<Batch, Long> {
     Optional<Batch> findByBatchNo(String batchNo);
 
     List<Batch> findByPartnerIdAndSourceTypeOrderByIdDesc(Long partnerId, com.cosmetic.scm.domain.SourceType sourceType);
+
+    List<Batch> findByPartnerIdAndSourceTypeAndSourceNoInOrderByIdDesc(Long partnerId, SourceType sourceType, Collection<String> sourceNos);
 
     /** 对账：某供应商某日之前入库、状态符合的来料批次。 */
     List<Batch> findByPartnerIdAndSourceTypeAndStatusAndCreatedAtLessThanOrderById(Long partnerId, com.cosmetic.scm.domain.SourceType sourceType,

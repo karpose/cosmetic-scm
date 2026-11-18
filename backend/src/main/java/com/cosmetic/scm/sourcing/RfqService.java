@@ -88,7 +88,8 @@ public class RfqService {
     }
 
     public record NextRoundReq(@NotNull(message = "请选择新截止日期") LocalDate deadline,
-                               @NotBlank(message = "请填写本轮议价说明或目标价要求") @Size(max = 300) String note) {
+                               @NotBlank(message = "请填写本轮议价说明或目标价要求") @Size(max = 300) String note,
+                               @Positive Integer roundNo) {
     }
 
     public record CancelReq(@NotBlank(message = "请填写取消原因") @Size(max = 300) String reason) {
@@ -99,7 +100,8 @@ public class RfqService {
 
     public record AwardReq(@NotEmpty(message = "至少定标一行") @Valid List<AwardLineReq> lines,
                            @Size(max = 300) String reason,
-                           @NotBlank(message = "请输入签批密码") String password) {
+                           @NotBlank(message = "请输入签批密码") String password,
+                           @Positive Integer roundNo) {
     }
 
     public record QuoteLineReq(@NotNull Long rfqLineId,
@@ -114,7 +116,8 @@ public class RfqService {
                                @Size(max = 300) String note) {
     }
 
-    public record QuoteReq(@NotEmpty(message = "至少报一行") @Valid List<QuoteLineReq> lines) {
+    public record QuoteReq(@NotEmpty(message = "至少报一行") @Valid List<QuoteLineReq> lines,
+                           @Positive Integer roundNo) {
     }
 
     public record QuoteView(Long supplierId, String supplierName, int roundNo, BigDecimal prevUnitPrice,
@@ -126,7 +129,7 @@ public class RfqService {
                               BigDecimal lastPoPrice, List<QuoteView> quotes) {
     }
 
-    public record InvitedView(Long supplierId, String supplierName, boolean quoted) {
+    public record InvitedView(Long supplierId, String supplierName, boolean quoted, long quotedLines) {
     }
 
     /** sealed：还没开标，quotes 是空的，只知道谁报了。canAward：可以比价定标或发起下一轮议价。 */
@@ -157,6 +160,12 @@ public class RfqService {
     private boolean canAward(Rfq r) {
         return r.getStatus() == RfqStatus.CLOSED
                 || (r.getStatus() == RfqStatus.OPEN && time.today().isAfter(r.getDeadline()));
+    }
+
+    private void checkRound(Rfq rfq, Integer expectedRound) {
+        if (expectedRound != null && expectedRound != rfq.getRoundNo()) {
+            throw new BizException("议价轮次已变更，请刷新页面后重试");
+        }
     }
 
     @Transactional(readOnly = true)
@@ -230,7 +239,7 @@ public class RfqService {
         if (r.getStatus() != RfqStatus.OPEN) {
             throw new BizException("询价单 " + r.getRfqNo() + " 当前为" + r.getStatus().getLabel() + "，不能开标");
         }
-        int currentRound = r.getRoundNo() <= 0 ? 1 : r.getRoundNo();
+        int currentRound = r.getRoundNo();
         List<RfqLine> ls = lines.findByRfqIdIn(List.of(id));
         Set<String> got = quotes.findByRfqIdIn(List.of(id)).stream()
                 .filter(q -> q.getRoundNo() == currentRound)
@@ -253,12 +262,12 @@ public class RfqService {
     }
 
     /**
-     * 发起下一轮议价：已开标或已截止待定标时，若报价偏高，采购可设定新截止日期与议价说明，
-     * 将轮次 +1 并把现有单价快照保存到 prevUnitPrice，重新进入封标报价状态。
+     * 已开标或截止后可进入下一轮。此前报价保留原有效期，供供应商参照。
      */
     @Transactional
     public RfqView nextRound(Long id, NextRoundReq req) {
         Rfq r = rfqs.lockById(id).orElseThrow(() -> BizException.notFound("询价单"));
+        checkRound(r, req.roundNo());
         if (!canAward(r)) {
             throw new BizException(sealed(r) ? "当前轮次尚未开标或截止，不能发起下一轮议价"
                     : "询价单 " + r.getRfqNo() + " 当前为" + r.getStatus().getLabel() + "，不能发起下一轮议价");
@@ -267,14 +276,7 @@ public class RfqService {
         if (req.deadline().isBefore(today)) {
             throw new BizException("新报价截止日期不能早于今天");
         }
-        int nextRoundNo = (r.getRoundNo() <= 0 ? 1 : r.getRoundNo()) + 1;
-        for (RfqQuote q : quotes.findByRfqIdIn(List.of(id))) {
-            q.setPrevUnitPrice(q.getUnitPrice());
-            if (q.getValidUntil() != null && q.getValidUntil().isBefore(req.deadline())) {
-                q.setValidUntil(req.deadline());
-            }
-            quotes.save(q);
-        }
+        int nextRoundNo = r.getRoundNo() + 1;
         r.setRoundNo(nextRoundNo);
         r.setRoundNote(req.note().trim());
         r.setDeadline(req.deadline());
@@ -300,6 +302,7 @@ public class RfqService {
     @Transactional
     public RfqView award(Long id, AwardReq req) {
         Rfq r = rfqs.lockById(id).orElseThrow(() -> BizException.notFound("询价单"));
+        checkRound(r, req.roundNo());
         if (!canAward(r)) {
             throw new BizException(sealed(r)
                     ? "还没开标，不能定标"
@@ -321,8 +324,9 @@ public class RfqService {
         if (!ls.stream().map(RfqLine::getId).collect(Collectors.toSet()).containsAll(choice.keySet())) {
             throw new BizException("定标行不属于询价单 " + r.getRfqNo());
         }
-        List<RfqQuote> all = quotes.findByRfqIdIn(List.of(id));
-        Map<Long, List<RfqQuote>> byLine = all.stream().collect(Collectors.groupingBy(RfqQuote::getRfqLineId));
+        Map<Long, List<RfqQuote>> byLine = quotes.findByRfqIdIn(List.of(id)).stream()
+                .filter(q -> q.getRoundNo() == r.getRoundNo())
+                .collect(Collectors.groupingBy(RfqQuote::getRfqLineId));
         Map<Long, Item> items = lookup.itemMap();
         boolean needReason = false;
         Map<Long, List<RfqQuote>> bySupplier = new LinkedHashMap<>();
@@ -337,7 +341,7 @@ public class RfqService {
                 continue;
             }
             RfqQuote q = qs.stream().filter(x -> x.getSupplierId().equals(supplier)).findFirst()
-                    .orElseThrow(() -> new BizException("所选供应商没有报 " + items.get(l.getItemId()).getName()));
+                    .orElseThrow(() -> new BizException("所选供应商本轮未提交 " + items.get(l.getItemId()).getName() + " 的报价"));
             if (q.getValidUntil().isBefore(today)) {
                 throw new BizException(lookup.partner(supplier).getName()
                         + " 对 " + items.get(l.getItemId()).getName() + " 的报价已于 " + q.getValidUntil() + " 过期");
@@ -395,10 +399,11 @@ public class RfqService {
         if (invited.findByRfqIdIn(List.of(rfqId)).stream().noneMatch(s -> mine.equals(s.getSupplierId()))) {
             throw BizException.notFound("询价单");
         }
+        checkRound(r, req.roundNo());
         if (!sealed(r)) {
             throw new BizException("询价单 " + r.getRfqNo() + " 已截止或已结束，不能再报价");
         }
-        int currentRound = r.getRoundNo() <= 0 ? 1 : r.getRoundNo();
+        int currentRound = r.getRoundNo();
         Set<Long> valid = lines.findByRfqIdIn(List.of(rfqId)).stream().map(RfqLine::getId).collect(Collectors.toSet());
         Set<Long> seen = new HashSet<>();
         for (QuoteLineReq l : req.lines()) {
@@ -415,6 +420,9 @@ public class RfqService {
             q.setRfqId(rfqId);
             q.setRfqLineId(l.rfqLineId());
             q.setSupplierId(mine);
+            if (q.getRoundNo() < currentRound) {
+                q.setPrevUnitPrice(q.getUnitPrice());
+            }
             q.setRoundNo(currentRound);
             q.setUnitPrice(l.unitPrice());
             q.setTaxRate(l.taxRate());
@@ -439,7 +447,7 @@ public class RfqService {
         Map<Long, Set<Integer>> quotedRoundsByRfq = quotes.findByRfqIdInAndSupplierId(ids, supplierId).stream()
                 .collect(Collectors.groupingBy(RfqQuote::getRfqId, Collectors.mapping(RfqQuote::getRoundNo, Collectors.toSet())));
         return rfqs.findByIdInOrderByIdDesc(ids).stream()
-                .filter(r -> sealed(r) && !quotedRoundsByRfq.getOrDefault(r.getId(), Set.of()).contains(r.getRoundNo() <= 0 ? 1 : r.getRoundNo()))
+                .filter(r -> sealed(r) && !quotedRoundsByRfq.getOrDefault(r.getId(), Set.of()).contains(r.getRoundNo()))
                 .toList();
     }
 
@@ -455,7 +463,7 @@ public class RfqService {
         Map<Long, String> poNos = poNos(mine.values());
         Map<Long, Item> items = lookup.itemMap();
         return list.stream().map(r -> {
-            int roundNo = r.getRoundNo() <= 0 ? 1 : r.getRoundNo();
+            int roundNo = r.getRoundNo();
             List<RfqLine> rl = ls.getOrDefault(r.getId(), List.of());
             boolean won = rl.stream().anyMatch(l -> mine.containsKey(l.getId()) && mine.get(l.getId()).isAwarded());
             String state = switch (r.getStatus()) {
@@ -515,16 +523,19 @@ public class RfqService {
         Map<Long, Item> items = lookup.itemMap();
         Map<Long, Partner> partners = lookup.partnerMap();
         return list.stream().map(r -> {
-            int roundNo = r.getRoundNo() <= 0 ? 1 : r.getRoundNo();
+            int roundNo = r.getRoundNo();
             boolean sealed = sealed(r);
-            Set<Long> quotedInCurrentRound = allQuotes.stream()
+            boolean showQuotes = canAward(r) || r.getStatus() == RfqStatus.AWARDED;
+            List<RfqLine> rfqLines = ls.getOrDefault(r.getId(), List.of());
+            Map<Long, Long> quotedLinesBySupplier = allQuotes.stream()
                     .filter(q -> r.getId().equals(q.getRfqId()) && q.getRoundNo() == roundNo)
-                    .map(RfqQuote::getSupplierId)
-                    .collect(Collectors.toSet());
-            List<RfqLineView> lv = ls.getOrDefault(r.getId(), List.of()).stream().map(l -> {
+                    .collect(Collectors.groupingBy(RfqQuote::getSupplierId, Collectors.counting()));
+            List<RfqLineView> lv = rfqLines.stream().map(l -> {
                 Item i = items.get(l.getItemId());
                 // 开标前不返回价格，不是只在页面上藏起来
-                List<RfqQuote> qs = sealed ? List.of() : byLine.getOrDefault(l.getId(), List.of());
+                List<RfqQuote> qs = showQuotes ? byLine.getOrDefault(l.getId(), List.of()).stream()
+                        // 已定标的历史单据可能引用 V28 允许使用的旧轮次报价。
+                        .filter(q -> q.getRoundNo() == roundNo || q.isAwarded()).toList() : List.of();
                 BigDecimal lowest = qs.stream().map(RfqQuote::getUnitPrice).min(Comparator.naturalOrder()).orElse(null);
                 return new RfqLineView(l.getId(), i.getCode(), i.getName(), i.getUnit(), l.getQty(),
                         lastPrices.get(l.getItemId()),
@@ -538,8 +549,11 @@ public class RfqService {
                                 .toList());
             }).toList();
             List<InvitedView> iv = ss.getOrDefault(r.getId(), List.of()).stream()
-                    .map(s -> new InvitedView(s.getSupplierId(), partners.get(s.getSupplierId()).getName(),
-                            quotedInCurrentRound.contains(s.getSupplierId())))
+                    .map(s -> {
+                        long count = quotedLinesBySupplier.getOrDefault(s.getSupplierId(), 0L);
+                        return new InvitedView(s.getSupplierId(), partners.get(s.getSupplierId()).getName(),
+                                count > 0, count);
+                    })
                     .toList();
             String label = r.getStatus() == RfqStatus.OPEN && !sealed ? "已截止待定标"
                     : r.getStatus() == RfqStatus.CLOSED ? "已开标待定标"

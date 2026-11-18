@@ -20,6 +20,8 @@ import com.cosmetic.scm.domain.MoStatus;
 import com.cosmetic.scm.domain.OemReportStatus;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.PoStatus;
+import com.cosmetic.scm.domain.StatementStatus;
+import com.cosmetic.scm.domain.rules.SettlementRule;
 import com.cosmetic.scm.integration.IntegrationService;
 import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.inventory.InventoryService;
@@ -43,6 +45,9 @@ import com.cosmetic.scm.recall.RecallService;
 import com.cosmetic.scm.recall.RecallService.RecallView;
 import com.cosmetic.scm.sales.SalesOrderRepository;
 import com.cosmetic.scm.salesreturn.ReturnService;
+import com.cosmetic.scm.settlement.SupplierStatement;
+import com.cosmetic.scm.supplierreturn.SupplierReturn;
+import com.cosmetic.scm.supplierreturn.SupplierReturnService;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -69,6 +74,7 @@ public class DashboardService {
     private final com.cosmetic.scm.plm.ArtworkService artworkService;
     private final com.cosmetic.scm.plm.ArtworkProofService artworkProofs;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnRepository supplierReturns;
+    private final SupplierReturnService supplierReturnService;
     private final com.cosmetic.scm.settlement.SupplierStatementRepository statementRepo;
     private final BatchRepository batches;
     private final MfgOrderRepository mfgOrders;
@@ -277,18 +283,36 @@ public class DashboardService {
             }
         }
         for (com.cosmetic.scm.supplierreturn.SupplierReturn r : supplierReturns.findByStatusOrderById(com.cosmetic.scm.domain.SupplierReturnStatus.PENDING)) {
-            todos.add(new Todo("SUPPLIER_RETURN", "退供待签批", "warn", lookup.partner(r.getSupplierId()).getName(), r.getReturnNo(), r.getReason(), "/supplier-returns"));
+            todos.add(new Todo("SUPPLIER_RETURN", "退供待签批", "warn", lookup.partner(r.getSupplierId()).getName(), r.getReturnNo(), r.getReason(), "/supplier-returns?no=" + r.getReturnNo()));
+        }
+        for (com.cosmetic.scm.supplierreturn.SupplierReturn r : supplierReturns.findByStatusAndShippedAtIsNullAndSupplierConfirmedAtIsNullOrderById(com.cosmetic.scm.domain.SupplierReturnStatus.DONE)) {
+            todos.add(new Todo("SUPPLIER_RETURN_SHIP", "退供待登记物流", "warn", lookup.partner(r.getSupplierId()).getName(),
+                    r.getReturnNo(), "质量已签批，请登记承运商和运单号", "/supplier-returns?no=" + r.getReturnNo()));
+        }
+        for (SupplierReturn r : supplierReturnService.awaitingOfflineReceipts()) {
+            todos.add(new Todo("SUPPLIER_RETURN_OFFLINE", "退供待代录签收", "warn", lookup.partner(r.getSupplierId()).getName(),
+                    r.getReturnNo(), "请在收到供应商回单后登记签收", "/supplier-returns?no=" + r.getReturnNo()));
         }
         for (com.cosmetic.scm.sourcing.Rfq r : rfqRepo.findWaitingAward(com.cosmetic.scm.domain.RfqStatus.OPEN, com.cosmetic.scm.domain.RfqStatus.CLOSED, today)) {
             todos.add(new Todo("RFQ_AWARD", "询价待定标", "warn", r.getTitle(), r.getRfqNo(), "报价已截止，请比价定标", "/sourcing"));
         }
-        for (com.cosmetic.scm.settlement.SupplierStatement s : statementRepo.findByStatusInOrderById(List.of(com.cosmetic.scm.domain.StatementStatus.DISPUTED, com.cosmetic.scm.domain.StatementStatus.INVOICED, com.cosmetic.scm.domain.StatementStatus.APPROVED))) {
+        for (SupplierStatement s : statementRepo.findByStatusInOrderById(List.of(StatementStatus.DISPUTED, StatementStatus.INVOICED, StatementStatus.APPROVED))) {
             String name = lookup.partner(s.getSupplierId()).getName();
+            String route = "/settlement?no=" + s.getStatementNo();
             switch (s.getStatus()) {
-                case DISPUTED -> todos.add(new Todo("STATEMENT_DISPUTE", "对账单有异议", "warn", name, s.getStatementNo(), s.getDisputeNote(), "/settlement"));
-                case INVOICED -> todos.add(new Todo("STATEMENT_APPROVE", "对账单待审批", "warn", name, s.getStatementNo(), "发票 " + s.getInvoiceNo() + "，请财务审批", "/settlement"));
-                default -> todos.add(new Todo("STATEMENT_PAY", "对账单待付款", "info", name, s.getStatementNo(), "已审批，等登记付款", "/settlement"));
+                case DISPUTED -> todos.add(new Todo("STATEMENT_DISPUTE", "对账单有异议", "warn", name, s.getStatementNo(), s.getDisputeNote(), route));
+                case INVOICED -> todos.add(new Todo("STATEMENT_APPROVE", "对账单待审批", "warn", name, s.getStatementNo(), "发票 " + s.getInvoiceNo() + "，请财务审批", route));
+                case APPROVED -> {
+                    if (s.outstandingAmount().signum() != 0) {
+                        todos.add(statementCashTodo(s, name, route, today));
+                    }
+                }
+                default -> { }
             }
+        }
+        for (SupplierStatement s : statementRepo.findByStatusAndInvoiceReviewVersionGreaterThanOrderById(StatementStatus.CONFIRMED, 0)) {
+            todos.add(new Todo("STATEMENT_INVOICE_FIX", "对账发票待更正", "warn", lookup.partner(s.getSupplierId()).getName(), s.getStatementNo(),
+                    "请跟进供应商重提发票，或由采购代登记", "/settlement?no=" + s.getStatementNo()));
         }
         long channelFailed = integration.failedCount();
         if (channelFailed > 0) {
@@ -346,6 +370,21 @@ public class DashboardService {
                     "剩余 " + plain(b.onHand()) + " " + b.unit() + " · 效期至 " + b.expDate() + "，请报废或判定处理", "/stock"));
         }
         return new Summary(counts, todos, audit.list(null, 8), todos.size());
+    }
+
+    private Todo statementCashTodo(SupplierStatement s, String supplierName, String route, LocalDate today) {
+        boolean refund = s.outstandingAmount().signum() < 0;
+        LocalDate due = s.effectiveDueDate();
+        long lateDays = SettlementRule.overdueDays(due, today, false);
+        String kind = refund ? "STATEMENT_REFUND" : "STATEMENT_PAY";
+        String action = refund ? "供应商退款" : "对账单付款";
+        if (lateDays > 0) {
+            return new Todo(kind, action + "已逾期", "bad", supplierName, s.getStatementNo(), "到期日 " + due + "，已逾期 " + lateDays + " 天", route);
+        }
+        if (today.equals(due)) {
+            return new Todo(kind, action + "今日到期", "warn", supplierName, s.getStatementNo(), "请核对并登记" + (refund ? "退款" : "付款"), route);
+        }
+        return new Todo(kind, refund ? "待收供应商退款" : "对账单待付款", "info", supplierName, s.getStatementNo(), "到期日 " + due, route);
     }
 
     private void addQualitySystemTodos(List<Todo> todos) {

@@ -330,7 +330,7 @@ public class DemoDataLoader implements ApplicationRunner {
         var rfq = as("purchase1", () -> rfqService.create(new com.cosmetic.scm.sourcing.RfqService.CreateRfqReq("透明质酸钠年度询价（示例）", t.plusDays(7), List.of(hc.id(), mp.id()),
                 List.of(new com.cosmetic.scm.sourcing.RfqService.RfqLineReq(ha.getId(), new BigDecimal("20"))))));
         as("sup1", () -> rfqService.submitQuote(rfq.id(), new com.cosmetic.scm.sourcing.RfqService.QuoteReq(List.of(new com.cosmetic.scm.sourcing.RfqService.QuoteLineReq(
-                rfq.lines().get(0).id(), new BigDecimal("880"), new BigDecimal("13"), 7, t.plusDays(30), "（示例）")))));
+                rfq.lines().get(0).id(), new BigDecimal("880"), new BigDecimal("13"), 7, t.plusDays(30), "（示例）")), rfq.roundNo())));
         // 供应商门户：一张待回复的采购单，一张已确认并发了送货通知的
         as("purchase1", () -> purchase.create(new CreatePoReq(hc.id(), List.of(line(ha, "2")), t.plusDays(10))));
         PoView shippedPo = as("purchase1", () -> purchase.create(new CreatePoReq(hc.id(), List.of(line(gly, "10")), t.plusDays(5))));

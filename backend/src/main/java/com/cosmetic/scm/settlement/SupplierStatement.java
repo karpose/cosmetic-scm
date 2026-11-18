@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 import com.cosmetic.scm.domain.StatementStatus;
+import com.cosmetic.scm.domain.rules.SettlementRule;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -68,6 +69,7 @@ public class SupplierStatement {
     private LocalDate invoiceDate;
 
     private BigDecimal invoiceAmount;
+    private int invoiceReviewVersion;
 
     private String approvedBy;
 
@@ -78,4 +80,26 @@ public class SupplierStatement {
     private String createdBy;
 
     private LocalDateTime createdAt;
+
+    /** V28 之前的单据没有单独存到期日。 */
+    public LocalDate effectiveDueDate() {
+        return dueDate != null ? dueDate : SettlementRule.computeDueDate(periodTo, creditDays);
+    }
+
+    public BigDecimal outstandingAmount() {
+        return totalAmount.subtract(paidAmount);
+    }
+
+    public boolean invoiceCorrectionPending() {
+        return status == StatementStatus.CONFIRMED && invoiceReviewVersion > 0;
+    }
+
+    public String statusLabel() {
+        if (invoiceCorrectionPending()) return "发票待更正";
+        if (totalAmount.signum() < 0) {
+            if (status == StatementStatus.APPROVED) return "待供应商退款";
+            if (status == StatementStatus.PAID) return "供应商已退款";
+        }
+        return status.getLabel();
+    }
 }

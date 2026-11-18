@@ -4,6 +4,7 @@ package com.cosmetic.scm.domain;
 public enum ShipmentStatus {
     OPEN("待收货"),
     RECEIVED("已收货"),
+    CLOSED("随订单关闭"),
     CANCELLED("已取消");
 
     private final String label;

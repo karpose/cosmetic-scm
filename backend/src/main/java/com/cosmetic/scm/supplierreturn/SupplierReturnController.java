@@ -6,6 +6,7 @@ import com.cosmetic.scm.supplierreturn.SupplierReturnService.ApproveReq;
 import com.cosmetic.scm.supplierreturn.SupplierReturnService.CancelReq;
 import com.cosmetic.scm.supplierreturn.SupplierReturnService.Candidate;
 import com.cosmetic.scm.supplierreturn.SupplierReturnService.CreateReq;
+import com.cosmetic.scm.supplierreturn.SupplierReturnService.OfflineReceiptReq;
 import com.cosmetic.scm.supplierreturn.SupplierReturnService.ReturnView;
 import com.cosmetic.scm.supplierreturn.SupplierReturnService.ShipReq;
 
@@ -33,8 +34,8 @@ public class SupplierReturnController {
     private final SupplierReturnService returns;
 
     @GetMapping
-    public List<ReturnView> list() {
-        return returns.list();
+    public List<ReturnView> list(@RequestParam(required = false) String returnNo) {
+        return returns.list(returnNo);
     }
 
     @GetMapping("/candidates")
@@ -59,6 +60,12 @@ public class SupplierReturnController {
     @PreAuthorize(MAKER)
     public ReturnView ship(@PathVariable Long id, @Valid @RequestBody ShipReq req) {
         return returns.ship(id, req);
+    }
+
+    @PostMapping("/{id}/offline-receipt")
+    @PreAuthorize("hasAnyRole('ADMIN','PURCHASE')")
+    public ReturnView recordOfflineReceipt(@PathVariable Long id, @Valid @RequestBody OfflineReceiptReq req) {
+        return returns.recordOfflineReceipt(id, req);
     }
 
     @PostMapping("/{id}/cancel")

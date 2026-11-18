@@ -115,7 +115,8 @@
           <el-option v-for="s in recv.shipments" :key="s.id" :value="s.id" :label="`${s.shipmentNo} · 发货 ${s.shipDate}${s.note ? ' · ' + s.note : ''}`" />
         </el-select>
       </el-form-item>
-      <el-card v-for="l in recv.lines" :key="l.poLineId" shadow="never" style="margin-bottom:12px">
+      <p v-if="!receiveLines.length" class="muted small">该通知的物料已收齐，请选择其他通知或手工收货。</p>
+      <el-card v-for="l in receiveLines" :key="l.poLineId" shadow="never" style="margin-bottom:12px">
         <div style="margin-bottom:8px"><b>{{ l.itemName }}</b> <span class="muted small">{{ l.itemCode }} · 未收 {{ fmtQty(l.remaining) }} {{ l.unit }}{{ l.shelfMonths ? ` · 保质期 ${l.shelfMonths} 个月` : '' }}</span></div>
         <div class="form-grid">
           <el-form-item label="本次收货数量"><el-input-number :id="`rv-qty-${l.poLineId}`" v-model="l.qty" :min="0" :max="Number(l.remaining)" :precision="4" :controls="false" style="width:100%" /></el-form-item>
@@ -132,7 +133,7 @@
       <AttachmentList v-if="recv.po" owner-type="PURCHASE_ORDER" :owner-id="recv.po.id" title="这张单的附件（供应商上传的 COA 也在这里）" empty-text="还没有附件" />
       <template #footer>
         <el-button @click="recv.visible = false">取消</el-button>
-        <el-button type="primary" :loading="recv.saving" @click="submitReceive">确认收货</el-button>
+        <el-button type="primary" :loading="recv.saving" :disabled="!receiveLines.length" @click="submitReceive">确认收货</el-button>
       </template>
     </el-dialog>
   </div>
@@ -192,6 +193,11 @@ async function closeOrder(row) {
 
 const create = reactive({ visible: false, saving: false, supplierId: null, expectedDate: null, lines: [] })
 const recv = reactive({ visible: false, saving: false, po: null, lines: [], shipments: [], shipmentId: null })
+const selectedShipment = computed(() => recv.shipments.find((s) => s.id === recv.shipmentId))
+const receiveLines = computed(() => {
+  const shipment = selectedShipment.value
+  return shipment ? recv.lines.filter((l) => shipment.lines.some((n) => n.poLineId === l.poLineId)) : recv.lines
+})
 const price = reactive({ visible: false, saving: false, po: null, lines: [], reason: '' })
 function openPrice(po) {
   Object.assign(price, { visible: true, saving: false, po, reason: '', lines: po.lines.map((l) => ({
@@ -262,7 +268,7 @@ async function openReceive(po) {
 }
 // 选了通知：带入它的批号、日期和数量，它没有的物料这次不收。清空：恢复手工填写
 function applyShipment() {
-  const s = recv.shipments.find((x) => x.id === recv.shipmentId)
+  const s = selectedShipment.value
   for (const l of recv.lines) {
     const n = s?.lines.find((x) => x.poLineId === l.poLineId)
     Object.assign(l, s
@@ -272,7 +278,7 @@ function applyShipment() {
 }
 
 async function submitReceive() {
-  const lines = recv.lines.filter((l) => l.qty > 0)
+  const lines = receiveLines.value.filter((l) => l.qty > 0)
   if (!lines.length) return ElMessage.warning('没有填写收货数量')
   if (lines.some((l) => !l.extBatchNo.trim())) return ElMessage.warning('请填写每一行的供应商批号')
   recv.saving = true

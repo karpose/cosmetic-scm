@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.time.LocalDate;
 import com.cosmetic.scm.domain.PoStatus;
 import com.cosmetic.scm.domain.Role;
+import com.cosmetic.scm.domain.SupplierReturnStatus;
 import com.cosmetic.scm.master.MasterService;
 import com.cosmetic.scm.master.Partner;
 import com.cosmetic.scm.master.PartnerRepository;
@@ -27,6 +28,8 @@ import com.cosmetic.scm.dashboard.DashboardService.Todo;
 import com.cosmetic.scm.security.AppUser;
 import com.cosmetic.scm.security.CurrentUser;
 import com.cosmetic.scm.security.UserRepository;
+import com.cosmetic.scm.supplierreturn.SupplierReturn;
+import com.cosmetic.scm.supplierreturn.SupplierReturnRepository;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -68,6 +71,7 @@ public class NotifyService {
     private final PartnerRepository partners;
     private final com.cosmetic.scm.sourcing.RfqService rfqs;
     private final com.cosmetic.scm.settlement.SupplierStatementRepository statements;
+    private final SupplierReturnRepository supplierReturns;
 
     @Value("${scm.notify.enabled:false}")
     private boolean enabled;
@@ -209,8 +213,17 @@ public class NotifyService {
             items.add(new Todo("SUP_QUOTE", "待报价询价", "warn", r.getTitle(), r.getRfqNo(), "报价截止 " + r.getDeadline(), "/portal/supplier"));
         }
         for (com.cosmetic.scm.settlement.SupplierStatement s : statements.findBySupplierIdAndStatusIn(partnerId, List.of(com.cosmetic.scm.domain.StatementStatus.SENT, com.cosmetic.scm.domain.StatementStatus.CONFIRMED))) {
-            boolean sent = s.getStatus() == com.cosmetic.scm.domain.StatementStatus.SENT;
-            items.add(new Todo("SUP_STATEMENT", sent ? "待确认对账单" : "对账单待开票", "warn", "对账单", s.getStatementNo(), "合计 " + s.getTotalAmount().toPlainString(), "/portal/supplier"));
+            if (s.invoiceCorrectionPending()) {
+                items.add(new Todo("SUP_STATEMENT", "发票已退回，待更正", "warn", "对账单", s.getStatementNo(),
+                        "请在供应商门户查看退回原因并重新登记发票", "/portal/supplier"));
+            } else {
+                boolean sent = s.getStatus() == com.cosmetic.scm.domain.StatementStatus.SENT;
+                items.add(new Todo("SUP_STATEMENT", sent ? "待确认对账单" : "对账单待开票", "warn", "对账单", s.getStatementNo(), "合计 " + s.getTotalAmount().toPlainString(), "/portal/supplier"));
+            }
+        }
+        for (SupplierReturn r : supplierReturns.findAwaitingReceipt(partnerId, SupplierReturnStatus.DONE)) {
+            items.add(new Todo("SUP_RETURN_RECEIPT", "退货待签收", "warn", "退供单", r.getReturnNo(),
+                    r.getCarrier() + " " + r.getTrackingNo() + "，收到后请在供应商门户的「退货」确认", "/portal/supplier"));
         }
         items.sort(Comparator.comparingInt(t -> "bad".equals(t.level()) ? 0 : 1));
         return items;

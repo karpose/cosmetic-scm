@@ -46,6 +46,9 @@ public class Batch {
 
     private String sourceNo;
 
+    /** 采购收货时明确选择的送货通知。手工收货和历史批次为空。 */
+    private Long poShipmentId;
+
     /** 供应商（采购批次）或生产方（成品批次）。 */
     private Long partnerId;
 

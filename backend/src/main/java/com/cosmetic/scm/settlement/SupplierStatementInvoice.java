@@ -30,6 +30,9 @@ public class SupplierStatementInvoice {
 
     private Long supplierId;
 
+    /** 为空表示当前提交，否则属于一次已退回的提交。 */
+    private Long invoiceReturnId;
+
     private String invoiceNo;
 
     /** BLUE=蓝字发票（正数），RED=红字发票（负数冲减）。 */

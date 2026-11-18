@@ -280,6 +280,14 @@ public class PurchaseService {
         if (po.getStatus() != PoStatus.OPEN && po.getStatus() != PoStatus.PARTIAL) {
             throw new BizException("采购单 " + po.getPoNo() + " 当前为" + po.getStatus().getLabel() + "，不能收货");
         }
+        PoShipment shipment = lockShipmentForReceipt(po, req.shipmentId());
+        if (shipment != null) {
+            Set<Long> notifiedLines = shipmentLines.findByShipmentIdInOrderById(List.of(shipment.getId())).stream()
+                    .map(PoShipmentLine::getPoLineId).collect(Collectors.toSet());
+            if (req.lines().stream().anyMatch(l -> !notifiedLines.contains(l.poLineId()))) {
+                throw new BizException("只能按送货通知收货其中的物料，其他物料请另行收货");
+            }
+        }
         LocalDate today = time.today();
         Map<Long, PoLine> lineMap = lines.findByPoIdOrderByLineNo(poId).stream()
                 .collect(Collectors.toMap(PoLine::getId, l -> l));
@@ -312,6 +320,9 @@ public class PurchaseService {
             String batchNo = docNo.next(prefix, today);
             Batch b = inventory.createBatch(batchNo, item, mfg, exp, BatchStatus.QUARANTINE, SourceType.PO, po.getPoNo(),
                     po.getSupplierId(), r.extBatchNo().trim(), r.qty());
+            if (shipment != null) {
+                b.setPoShipmentId(shipment.getId());
+            }
             inventory.change(b, wh.getId(), r.qty(), TxnType.RECEIPT, po.getPoNo());
             line.setReceivedQty(line.getReceivedQty().add(r.qty()));
             lines.save(line);
@@ -321,27 +332,34 @@ public class PurchaseService {
         po.setStatus(allDone ? PoStatus.RECEIVED : PoStatus.PARTIAL);
         po.setLastReceivedOn(today);
         orders.save(po);
-        if (req.shipmentId() != null) {
-            PoShipment s = shipments.lockById(req.shipmentId()).filter(x -> x.getPoId().equals(poId))
-                    .orElseThrow(() -> new BizException("送货通知不属于采购单 " + po.getPoNo()));
-            if (s.getStatus() != ShipmentStatus.OPEN) {
-                throw new BizException("送货通知 " + s.getShipmentNo() + " 当前为" + s.getStatus().getLabel() + "，请刷新后重新收货");
-            }
-            s.setStatus(ShipmentStatus.RECEIVED);
-            shipments.save(s);
+        if (shipment != null) {
+            shipment.setStatus(ShipmentStatus.RECEIVED);
+            shipments.save(shipment);
         }
-        // 全部到齐后，没被选中的通知也算收了：货就是这些，留着总览上会一直待收货
+        // 订单收齐就结束其它通知。实际批次没有与这些通知核对，不能标为已收货。
         if (allDone) {
-            settleShipments(poId, ShipmentStatus.RECEIVED);
+            settleShipments(poId, ShipmentStatus.CLOSED);
         }
         audit.log("采购收货", po.getPoNo(), "生成待检批次 " + String.join("、", made));
         return made;
     }
 
+    private PoShipment lockShipmentForReceipt(PurchaseOrder po, Long shipmentId) {
+        if (shipmentId == null) {
+            return null;
+        }
+        PoShipment shipment = shipments.lockById(shipmentId).filter(s -> po.getId().equals(s.getPoId()))
+                .orElseThrow(() -> new BizException("送货通知不属于采购单 " + po.getPoNo()));
+        if (shipment.getStatus() != ShipmentStatus.OPEN) {
+            throw new BizException("送货通知 " + shipment.getShipmentNo() + " 当前为" + shipment.getStatus().getLabel() + "，请刷新后重新收货");
+        }
+        return shipment;
+    }
+
     private void settleShipments(Long poId, ShipmentStatus to) {
-        for (PoShipment s : shipments.findByPoIdAndStatus(poId, ShipmentStatus.OPEN)) {
-            s.setStatus(to);
-            shipments.save(s);
+        // 采购单已加锁，不会新增通知。逐条按主键锁定并复查，保留供应商先完成的取消操作。
+        for (Long id : shipments.findIdsByPoIdAndStatus(poId, ShipmentStatus.OPEN)) {
+            shipments.lockById(id).filter(s -> s.getStatus() == ShipmentStatus.OPEN).ifPresent(s -> s.setStatus(to));
         }
     }
 

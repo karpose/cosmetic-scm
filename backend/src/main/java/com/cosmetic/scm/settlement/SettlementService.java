@@ -5,7 +5,9 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -50,11 +52,14 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
 import lombok.RequiredArgsConstructor;
 
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -69,6 +74,7 @@ public class SettlementService {
     private final SupplierStatementRepository statements;
     private final SupplierStatementLineRepository statementLines;
     private final SupplierStatementInvoiceRepository statementInvoices;
+    private final SupplierStatementInvoiceReturnRepository invoiceReturns;
     private final SupplierPaymentRepository payments;
     private final SupplierReturnRepository returns;
     private final BatchRepository batches;
@@ -116,7 +122,12 @@ public class SettlementService {
     public record CancelReq(@NotBlank(message = "请填写作废原因") @Size(max = 300) String reason) {
     }
 
-    public record ApproveReq(@NotBlank(message = "请输入签批密码") String password) {
+    public record ApproveReq(@NotBlank(message = "请输入签批密码") String password, @PositiveOrZero Integer invoiceReviewVersion) {
+    }
+
+    public record ReturnInvoiceReq(@NotBlank(message = "请填写退回原因") @Size(max = 300) String reason,
+                                   @NotBlank(message = "请输入签批密码") String password,
+                                   @NotNull @PositiveOrZero Integer invoiceReviewVersion) {
     }
 
     public record PayReq(@NotNull(message = "请选择日期") LocalDate payDate,
@@ -136,6 +147,10 @@ public class SettlementService {
                               BigDecimal taxRate, BigDecimal amount, BigDecimal taxAmount, String note, String createdBy, LocalDateTime createdAt) {
     }
 
+    public record InvoiceReturnView(Long id, String reason, String returnedBy, LocalDateTime returnedAt,
+                                    String invoiceNo, LocalDate invoiceDate, BigDecimal invoiceAmount, List<InvoiceView> invoices) {
+    }
+
     /** 生成前预览。missingPrice：放行了但采购单没单价的批次，不会进这张对账单；taxBreakdown：多税率拆分汇总。 */
     public record PreviewView(List<LineView> lines, List<MissingPrice> missingPrice, BigDecimal goodsAmount, BigDecimal taxAmount,
                               List<TaxBreakdown> taxBreakdown) {
@@ -151,6 +166,7 @@ public class SettlementService {
                                 BigDecimal adjustment, String adjustmentNote, BigDecimal totalAmount, String disputeNote,
                                 String cancelReason, String confirmedBy, LocalDateTime confirmedAt,
                                 String invoiceNo, LocalDate invoiceDate, BigDecimal invoiceAmount,
+                                int invoiceReviewVersion, boolean invoiceCorrectionPending, List<InvoiceReturnView> invoiceReturns,
                                 String approvedBy, LocalDateTime approvedAt, BigDecimal paidAmount, BigDecimal unpaid,
                                 String createdBy, LocalDateTime createdAt, List<LineView> lines,
                                 List<TaxBreakdown> taxBreakdown, List<InvoiceView> invoices, List<PaymentView> payments) {
@@ -164,9 +180,30 @@ public class SettlementService {
     private record Unbilled(List<Priced> priced, List<MissingPrice> missing) {
     }
 
+    public enum FollowUp {
+        PAY, REFUND, OVERDUE
+    }
+
     @Transactional(readOnly = true)
-    public List<StatementView> list() {
-        return views(statements.findTop300ByOrderByIdDesc());
+    public List<StatementView> list(String statementNo, FollowUp followUp) {
+        if (statementNo != null && !statementNo.isBlank()) {
+            return views(statements.findByStatementNo(statementNo.trim()).stream().toList());
+        }
+        if (followUp == null) {
+            return views(statements.findTop300ByOrderByIdDesc());
+        }
+        LocalDate today = time.today();
+        return views(statements.findByStatusInOrderById(List.of(StatementStatus.APPROVED)).stream()
+                .filter(s -> {
+                    int sign = s.outstandingAmount().signum();
+                    return switch (followUp) {
+                        case PAY -> sign > 0;
+                        case REFUND -> sign < 0;
+                        case OVERDUE -> sign != 0 && s.effectiveDueDate().isBefore(today);
+                    };
+                })
+                .sorted(Comparator.comparing(SupplierStatement::effectiveDueDate).thenComparing(SupplierStatement::getId))
+                .toList());
     }
 
     @Transactional(readOnly = true)
@@ -284,16 +321,44 @@ public class SettlementService {
     }
 
     /** 内部代供应商登记单张发票：兼容原有单发票接口，自动识别正负金额为蓝字或红字发票。 */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public StatementView registerInvoice(Long id, InvoiceReq req) {
         String type = req.amount() != null && req.amount().signum() < 0 ? "RED" : "BLUE";
-        return saveInvoices(locked(id), List.of(new InvoiceItemReq(req.invoiceNo(), type, req.invoiceDate(), new BigDecimal("13.00"), req.amount(), null)));
+        return saveInvoices(lockForInvoiceRegistration(id, false), List.of(new InvoiceItemReq(req.invoiceNo(), type, req.invoiceDate(), new BigDecimal("13.00"), req.amount(), null)));
     }
 
     /** 内部代供应商登记多张发票（支持蓝字发票与红字冲减发票组合）。 */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public StatementView registerInvoices(Long id, BatchInvoiceReq req) {
-        return saveInvoices(locked(id), req.invoices());
+        return saveInvoices(lockForInvoiceRegistration(id, false), req.invoices());
+    }
+
+    @Transactional
+    public StatementView returnInvoice(Long id, ReturnInvoiceReq req) {
+        SupplierStatement st = locked(id);
+        require(st, StatementStatus.INVOICED, "退回发票");
+        requireInvoiceVersion(st, req.invoiceReviewVersion());
+        AppUser signer = signature.verify(req.password());
+
+        SupplierStatementInvoiceReturn review = new SupplierStatementInvoiceReturn();
+        review.setStatementId(id);
+        review.setReason(req.reason().trim());
+        review.setReturnedBy(signer.getUsername());
+        review.setReturnedAt(time.now());
+        review.setInvoiceNo(st.getInvoiceNo());
+        review.setInvoiceDate(st.getInvoiceDate());
+        review.setInvoiceAmount(st.getInvoiceAmount());
+        invoiceReturns.save(review);
+        for (SupplierStatementInvoice invoice : statementInvoices.findByStatementIdAndInvoiceReturnIdIsNull(id)) {
+            invoice.setInvoiceReturnId(review.getId());
+        }
+        st.setInvoiceNo(null);
+        st.setInvoiceDate(null);
+        st.setInvoiceAmount(null);
+        st.setInvoiceReviewVersion(st.getInvoiceReviewVersion() + 1);
+        st.setStatus(StatementStatus.CONFIRMED);
+        audit.logMoney("退回发票", st.getStatementNo(), name(st), review.getReason());
+        return views(List.of(st)).get(0);
     }
 
     /** 财务审批：审批人不能是制单人。 */
@@ -301,6 +366,7 @@ public class SettlementService {
     public StatementView approve(Long id, ApproveReq req) {
         SupplierStatement st = locked(id);
         require(st, StatementStatus.INVOICED, "审批");
+        requireInvoiceVersion(st, req.invoiceReviewVersion());
         requireStillReleased(st);
         AppUser signer = signature.verify(req.password());
         if (signer.getUsername().equals(st.getCreatedBy())) {
@@ -325,7 +391,7 @@ public class SettlementService {
         if (req.payDate().isAfter(time.today())) {
             throw new BizException("付款日期不能晚于今天");
         }
-        BigDecimal unpaid = st.getTotalAmount().subtract(st.getPaidAmount());
+        BigDecimal unpaid = st.outstandingAmount();
         if (req.amount().compareTo(unpaid) > 0) {
             throw new BizException("付款金额 " + req.amount().toPlainString() + " 超过未付金额 " + unpaid.toPlainString());
         }
@@ -359,7 +425,7 @@ public class SettlementService {
             throw new BizException("退款日期不能晚于今天");
         }
         // 应退总额与已退金额（在红字对账单中 paidAmount 以负数累计冲抵 totalAmount）
-        BigDecimal unrefunded = st.getTotalAmount().subtract(st.getPaidAmount()).abs();
+        BigDecimal unrefunded = st.outstandingAmount().negate();
         if (req.amount().compareTo(unrefunded) > 0) {
             throw new BizException("退款金额 " + req.amount().toPlainString() + " 超过待退金额 " + unrefunded.toPlainString());
         }
@@ -385,7 +451,12 @@ public class SettlementService {
 
     @Transactional(readOnly = true)
     public List<StatementView> myStatements() {
-        return views(statements.findTop300BySupplierIdOrderByIdDesc(currentUser.portalPartnerId()));
+        Long supplierId = currentUser.portalPartnerId();
+        Map<Long, SupplierStatement> rows = new LinkedHashMap<>();
+        statements.findBySupplierIdAndStatusAndInvoiceReviewVersionGreaterThanOrderByIdDesc(supplierId, StatementStatus.CONFIRMED, 0)
+                .forEach(s -> rows.put(s.getId(), s));
+        statements.findTop300BySupplierIdOrderByIdDesc(supplierId).forEach(s -> rows.putIfAbsent(s.getId(), s));
+        return views(List.copyOf(rows.values()));
     }
 
     @Transactional
@@ -411,15 +482,15 @@ public class SettlementService {
         return views(List.of(st)).get(0);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public StatementView myInvoice(Long id, InvoiceReq req) {
         String type = req.amount() != null && req.amount().signum() < 0 ? "RED" : "BLUE";
-        return saveInvoices(mineLocked(id), List.of(new InvoiceItemReq(req.invoiceNo(), type, req.invoiceDate(), new BigDecimal("13.00"), req.amount(), null)));
+        return saveInvoices(lockForInvoiceRegistration(id, true), List.of(new InvoiceItemReq(req.invoiceNo(), type, req.invoiceDate(), new BigDecimal("13.00"), req.amount(), null)));
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public StatementView myInvoices(Long id, BatchInvoiceReq req) {
-        return saveInvoices(mineLocked(id), req.invoices());
+        return saveInvoices(lockForInvoiceRegistration(id, true), req.invoices());
     }
 
     // ---------- 内部 ----------
@@ -439,12 +510,12 @@ public class SettlementService {
         }
         for (InvoiceItemReq item : items) {
             String no = item.invoiceNo().trim();
-            if (statements.existsBySupplierIdAndInvoiceNoAndStatusNot(st.getSupplierId(), no, StatementStatus.CANCELLED)
-                    || statementInvoices.existsDuplicateInvoice(st.getSupplierId(), no, StatementStatus.CANCELLED, st.getId())) {
-                throw new BizException("发票号 " + no + " 已经登记过");
+            List<String> owners = statements.findInvoiceOwners(st.getSupplierId(), st.getId(), StatementStatus.CANCELLED,
+                    SettlementRule.invoiceKey(no), PageRequest.of(0, 1));
+            if (!owners.isEmpty()) {
+                throw new BizException("发票号 " + no + " 已经登记过（对账单 " + owners.get(0) + "）");
             }
         }
-        statementInvoices.deleteByStatementId(st.getId());
         List<String> nos = new ArrayList<>();
         LocalDate latestDate = null;
         String user = currentUser.usernameOrSystem();
@@ -476,14 +547,16 @@ public class SettlementService {
         }
         String joinedNo = String.join(",", nos);
         if (joinedNo.length() > 60) {
-            joinedNo = nos.get(0) + "等" + nos.size() + "张";
+            String summary = nos.get(0) + "等" + nos.size() + "张";
+            joinedNo = summary.length() <= 60 ? summary : "共" + nos.size() + "张";
         }
         st.setInvoiceNo(joinedNo);
         st.setInvoiceDate(latestDate);
         st.setInvoiceAmount(sum);
         st.setStatus(StatementStatus.INVOICED);
         statements.save(st);
-        audit.logMoney("登记发票", st.getStatementNo(), name(st) + ", 发票 " + String.join("、", nos) + ", 合计 " + sum.toPlainString());
+        String action = st.getInvoiceReviewVersion() == 0 ? "登记发票" : "更正后重提发票";
+        audit.logMoney(action, st.getStatementNo(), name(st) + ", 发票 " + String.join("、", nos) + ", 合计 " + sum.toPlainString());
         return views(List.of(st)).get(0);
     }
 
@@ -500,6 +573,24 @@ public class SettlementService {
 
     private SupplierStatement locked(Long id) {
         return statements.lockById(id).orElseThrow(() -> BizException.notFound("对账单"));
+    }
+
+    private SupplierStatement lockForInvoiceRegistration(Long id, boolean portal) {
+        // 先查不可变的所属供应商。门户确认归属后，才锁供应商和对账单。
+        Long supplierId = statements.findSupplierIdById(id).orElseThrow(() -> BizException.notFound("对账单"));
+        if (portal && !supplierId.equals(currentUser.portalPartnerId())) {
+            throw BizException.notFound("对账单");
+        }
+        // 同一供应商的跨单据查重必须串行。入口使用 READ_COMMITTED，等待锁后能读到上一笔已登记的发票。
+        partners.lockById(supplierId).orElseThrow(() -> BizException.notFound("供应商"));
+        return locked(id);
+    }
+
+    private void requireInvoiceVersion(SupplierStatement st, Integer expected) {
+        int current = st.getInvoiceReviewVersion();
+        if (expected == null ? current != 0 : expected != current) {
+            throw new BizException("发票已更正，请刷新页面并核对最新发票后再操作");
+        }
     }
 
     /** 先锁再判断归属：锁必须是事务第一句。 */
@@ -599,12 +690,23 @@ public class SettlementService {
         Map<Long, String> returnNos = new HashMap<>();
         returns.findAllById(all.stream().map(SupplierStatementLine::getReturnId).filter(java.util.Objects::nonNull).toList()).forEach(r -> returnNos.put(r.getId(), r.getReturnNo()));
         Map<Long, List<SupplierStatementLine>> byStatement = all.stream().collect(Collectors.groupingBy(SupplierStatementLine::getStatementId));
-        Map<Long, List<InvoiceView>> invs = statementInvoices.findByStatementIdInOrderById(ids).stream().collect(Collectors.groupingBy(
-                SupplierStatementInvoice::getStatementId,
-                Collectors.mapping(i -> new InvoiceView(i.getId(), i.getInvoiceNo(), i.getInvoiceType(),
-                        "RED".equals(i.getInvoiceType()) ? "红字发票" : "蓝字发票",
-                        i.getInvoiceDate(), i.getTaxRate(), i.getAmount(), i.getTaxAmount(), i.getNote(), i.getCreatedBy(), i.getCreatedAt()),
-                        Collectors.toList())));
+        Map<Long, List<InvoiceView>> invs = new HashMap<>();
+        Map<Long, List<InvoiceView>> returnedInvs = new HashMap<>();
+        for (SupplierStatementInvoice i : statementInvoices.findByStatementIdInOrderById(ids)) {
+            InvoiceView view = new InvoiceView(i.getId(), i.getInvoiceNo(), i.getInvoiceType(),
+                    "RED".equals(i.getInvoiceType()) ? "红字发票" : "蓝字发票", i.getInvoiceDate(), i.getTaxRate(),
+                    i.getAmount(), i.getTaxAmount(), i.getNote(), i.getCreatedBy(), i.getCreatedAt());
+            if (i.getInvoiceReturnId() == null) {
+                invs.computeIfAbsent(i.getStatementId(), ignored -> new ArrayList<>()).add(view);
+            } else {
+                returnedInvs.computeIfAbsent(i.getInvoiceReturnId(), ignored -> new ArrayList<>()).add(view);
+            }
+        }
+        Map<Long, List<InvoiceReturnView>> corrections = invoiceReturns.findByStatementIdInOrderByIdDesc(ids).stream()
+                .collect(Collectors.groupingBy(SupplierStatementInvoiceReturn::getStatementId,
+                        Collectors.mapping(r -> new InvoiceReturnView(r.getId(), r.getReason(), r.getReturnedBy(), r.getReturnedAt(),
+                                r.getInvoiceNo(), r.getInvoiceDate(), r.getInvoiceAmount(), returnedInvs.getOrDefault(r.getId(), List.of())),
+                                Collectors.toList())));
         Map<Long, List<PaymentView>> pays = payments.findByStatementIdInOrderById(ids).stream().collect(Collectors.groupingBy(SupplierPayment::getStatementId,
                 Collectors.mapping(p -> new PaymentView(
                         p.getPaymentType() == null ? "PAY" : p.getPaymentType(),
@@ -614,14 +716,15 @@ public class SettlementService {
             List<SupplierStatementLine> sLines = byStatement.getOrDefault(s.getId(), List.of());
             List<TaxBreakdown> taxBreakdown = SettlementRule.breakdownByTaxRate(
                     sLines.stream().map(l -> new TaxLineInput(l.getTaxRate(), l.getAmount(), l.getTaxAmount())).toList());
-            LocalDate dueDate = s.getDueDate() != null ? s.getDueDate() : SettlementRule.computeDueDate(s.getPeriodTo(), s.getCreditDays());
+            LocalDate dueDate = s.effectiveDueDate();
             boolean settledOrCancelled = s.getStatus() == StatementStatus.PAID || s.getStatus() == StatementStatus.CANCELLED;
             long overdueDays = SettlementRule.overdueDays(dueDate, today, settledOrCancelled);
             return new StatementView(s.getId(), s.getStatementNo(), s.getSupplierId(), lookup.partner(s.getSupplierId()).getName(), s.getPeriodTo(),
                     s.getCreditDays(), dueDate, overdueDays > 0, overdueDays,
-                    s.getStatus(), s.getStatus().getLabel(), s.getGoodsAmount(), s.getTaxAmount(), s.getAdjustment(), s.getAdjustmentNote(), s.getTotalAmount(), s.getDisputeNote(),
-                    s.getCancelReason(), s.getConfirmedBy(), s.getConfirmedAt(), s.getInvoiceNo(), s.getInvoiceDate(), s.getInvoiceAmount(), s.getApprovedBy(), s.getApprovedAt(),
-                    s.getPaidAmount(), s.getTotalAmount().subtract(s.getPaidAmount()), s.getCreatedBy(), s.getCreatedAt(),
+                    s.getStatus(), s.statusLabel(), s.getGoodsAmount(), s.getTaxAmount(), s.getAdjustment(), s.getAdjustmentNote(), s.getTotalAmount(), s.getDisputeNote(),
+                    s.getCancelReason(), s.getConfirmedBy(), s.getConfirmedAt(), s.getInvoiceNo(), s.getInvoiceDate(), s.getInvoiceAmount(),
+                    s.getInvoiceReviewVersion(), s.invoiceCorrectionPending(), corrections.getOrDefault(s.getId(), List.of()), s.getApprovedBy(), s.getApprovedAt(),
+                    s.getPaidAmount(), s.outstandingAmount(), s.getCreatedBy(), s.getCreatedAt(),
                     sLines.stream().map(l -> {
                         Batch b = bm.get(l.getBatchId());
                         Item i = items.get(b.getItemId());

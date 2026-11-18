@@ -1,6 +1,7 @@
 package com.cosmetic.scm.supplierreturn;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 import com.cosmetic.scm.domain.SupplierReturnStatus;
@@ -24,6 +25,10 @@ import lombok.Setter;
 @Setter
 @NoArgsConstructor
 public class SupplierReturn {
+
+    public enum ReceiptSource {
+        PORTAL, OFFLINE
+    }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -65,16 +70,28 @@ public class SupplierReturn {
     /** 登记退货发货时间。 */
     private LocalDateTime shippedAt;
 
-    /** 供应商门户确认收货人。 */
+    /** 门户确认人或采购代录人。 */
     private String supplierConfirmedBy;
 
-    /** 供应商门户确认收货时间。 */
+    /** 确认或代录的系统登记时间。 */
     private LocalDateTime supplierConfirmedAt;
 
-    /** 供应商收货备注。 */
+    /** 签收备注。 */
     private String supplierNote;
+
+    @Enumerated(EnumType.STRING)
+    private ReceiptSource receiptSource;
+
+    /** 线下回单记载的实际签收日期。 */
+    private LocalDate receivedOn;
+
+    private String receiptReference;
 
     private String createdBy;
 
     private LocalDateTime createdAt;
+
+    public boolean awaitingReceipt() {
+        return status == SupplierReturnStatus.DONE && shippedAt != null && supplierConfirmedAt == null;
+    }
 }

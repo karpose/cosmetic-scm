@@ -104,15 +104,24 @@ public class ReportService {
 
     private Table supplierReturns() {
         List<List<Object>> rows = new ArrayList<>();
-        supplierReturns.listAll().forEach(r -> rows.add(row(r.returnNo(), r.supplierName(), r.batchNo(), r.extBatchNo(), r.itemName(), r.qty(), r.unit(), r.warehouseName(), r.reason(), r.statusLabel(), r.createdBy(), r.signedBy(), r.signedAt())));
-        return new Table("退供记录", List.of("退供单", "供应商", "批号", "供应商批号", "物料", "数量", "单位", "仓库", "原因", "状态", "发起人", "签批人", "签批时间"), rows);
+        supplierReturns.listAll().forEach(r -> rows.add(row(r.returnNo(), r.supplierName(), r.batchNo(), r.extBatchNo(), r.itemName(), r.qty(), r.unit(), r.warehouseName(),
+                r.reason(), r.statusLabel(), r.createdBy(), r.signedBy(), r.signedAt(), r.carrier(), r.trackingNo(), r.shippedBy(), r.shippedAt(),
+                r.supplierConfirmedBy(), r.supplierConfirmedAt(), r.supplierNote(),
+                r.receiptSource() == null ? null : switch (r.receiptSource()) {
+                    case PORTAL -> "供应商门户";
+                    case OFFLINE -> "采购代录";
+                }, r.receivedOn(), r.receiptReference())));
+        return new Table("退供记录", List.of("退供单", "供应商", "批号", "供应商批号", "物料", "数量", "单位", "仓库", "原因", "状态", "发起人", "签批人", "签批时间",
+                "承运商", "运单号", "物流登记人", "物流登记时间", "签收登记人", "签收登记时间", "签收备注", "签收来源", "实际签收日期", "回单或凭证编号"), rows);
     }
 
     private Table statements() {
         List<List<Object>> rows = new ArrayList<>();
         settlement.listAll().forEach(t -> rows.add(row(t.statementNo(), t.supplierName(), t.periodTo(), t.statusLabel(), t.goodsAmount(), t.taxAmount(), t.adjustment(), t.adjustmentNote(),
-                t.totalAmount(), t.invoiceNo(), t.invoiceDate(), t.paidAmount(), t.unpaid(), t.createdBy(), t.approvedBy())));
-        return new Table("对账单", List.of("对账单", "供应商", "对账截止", "状态", "含税货款", "其中税额", "调整", "调整原因", "合计", "发票号", "发票日期", "已付", "未付", "制单", "审批"), rows);
+                t.totalAmount(), t.invoiceNo(), t.invoiceDate(), t.paidAmount(), t.unpaid(), t.createdBy(), t.approvedBy(),
+                t.creditDays(), t.dueDate(), t.overdueDays(), t.totalAmount().signum() < 0 ? "供应商退款" : "付款")));
+        return new Table("对账单", List.of("对账单", "供应商", "对账截止", "状态", "含税货款", "其中税额", "调整", "调整原因", "合计", "发票号", "发票日期",
+                "已结（退款为负）", "未结（退款为负）", "制单", "审批", "账期（天）", "到期日", "逾期天数", "收付方向"), rows);
     }
 
     private Table stock() {

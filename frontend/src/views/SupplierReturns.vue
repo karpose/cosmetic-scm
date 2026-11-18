@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h2>退供</h2>
-        <p>把来料退回供应商。采购或仓库发起，质量签批后才扣库存（签批人不能是发起人），签批后登记退货物流，供应商在门户确认收货。结算前退的自动减结算数量，结算后退的在下一张对账单冲减。</p>
+        <p>质量签批后登记退货物流。供应商可在门户确认收货，未启用门户的由采购凭回单代录签收。</p>
       </div>
       <div class="toolbar">
         <ExportButton report="supplier-returns" />
@@ -13,10 +13,14 @@
 
     <el-card shadow="never" body-style="padding:0 0 8px">
       <template #header>
-        <div class="filters"><el-input v-model="t.keyword.value" placeholder="搜索单号、供应商、批号、物料、运单号" clearable /></div>
+        <div v-if="selectedNo" class="filters">
+          <span class="mono">{{ selectedNo }}</span>
+          <RouterLink to="/supplier-returns">查看全部退供单</RouterLink>
+        </div>
+        <div v-else class="filters"><el-input v-model="t.keyword.value" placeholder="搜索单号、供应商、批号、物料、运单或回单号" clearable /></div>
       </template>
       <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
-      <el-table v-else :data="t.paged.value" v-loading="loader.loading.value" empty-text="还没有退供">
+      <el-table v-else :data="t.paged.value" v-loading="loader.loading.value" :empty-text="selectedNo ? '没有找到这张退供单' : '还没有退供'">
         <el-table-column label="退供单" width="150"><template #default="{ row }"><span class="mono">{{ row.returnNo }}</span><div class="muted small mono">{{ fmtTime(row.createdAt) }}</div></template></el-table-column>
         <el-table-column prop="supplierName" label="供应商" min-width="150" />
         <el-table-column label="批次和数量" min-width="230">
@@ -25,15 +29,18 @@
         <el-table-column prop="reason" label="原因" min-width="140" />
         <el-table-column label="退货物流与签收" min-width="190">
           <template #default="{ row }">
-            <div v-if="row.trackingNo" class="small">
-              <span>{{ row.carrier }} <span class="mono">{{ row.trackingNo }}</span></span>
-              <div class="muted small">
-                <el-tag v-if="row.supplierConfirmedAt" size="small" type="success" disable-transitions>供应商已签收</el-tag>
-                <el-tag v-else size="small" type="warning" disable-transitions>已发出待签收</el-tag>
-                <span v-if="row.supplierNote"> · {{ row.supplierNote }}</span>
+            <div v-if="row.status === 'DONE'" class="small">
+              <div v-if="row.shippedAt">{{ row.carrier }} <span class="mono">{{ row.trackingNo }}</span></div>
+              <el-tag v-if="row.supplierConfirmedAt" size="small" type="success" disable-transitions>{{ row.receiptSource === 'OFFLINE' ? '采购已代录签收' : '供应商已签收' }}</el-tag>
+              <el-tag v-else-if="row.offlineReceiptPending" size="small" type="warning" disable-transitions>待代录签收</el-tag>
+              <el-tag v-else-if="row.shippedAt" size="small" type="warning" disable-transitions>已发出待签收</el-tag>
+              <el-tag v-else size="small" type="info" disable-transitions>待登记退货物流</el-tag>
+              <div v-if="row.supplierConfirmedAt" class="muted small">
+                <div v-if="row.receiptSource === 'OFFLINE'">签收 {{ row.receivedOn }} · 凭证 <span class="mono">{{ row.receiptReference }}</span></div>
+                {{ fmtTime(row.supplierConfirmedAt) }}<span v-if="row.supplierNote"> · {{ row.supplierNote }}</span>
               </div>
             </div>
-            <span v-else class="muted small">{{ row.status === 'DONE' ? '待登记退货物流' : '-' }}</span>
+            <span v-else class="muted small">—</span>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="130"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /><div v-if="row.signedBy" class="muted small">{{ row.signedBy }}</div><div v-if="row.cancelReason" class="muted small">{{ row.cancelReason }}</div></template></el-table-column>
@@ -42,11 +49,12 @@
             <el-button v-if="row.status === 'PENDING' && canSign" size="small" type="primary" @click="openApprove(row)">签批</el-button>
             <el-button v-if="row.status === 'PENDING' && canMake" size="small" text @click="cancel(row)">取消</el-button>
             <el-button v-if="row.status === 'DONE' && !row.supplierConfirmedAt && canMake" size="small" @click="openShip(row)">{{ row.trackingNo ? '改物流' : '登记物流' }}</el-button>
+            <el-button v-if="row.offlineReceiptPending && canRecordReceipt" size="small" type="primary" @click="openReceipt(row)">代录签收</el-button>
           </template>
         </el-table-column>
       </el-table>
-      <ListCapHint :count="rows.length" />
-      <ListPager v-model:page="t.page.value" v-model:size="t.size.value" :total="t.total.value" />
+      <ListCapHint v-if="!selectedNo" :count="rows.length" />
+      <ListPager v-if="!selectedNo" v-model:page="t.page.value" v-model:size="t.size.value" :total="t.total.value" />
     </el-card>
 
     <el-dialog v-model="cr.visible" title="发起退供" width="760px" :close-on-click-modal="false">
@@ -100,11 +108,34 @@
         <el-button type="primary" :loading="sh.saving" @click="submitShip">保存物流信息</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="rc.visible" :title="`代录签收：${rc.row?.returnNo || ''}`" width="480px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <p class="muted small">{{ rc.row?.supplierName }} · 运单或交接单号 {{ rc.row?.trackingNo }}。请按收到的回单填写。</p>
+        <el-form-item label="实际签收日期">
+          <el-date-picker id="rs-received-on" v-model="rc.receivedOn" type="date" value-format="YYYY-MM-DD" :disabled-date="(d) => d > startOfBusinessDay()" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="回单或签收凭证编号">
+          <el-input id="rs-receipt-reference" v-model="rc.receiptReference" maxlength="80" />
+        </el-form-item>
+        <el-form-item label="签收备注（选填）">
+          <el-input id="rs-receipt-note" v-model="rc.note" type="textarea" :rows="2" maxlength="300" />
+        </el-form-item>
+        <el-form-item label="签批密码">
+          <el-input id="rs-receipt-password" v-model="rc.password" type="password" show-password autocomplete="current-password" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rc.visible = false">取消</el-button>
+        <el-button type="primary" :loading="rc.saving" @click="submitReceipt">登记签收</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
@@ -114,21 +145,30 @@ import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
-import { fmtQty, fmtTime } from '../utils/format'
+import { fmtQty, fmtTime, startOfBusinessDay, today } from '../utils/format'
 import { latestOnly } from '../utils/latest'
 import { useLoader } from '../utils/loader'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
 
 const auth = useAuth()
+const route = useRoute()
 const rd = useRefData()
 const canMake = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'WAREHOUSE'))
 const canSign = computed(() => auth.hasAny('QA', 'QSO'))
+const canRecordReceipt = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
 
 const rows = ref([])
-const loader = useLoader(async () => { rows.value = await http.get('/supplier-returns') })
+const selectedNo = computed(() => typeof route.query.no === 'string' ? route.query.no : '')
+const listRequest = latestOnly()
+const loader = useLoader(async () => {
+  const current = listRequest()
+  const data = await http.get('/supplier-returns', { params: { returnNo: selectedNo.value || undefined } })
+  if (current()) rows.value = data
+})
 const load = () => loader.run()
-const t = usePaged(rows, { match: textMatch('returnNo', 'supplierName', 'batchNo', 'extBatchNo', 'itemName', 'trackingNo') })
+const t = usePaged(rows, { match: textMatch('returnNo', 'supplierName', 'batchNo', 'extBatchNo', 'itemName', 'trackingNo', 'receiptReference') })
+watch(selectedNo, () => { rows.value = []; t.keyword.value = ''; t.page.value = 1; load() })
 const narrow = ref(window.innerWidth <= 768)
 const onResize = () => { narrow.value = window.innerWidth <= 768 }
 onMounted(() => { load(); rd.load(); window.addEventListener('resize', onResize) })
@@ -198,6 +238,25 @@ async function submitShip() {
     load()
   } finally {
     sh.saving = false
+  }
+}
+
+const rc = reactive({ visible: false, saving: false, row: null, receivedOn: null, receiptReference: '', note: '', password: '' })
+function openReceipt(row) {
+  Object.assign(rc, { visible: true, saving: false, row, receivedOn: today(), receiptReference: '', note: '', password: '' })
+}
+async function submitReceipt() {
+  if (!rc.receivedOn || !rc.receiptReference.trim() || !rc.password) return ElMessage.warning('请填写签收日期、凭证编号和签批密码')
+  rc.saving = true
+  try {
+    await http.post(`/supplier-returns/${rc.row.id}/offline-receipt`, {
+      receivedOn: rc.receivedOn, receiptReference: rc.receiptReference, note: rc.note, password: rc.password
+    })
+    ElMessage.success('线下签收已登记')
+    rc.visible = false
+    load()
+  } finally {
+    rc.saving = false
   }
 }
 

@@ -15,12 +15,17 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
 import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.Role;
+import com.cosmetic.scm.domain.StatementStatus;
 import com.cosmetic.scm.inventory.Batch;
 import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.master.ItemRepository;
@@ -29,6 +34,8 @@ import com.cosmetic.scm.master.PartnerRepository;
 import com.cosmetic.scm.master.WarehouseRepository;
 import com.cosmetic.scm.security.UserRepository;
 import com.cosmetic.scm.security.UserService;
+import com.cosmetic.scm.settlement.SupplierStatementRepository;
+import com.cosmetic.scm.sourcing.RfqRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -39,6 +46,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 
 /** 询价比价和对账结算：封标、隔离、职责分离，金额手算。 */
@@ -58,6 +66,8 @@ class SourcingSettlementTest {
     @Autowired UserRepository users;
     @Autowired UserService userService;
     @Autowired TimeProvider time;
+    @Autowired RfqRepository rfqs;
+    @Autowired SupplierStatementRepository statements;
 
     private LocalDate d(int n) {
         return time.today().plusDays(n);
@@ -195,6 +205,81 @@ class SourcingSettlementTest {
         assertThat(body(read(sb, "/api/portal/supplier/rfqs")).get(0).get("stateLabel").asText()).isEqualTo("已中标");
         assertThat(body(read(sa, "/api/portal/supplier/rfqs")).get(0).get("stateLabel").asText()).isEqualTo("未中标");
         assertThat(text(read(sa, "/api/portal/supplier/rfqs"))).doesNotContain(poNo).doesNotContain("只有两家");
+    }
+
+    @Test
+    void onlyQuotesSubmittedForTheCurrentRoundCanWin() throws Exception {
+        Long a = supplier("SUP-ROUND-A", "round_a");
+        Long b = supplier("SUP-ROUND-B", "round_b");
+        String buyer = login("purchase1");
+        String sa = login("round_a");
+        String sb = login("round_b");
+        String admin = login("admin", "Admin@123456");
+        JsonNode rfq = body(call(buyer, "/api/rfqs", Map.of("title", "多轮议价",
+                "deadline", d(7), "supplierIds", List.of(a, b), "lines", List.of(
+                        Map.of("itemId", item("RM-GLY-002"), "qty", 2),
+                        Map.of("itemId", item("RM-PHE-004"), "qty", 3)))).andExpect(status().isOk()));
+        long id = rfq.get("id").asLong();
+        long firstLine = rfq.get("lines").get(0).get("id").asLong();
+        long secondLine = rfq.get("lines").get(1).get("id").asLong();
+        String internal = "/api/rfqs/" + id;
+        String portal = "/api/portal/supplier/rfqs/" + id + "/quote";
+        call(sa, portal, Map.of("roundNo", 1, "lines", List.of(quote(firstLine, "17"), quote(secondLine, "19"))))
+                .andExpect(status().isOk());
+        call(sb, portal, Map.of("roundNo", 1, "lines", List.of(quote(firstLine, "11"), quote(secondLine, "13"))))
+                .andExpect(status().isOk());
+        call(buyer, internal + "/open", Map.of()).andExpect(status().isOk());
+
+        call(buyer, internal + "/next-round", Map.of("roundNo", 1, "deadline", d(40), "note", "按年采量重新报价"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.lines[0].quotes").isEmpty())
+                .andExpect(jsonPath("$.suppliers[0].quotedLines").value(0));
+        read(sb, "/api/portal/supplier/rfqs").andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].lines[0].myQuote.roundNo").value(1))
+                .andExpect(jsonPath("$[0].lines[0].myQuote.validUntil").value(d(30).toString()));
+        call(sa, portal, Map.of("roundNo", 1, "lines", List.of(quote(firstLine, "15"))))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("轮次已变更")));
+        var current = new HashMap<>(quote(firstLine, "16"));
+        current.put("validUntil", d(45));
+        call(sa, portal, Map.of("roundNo", 2, "lines", List.of(current))).andExpect(status().isOk());
+        current.put("unitPrice", new BigDecimal("15"));
+        call(sa, portal, Map.of("roundNo", 2, "lines", List.of(current))).andExpect(status().isOk());
+        read(buyer, "/api/rfqs").andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].suppliers[0].quotedLines").value(1))
+                .andExpect(jsonPath("$[0].lines[0].quotes").isEmpty());
+        call(buyer, internal + "/open", Map.of()).andExpect(status().isBadRequest());
+
+        // 模拟新一轮截止，只有实际提交的报价参与比价。
+        var ended = rfqs.findById(id).orElseThrow();
+        ended.setDeadline(d(-1));
+        rfqs.save(ended);
+        read(buyer, "/api/rfqs").andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].lines[0].quotes.length()").value(1))
+                .andExpect(jsonPath("$[0].lines[0].quotes[0].prevUnitPrice").value(17.0))
+                .andExpect(jsonPath("$[0].lines[1].quotes").isEmpty());
+        call(admin, internal + "/award", Map.of("roundNo", 2, "password", "Admin@123456", "reason", "只有一家",
+                "lines", List.of(Map.of("rfqLineId", firstLine, "supplierId", b))))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("本轮未提交")));
+        call(admin, internal + "/award", Map.of("roundNo", 2, "password", "Admin@123456", "reason", "只有一家",
+                "lines", List.of(Map.of("rfqLineId", firstLine, "supplierId", a))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("AWARDED"))
+                .andExpect(jsonPath("$.lines[0].quotes[0].unitPrice").value(15.0))
+                .andExpect(jsonPath("$.lines[0].quotes[0].poNo").isNotEmpty());
+    }
+
+    @Test
+    void cancellingAnUnopenedRfqDoesNotRevealQuotes() throws Exception {
+        Long supplier = supplier("SUP-RFQ-CANCEL", "rfq_cancel");
+        String buyer = login("purchase1");
+        JsonNode rfq = body(call(buyer, "/api/rfqs", Map.of("title", "取消未开标的询价",
+                "deadline", d(7), "supplierIds", List.of(supplier),
+                "lines", List.of(Map.of("itemId", item("RM-GLY-002"), "qty", 2)))).andExpect(status().isOk()));
+        long id = rfq.get("id").asLong();
+        long line = rfq.get("lines").get(0).get("id").asLong();
+        call(login("rfq_cancel"), "/api/portal/supplier/rfqs/" + id + "/quote", Map.of("lines", List.of(quote(line, "33"))))
+                .andExpect(status().isOk());
+        call(buyer, "/api/rfqs/" + id + "/cancel", Map.of("reason", "采购需求取消"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.lines[0].quotes").isEmpty());
+        read(buyer, "/api/rfqs").andExpect(status().isOk()).andExpect(jsonPath("$[0].lines[0].quotes").isEmpty());
     }
 
     @Autowired
@@ -416,6 +501,110 @@ class SourcingSettlementTest {
         batches.save(b);
     }
 
+    private JsonNode confirmedStatement(String buyer, Long supplierId, String supplierToken) throws Exception {
+        Batch batch = buyAndReceive(buyer, supplierId, "RM-GLY-002", "1", "50", "13").get(0);
+        setStatus(batch, BatchStatus.RELEASED);
+        JsonNode s = body(call(buyer, "/api/statements", Map.of("supplierId", supplierId, "periodTo", d(0)))
+                .andExpect(status().isOk()));
+        call(supplierToken, "/api/portal/supplier/statements/" + s.get("id").asLong() + "/confirm", Map.of())
+                .andExpect(status().isOk());
+        return s;
+    }
+
+    @Test
+    void concurrentInvoiceRegistrationHasOneOwnerPerSupplier() throws Exception {
+        Long supplierId = supplier("SUP-INV-RACE", "invoice_race_s");
+        String buyer = login("purchase1");
+        String sup = login("invoice_race_s");
+        List<Long> ids = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            ids.add(confirmedStatement(buyer, supplierId, sup).get("id").asLong());
+        }
+
+        var pool = Executors.newFixedThreadPool(ids.size());
+        var ready = new CountDownLatch(ids.size());
+        var start = new CountDownLatch(1);
+        List<MvcResult> responses = new ArrayList<>();
+        try {
+            List<Future<MvcResult>> attempts = new ArrayList<>();
+            for (int i = 0; i < ids.size(); i++) {
+                boolean portal = i >= 2;
+                boolean multiple = i % 2 == 1;
+                String path = (portal ? "/api/portal/supplier/statements/" : "/api/statements/") + ids.get(i);
+                var invoice = Map.of("invoiceNo", portal ? " inv-race-01 " : "INV-RACE-01", "invoiceDate", d(0), "amount", 50);
+                attempts.add(pool.submit(() -> {
+                    ready.countDown();
+                    if (!start.await(10, TimeUnit.SECONDS)) throw new AssertionError("并发登记未启动");
+                    return call(portal ? sup : buyer, path + (multiple ? "/invoices" : "/invoice"),
+                            multiple ? Map.of("invoices", List.of(invoice)) : invoice).andReturn();
+                }));
+            }
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            for (Future<MvcResult> attempt : attempts) {
+                responses.add(attempt.get(30, TimeUnit.SECONDS));
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(responses).extracting(r -> r.getResponse().getStatus()).containsExactlyInAnyOrder(200, 400, 400, 400);
+        var winner = responses.stream().filter(r -> r.getResponse().getStatus() == 200).findFirst().orElseThrow();
+        JsonNode owner = json.readTree(winner.getResponse().getContentAsByteArray());
+        long ownerId = owner.get("id").asLong();
+        String ownerNo = owner.get("statementNo").asText();
+        for (MvcResult failed : responses.stream().filter(r -> r.getResponse().getStatus() == 400).toList()) {
+            assertThat(failed.getResponse().getContentAsString(StandardCharsets.UTF_8)).contains("已经登记过", ownerNo);
+        }
+        long retry = ids.stream().filter(id -> id != ownerId).findFirst().orElseThrow();
+        read(buyer, "/api/statements?statementNo=" + statements.findById(retry).orElseThrow().getStatementNo())
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].status").value("CONFIRMED"))
+                .andExpect(jsonPath("$[0].invoices").isEmpty());
+
+        var sameNumber = Map.of("invoiceNo", "INV-RACE-01", "invoiceDate", d(0), "amount", 50);
+        Long otherId = supplier("SUP-INV-RACE-OTHER", "invoice_race_other");
+        String other = login("invoice_race_other");
+        long otherStatement = confirmedStatement(buyer, otherId, other).get("id").asLong();
+        call(other, "/api/portal/supplier/statements/" + otherStatement + "/invoice", sameNumber).andExpect(status().isOk());
+        call(other, "/api/portal/supplier/statements/" + retry + "/invoice", sameNumber).andExpect(status().isNotFound());
+
+        call(login("finance1"), "/api/statements/" + ownerId + "/return-invoice",
+                Map.of("reason", "录错单据", "invoiceReviewVersion", 0, "password", PWD)).andExpect(status().isOk());
+        call(buyer, "/api/statements/" + retry + "/invoice", sameNumber).andExpect(status().isOk());
+    }
+
+    @Test
+    void invoiceLookupHandlesOlderStatementsAndLongInvoiceNumbers() throws Exception {
+        Long supplierId = supplier("SUP-INV-LEGACY", "invoice_legacy_s");
+        String buyer = login("purchase1");
+        String sup = login("invoice_legacy_s");
+        long legacyId = confirmedStatement(buyer, supplierId, sup).get("id").asLong();
+        var legacy = statements.findById(legacyId).orElseThrow();
+        legacy.setInvoiceNo("LEGACY-XYZ");
+        legacy.setInvoiceDate(d(0));
+        legacy.setInvoiceAmount(new BigDecimal("50"));
+        legacy.setStatus(StatementStatus.INVOICED);
+        statements.save(legacy);
+
+        long id = confirmedStatement(buyer, supplierId, sup).get("id").asLong();
+        String path = "/api/statements/" + id;
+        call(buyer, path + "/invoice", Map.of("invoiceNo", "legacy-xyz", "invoiceDate", d(0), "amount", 50))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString(legacy.getStatementNo())));
+        call(buyer, path + "/invoices", Map.of("invoices", List.of(
+                Map.of("invoiceNo", "INVOICE-X", "invoiceDate", d(0), "amount", 25),
+                Map.of("invoiceNo", " invoice-x ", "invoiceDate", d(0), "amount", 25))))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("发票号重复")));
+
+        String longNo = "1234567890".repeat(6);
+        JsonNode registered = body(call(buyer, path + "/invoices", Map.of("invoices", List.of(
+                Map.of("invoiceNo", longNo, "invoiceDate", d(0), "amount", 25),
+                Map.of("invoiceNo", "INVOICE-SECOND", "invoiceDate", d(0), "amount", 25))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.invoices[0].invoiceNo").value(longNo)));
+        long next = confirmedStatement(buyer, supplierId, sup).get("id").asLong();
+        call(sup, "/api/portal/supplier/statements/" + next + "/invoice", Map.of("invoiceNo", "invoice-second", "invoiceDate", d(0), "amount", 50))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString(registered.get("statementNo").asText())));
+    }
+
     /** 金额手算：10 × 11.3 = 113.00，税 13%：113 × 13 / 113 = 13.00；3 × 33.3333 = 100.00（99.9999 进位），税 6%：100 × 6 / 106 = 5.66。 */
     @Test
     void threeWayMatchWithHandCalculatedAmounts() throws Exception {
@@ -445,7 +634,8 @@ class SourcingSettlementTest {
 
         // 调整要有原因，合计 = 213 - 13 = 200
         call(buyer, "/api/statements", Map.of("supplierId", s, "periodTo", d(0).toString(), "adjustment", -13)).andExpect(status().isBadRequest());
-        JsonNode st = body(call(buyer, "/api/statements", Map.of("supplierId", s, "periodTo", d(0).toString(), "adjustment", -13, "adjustmentNote", "包装破损扣款")).andExpect(status().isOk()));
+        JsonNode st = body(call(buyer, "/api/statements", Map.of("supplierId", s, "periodTo", d(0).toString(), "creditDays", 0,
+                "adjustment", -13, "adjustmentNote", "包装破损扣款")).andExpect(status().isOk()));
         long id = st.get("id").asLong();
         assertThat(st.get("totalAmount").decimalValue()).isEqualByComparingTo("200.00");
         assertThat(st.get("status").asText()).isEqualTo("SENT");
@@ -487,6 +677,13 @@ class SourcingSettlementTest {
         call(fin, "/api/statements/" + id + "/approve", Map.of("password", "wrong")).andExpect(status().isBadRequest());
         assertThat(text(read(fin, "/api/dashboard"))).contains("对账单待审批");
         call(fin, "/api/statements/" + id + "/approve", Map.of("password", PWD)).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED"));
+        String no = st.get("statementNo").asText();
+        var dueTodo = "$.todos[?(@.ref == '%s')].label".formatted(no);
+        read(fin, "/api/dashboard").andExpect(status().isOk())
+                .andExpect(jsonPath(dueTodo).value(org.hamcrest.Matchers.contains("对账单付款今日到期")));
+        var inQueue = "$[?(@.statementNo == '%s')]".formatted(no);
+        read(fin, "/api/statements?followUp=PAY").andExpect(status().isOk()).andExpect(jsonPath(inQueue).isNotEmpty());
+        read(fin, "/api/statements?followUp=OVERDUE").andExpect(status().isOk()).andExpect(jsonPath(inQueue).isEmpty());
         // 审批后不能作废
         call(buyer, "/api/statements/" + id + "/cancel", Map.of("reason", "x")).andExpect(status().isBadRequest());
 
@@ -496,9 +693,70 @@ class SourcingSettlementTest {
         call(fin, "/api/statements/" + id + "/pay", Map.of("payDate", d(0).toString(), "amount", new BigDecimal("50.01"))).andExpect(status().isBadRequest());
         call(fin, "/api/statements/" + id + "/pay", Map.of("payDate", d(0).toString(), "amount", new BigDecimal("50"))).andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("PAID")).andExpect(jsonPath("$.payments.length()").value(2));
+        read(fin, "/api/statements?followUp=PAY").andExpect(status().isOk()).andExpect(jsonPath(inQueue).isEmpty());
         // 导出
         read(fin, "/api/reports/statements").andExpect(status().isOk());
         assertThat(quarantine).hasSize(1);
+    }
+
+    @Test
+    void returnedInvoicesRetainHistoryAndRequireReviewOfTheCurrentSubmission() throws Exception {
+        Long supplierId = supplier("SUP-INVOICE-RETURN", "invoice_return_s");
+        supplier("SUP-INVOICE-OTHER", "invoice_other_s");
+        String buyer = login("purchase1");
+        String finance = login("finance1");
+        String sup = login("invoice_return_s");
+        Batch batch = buyAndReceive(buyer, supplierId, "RM-GLY-002", "3", "40", "13").get(0);
+        setStatus(batch, BatchStatus.RELEASED);
+        JsonNode st = body(call(buyer, "/api/statements", Map.of("supplierId", supplierId, "periodTo", d(0)))
+                .andExpect(status().isOk()));
+        long id = st.get("id").asLong();
+        String no = st.get("statementNo").asText();
+        String internal = "/api/statements/" + id;
+        String portal = "/api/portal/supplier/statements/" + id;
+        call(sup, portal + "/confirm", Map.of()).andExpect(status().isOk());
+        var first = new HashMap<String, Object>(Map.of("invoiceNo", "INV-RETURN-A", "invoiceType", "BLUE", "invoiceDate", d(0), "taxRate", 9, "amount", 80));
+        var second = Map.of("invoiceNo", "INV-RETURN-B", "invoiceType", "BLUE", "invoiceDate", d(0), "taxRate", 6, "amount", 40);
+        call(sup, portal + "/invoices", Map.of("invoices", List.of(first, second))).andExpect(status().isOk());
+
+        String reason = "请核对第一张税率，错误样例金额 804947.42";
+        var sendBack = Map.of("reason", reason, "password", PWD, "invoiceReviewVersion", 0);
+        call(buyer, internal + "/return-invoice", sendBack).andExpect(status().isForbidden());
+        call(finance, internal + "/return-invoice", Map.of("reason", reason, "password", "wrong", "invoiceReviewVersion", 0))
+                .andExpect(status().isBadRequest());
+        call(finance, internal + "/return-invoice", sendBack).andExpect(status().isOk())
+                .andExpect(jsonPath("$.invoiceCorrectionPending").value(true))
+                .andExpect(jsonPath("$.invoiceNo").isEmpty()).andExpect(jsonPath("$.invoices").isEmpty())
+                .andExpect(jsonPath("$.invoiceReturns[0].reason").value(reason))
+                .andExpect(jsonPath("$.invoiceReturns[0].returnedBy").value("finance1"))
+                .andExpect(jsonPath("$.invoiceReturns[0].invoices.length()").value(2))
+                .andExpect(jsonPath("$.lines[0].batchNo").value(batch.getBatchNo()))
+                .andExpect(jsonPath("$.totalAmount").value(120.0));
+        call(finance, internal + "/return-invoice", sendBack).andExpect(status().isBadRequest());
+        call(finance, internal + "/approve", Map.of("password", PWD, "invoiceReviewVersion", 1)).andExpect(status().isBadRequest());
+
+        String viewer = login("viewer1");
+        assertThat(text(read(viewer, "/api/dashboard"))).contains(no, "对账发票待更正").doesNotContain("804947.42");
+        assertThat(text(read(viewer, "/api/audit?limit=300"))).doesNotContain("804947.42");
+        assertThat(text(read(login("invoice_other_s"), "/api/portal/supplier/statements"))).doesNotContain(no, reason);
+        read(sup, "/api/portal/supplier/statements").andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].invoiceReturns[0].reason").value(reason));
+        assertThat(body(read(buyer, "/api/statements/preview?supplierId=" + supplierId + "&periodTo=" + d(0)))
+                .get("lines").isEmpty()).isTrue();
+
+        first.put("taxRate", 13);
+        // 采购在原单上代更正，同一发票号可以重提。
+        call(buyer, internal + "/invoices", Map.of("invoices", List.of(first, second))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("INVOICED"))
+                .andExpect(jsonPath("$.invoices[0].taxRate").value(13.0))
+                .andExpect(jsonPath("$.invoiceReturns[0].invoices[0].taxRate").value(9.0));
+        call(finance, internal + "/return-invoice", sendBack).andExpect(status().isBadRequest());
+        call(finance, internal + "/approve", Map.of("password", PWD, "invoiceReviewVersion", 0))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("发票已更正")));
+        call(finance, internal + "/approve", Map.of("password", PWD)).andExpect(status().isBadRequest());
+        call(finance, internal + "/approve", Map.of("password", PWD, "invoiceReviewVersion", 1)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"))
+                .andExpect(jsonPath("$.invoiceReturns.length()").value(1));
     }
 
     @Test

@@ -9,6 +9,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -16,14 +17,23 @@ import java.util.List;
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.PoStatus;
+import com.cosmetic.scm.domain.SourceType;
+import com.cosmetic.scm.domain.StatementStatus;
+import com.cosmetic.scm.domain.SupplierReturnStatus;
+import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.master.Partner;
 import com.cosmetic.scm.master.PartnerRepository;
+import com.cosmetic.scm.master.WarehouseRepository;
 import com.cosmetic.scm.notify.NotificationLogRepository;
 import com.cosmetic.scm.notify.NotifyService;
 import com.cosmetic.scm.purchase.PurchaseOrder;
 import com.cosmetic.scm.purchase.PurchaseOrderRepository;
 import com.cosmetic.scm.security.AppUser;
 import com.cosmetic.scm.security.UserRepository;
+import com.cosmetic.scm.settlement.SupplierStatement;
+import com.cosmetic.scm.settlement.SupplierStatementRepository;
+import com.cosmetic.scm.supplierreturn.SupplierReturn;
+import com.cosmetic.scm.supplierreturn.SupplierReturnRepository;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,6 +62,10 @@ class SupplierNotifyTest {
     @Autowired UserRepository users;
     @Autowired PartnerRepository partners;
     @Autowired PurchaseOrderRepository orders;
+    @Autowired BatchRepository batches;
+    @Autowired WarehouseRepository warehouses;
+    @Autowired SupplierReturnRepository returns;
+    @Autowired SupplierStatementRepository statements;
     @Autowired NotificationLogRepository logs;
     @Autowired TimeProvider time;
     @Autowired com.cosmetic.scm.sourcing.RfqRepository rfqs;
@@ -98,6 +112,82 @@ class SupplierNotifyTest {
 
     private SimpleMailMessage to(String address) {
         return sent().stream().filter(m -> List.of(m.getTo()).contains(address)).findFirst().orElse(null);
+    }
+
+    private SupplierReturn approvedReturn(Long supplierId, String no) {
+        SupplierReturn r = new SupplierReturn();
+        r.setReturnNo(no);
+        r.setSupplierId(supplierId);
+        r.setBatchId(batches.findByPartnerIdAndSourceTypeOrderByIdDesc(supplierId, SourceType.PO).get(0).getId());
+        r.setWarehouseId(warehouses.findAll().stream().filter(w -> "WH-MAIN".equals(w.getCode())).findFirst().orElseThrow().getId());
+        r.setQty(BigDecimal.ONE);
+        r.setReason("测试退供");
+        r.setStatus(SupplierReturnStatus.DONE);
+        r.setSignedAt(time.now());
+        r.setSignedBy("qa1");
+        r.setCreatedBy("purchase1");
+        r.setCreatedAt(time.now());
+        return returns.save(r);
+    }
+
+    private void markShipped(SupplierReturn r) {
+        r.setCarrier("测试快递");
+        r.setTrackingNo("WAY-" + r.getReturnNo());
+        r.setShippedAt(time.now());
+        r.setShippedBy("purchase1");
+    }
+
+    @Test
+    void returnsRemindPurchasingBeforeShipmentAndOnlyTheirSupplierAfterShipment() {
+        AppUser u = sup1();
+        u.setEmail(SUP_MAIL);
+        String buyerMail = "buyer@brand.invalid";
+        users.findByUsername("purchase1").orElseThrow().setEmail(buyerMail);
+        approvedReturn(u.getPartnerId(), "RS-NOTIFY-UNSHIPPED");
+        SupplierReturn pending = approvedReturn(u.getPartnerId(), "RS-NOTIFY-IN-TRANSIT");
+        markShipped(pending);
+        SupplierReturn received = approvedReturn(u.getPartnerId(), "RS-NOTIFY-RECEIVED");
+        markShipped(received);
+        received.setSupplierConfirmedAt(time.now());
+        received.setSupplierConfirmedBy("sup1");
+        Long otherSupplierId = partners.findByCode("SUP-MP").orElseThrow().getId();
+        markShipped(approvedReturn(otherSupplierId, "RS-NOTIFY-OTHER"));
+
+        notify.sendScheduled();
+        assertThat(to(SUP_MAIL).getText()).contains("退货待签收", "WAY-RS-NOTIFY-IN-TRANSIT")
+                .doesNotContain("RS-NOTIFY-UNSHIPPED", "RS-NOTIFY-RECEIVED", "RS-NOTIFY-OTHER");
+        assertThat(to(buyerMail).getText()).contains("退供待登记物流", "RS-NOTIFY-UNSHIPPED")
+                .doesNotContain("RS-NOTIFY-IN-TRANSIT");
+
+        clearInvocations(mail);
+        pending.setSupplierConfirmedAt(time.now());
+        pending.setSupplierConfirmedBy("sup1");
+        notify.sendScheduled();
+        assertThat(to(SUP_MAIL).getText()).doesNotContain("RS-NOTIFY-IN-TRANSIT");
+    }
+
+    @Test
+    void overdueRefundRemindsFinanceWithoutSendingTheBalance() {
+        String financeMail = "finance@brand.invalid";
+        users.findByUsername("finance1").orElseThrow().setEmail(financeMail);
+        sup1().setEmail(SUP_MAIL);
+        SupplierStatement s = new SupplierStatement();
+        s.setStatementNo("ST-NOTIFY-OVERDUE-REFUND");
+        s.setSupplierId(sup1().getPartnerId());
+        s.setPeriodTo(time.today().minusDays(31));
+        s.setStatus(StatementStatus.APPROVED);
+        s.setGoodsAmount(new BigDecimal("-4765.38"));
+        s.setTaxAmount(BigDecimal.ZERO);
+        s.setAdjustment(BigDecimal.ZERO);
+        s.setTotalAmount(s.getGoodsAmount());
+        s.setPaidAmount(BigDecimal.ZERO);
+        s.setCreatedBy("purchase1");
+        s.setCreatedAt(time.now());
+        statements.save(s);
+
+        notify.sendScheduled();
+        assertThat(to(financeMail).getText()).contains("供应商退款已逾期", s.getStatementNo()).doesNotContain("4765.38");
+        assertThat(to(SUP_MAIL).getText()).doesNotContain(s.getStatementNo());
     }
 
     @Test

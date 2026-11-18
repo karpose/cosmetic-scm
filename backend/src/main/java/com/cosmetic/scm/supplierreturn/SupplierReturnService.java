@@ -1,11 +1,14 @@
 package com.cosmetic.scm.supplierreturn;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.cosmetic.scm.audit.AuditService;
@@ -13,6 +16,7 @@ import com.cosmetic.scm.common.BizException;
 import com.cosmetic.scm.common.DocNoService;
 import com.cosmetic.scm.common.Qty;
 import com.cosmetic.scm.common.TimeProvider;
+import com.cosmetic.scm.domain.Role;
 import com.cosmetic.scm.domain.SourceType;
 import com.cosmetic.scm.domain.SupplierReturnStatus;
 import com.cosmetic.scm.domain.TxnType;
@@ -27,6 +31,8 @@ import com.cosmetic.scm.master.Warehouse;
 import com.cosmetic.scm.security.AppUser;
 import com.cosmetic.scm.security.CurrentUser;
 import com.cosmetic.scm.security.SignatureService;
+import com.cosmetic.scm.security.UserRepository;
+import com.cosmetic.scm.supplierreturn.SupplierReturn.ReceiptSource;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -56,6 +62,7 @@ public class SupplierReturnService {
     private final AuditService audit;
     private final TimeProvider time;
     private final CurrentUser currentUser;
+    private final UserRepository users;
 
     public record CreateReq(@NotNull(message = "请选择批次") Long batchId, @NotNull(message = "请选择仓库") Long warehouseId,
                             @NotNull(message = "请填写数量") @Positive(message = "数量要大于 0") @Qty BigDecimal qty,
@@ -72,6 +79,12 @@ public class SupplierReturnService {
     public record ConfirmReturnReq(@Size(max = 300) String note) {
     }
 
+    public record OfflineReceiptReq(@NotNull(message = "请选择实际签收日期") LocalDate receivedOn,
+                                    @NotBlank(message = "请填写回单或签收凭证编号") @Size(max = 80) String receiptReference,
+                                    @Size(max = 300) String note,
+                                    @NotBlank(message = "请输入签批密码") String password) {
+    }
+
     public record CancelReq(@NotBlank(message = "请填写取消原因") @Size(max = 300) String reason) {
     }
 
@@ -85,12 +98,14 @@ public class SupplierReturnService {
                              String statusLabel, String cancelReason, String signedBy, LocalDateTime signedAt,
                              String carrier, String trackingNo, String shippedBy, LocalDateTime shippedAt,
                              String supplierConfirmedBy, LocalDateTime supplierConfirmedAt, String supplierNote,
+                             ReceiptSource receiptSource, LocalDate receivedOn, String receiptReference, boolean offlineReceiptPending,
                              String createdBy, LocalDateTime createdAt) {
     }
 
     @Transactional(readOnly = true)
-    public List<ReturnView> list() {
-        return views(returns.findTop300ByOrderByIdDesc());
+    public List<ReturnView> list(String returnNo) {
+        return views(returnNo == null || returnNo.isBlank() ? returns.findTop300ByOrderByIdDesc()
+                : returns.findByReturnNo(returnNo.trim()).stream().toList());
     }
 
     @Transactional(readOnly = true)
@@ -103,10 +118,22 @@ public class SupplierReturnService {
         return views(returns.findByBatchIdOrderById(batchId));
     }
 
-    /** 门户：已退回的。还在内部走签批的不给看。 */
+    @Transactional(readOnly = true)
+    public List<SupplierReturn> awaitingOfflineReceipts() {
+        List<SupplierReturn> pending = returns.findByStatusAndShippedAtIsNotNullAndSupplierConfirmedAtIsNullOrderById(SupplierReturnStatus.DONE);
+        Set<Long> portalSuppliers = enabledPortalSuppliers(pending);
+        return pending.stream().filter(r -> !portalSuppliers.contains(r.getSupplierId())).toList();
+    }
+
+    /** 门户：优先列出所有已发出待签收的，再列出最近的已签批单据。 */
     @Transactional(readOnly = true)
     public List<ReturnView> mine() {
-        return views(returns.findTop300BySupplierIdAndStatusOrderByIdDesc(currentUser.portalPartnerId(), SupplierReturnStatus.DONE));
+        Long supplierId = currentUser.portalPartnerId();
+        Map<Long, SupplierReturn> rows = new LinkedHashMap<>();
+        returns.findAwaitingReceipt(supplierId, SupplierReturnStatus.DONE).forEach(r -> rows.put(r.getId(), r));
+        returns.findTop300BySupplierIdAndStatusOrderByIdDesc(supplierId, SupplierReturnStatus.DONE)
+                .forEach(r -> rows.putIfAbsent(r.getId(), r));
+        return views(new ArrayList<>(rows.values()));
     }
 
     /** 某供应商还能退的库存。 */
@@ -192,7 +219,7 @@ public class SupplierReturnService {
             throw new BizException("退供单 " + r.getReturnNo() + " 当前为" + r.getStatus().getLabel() + "，请先完成质量签批再登记退货物流");
         }
         if (r.getSupplierConfirmedAt() != null) {
-            throw new BizException("供应商已确认收到退货，不能再修改物流信息");
+            throw new BizException("退货签收已登记，不能再修改物流信息");
         }
         r.setCarrier(req.carrier().trim());
         r.setTrackingNo(req.trackingNo().trim());
@@ -210,16 +237,51 @@ public class SupplierReturnService {
         if (!currentUser.portalPartnerId().equals(r.getSupplierId()) || r.getStatus() != SupplierReturnStatus.DONE) {
             throw BizException.notFound("退供单");
         }
+        requireAwaitingReceipt(r);
+        saveReceipt(r, ReceiptSource.PORTAL, currentUser.usernameOrSystem(), req == null ? null : req.note());
+        audit.log("供应商确认退货收货", r.getReturnNo(), lookup.partner(r.getSupplierId()).getName(), r.getSupplierNote());
+        return views(List.of(r)).get(0);
+    }
+
+    /** 采购凭线下回单代录未启用供应商门户的退货签收。 */
+    @Transactional
+    public ReturnView recordOfflineReceipt(Long id, OfflineReceiptReq req) {
+        SupplierReturn r = returns.lockById(id).orElseThrow(() -> BizException.notFound("退供单"));
+        requireAwaitingReceipt(r);
+        if (!enabledPortalSuppliers(List.of(r)).isEmpty()) {
+            throw new BizException("供应商有启用的门户账号，请由供应商在门户确认收货");
+        }
+        if (req.receivedOn().isAfter(time.today())) {
+            throw new BizException("签收日期不能晚于今天");
+        }
+        // 物流登记可能补录，实际签收日期按回单填写，但必须在质量签批当天或之后。
+        if (r.getSignedAt() != null && req.receivedOn().isBefore(r.getSignedAt().toLocalDate())) {
+            throw new BizException("签收日期不能早于质量签批日期");
+        }
+        AppUser signer = signature.verify(req.password());
+        r.setReceivedOn(req.receivedOn());
+        r.setReceiptReference(req.receiptReference().trim());
+        saveReceipt(r, ReceiptSource.OFFLINE, signer.getUsername(), req.note());
+        audit.log("采购代录退供签收", r.getReturnNo(), lookup.partner(r.getSupplierId()).getName()
+                + "，签收日期 " + r.getReceivedOn() + "，凭证 " + r.getReceiptReference(), r.getSupplierNote());
+        return views(List.of(r)).get(0);
+    }
+
+    private void requireAwaitingReceipt(SupplierReturn r) {
         if (r.getSupplierConfirmedAt() != null) {
             throw new BizException("退供单 " + r.getReturnNo() + " 已确认收货，无需重复操作");
         }
-        String note = req != null && req.note() != null && !req.note().isBlank() ? req.note().trim() : null;
-        r.setSupplierConfirmedBy(currentUser.usernameOrSystem());
+        if (!r.awaitingReceipt()) {
+            throw new BizException("请先登记退货物流，再确认签收");
+        }
+    }
+
+    private void saveReceipt(SupplierReturn r, ReceiptSource source, String actor, String note) {
+        r.setReceiptSource(source);
+        r.setSupplierConfirmedBy(actor);
         r.setSupplierConfirmedAt(time.now());
-        r.setSupplierNote(note);
+        r.setSupplierNote(note == null || note.isBlank() ? null : note.trim());
         returns.save(r);
-        audit.log("供应商确认退货收货", r.getReturnNo(), lookup.partner(r.getSupplierId()).getName(), note);
-        return views(List.of(r)).get(0);
     }
 
     @Transactional
@@ -247,6 +309,7 @@ public class SupplierReturnService {
         batches.findAllById(list.stream().map(SupplierReturn::getBatchId).distinct().toList()).forEach(b -> bm.put(b.getId(), b));
         Map<Long, Item> items = lookup.itemMap();
         Map<Long, Warehouse> wh = new HashMap<>();
+        Set<Long> portalSuppliers = enabledPortalSuppliers(list);
         return list.stream().map(r -> {
             Batch b = bm.get(r.getBatchId());
             Item i = items.get(b.getItemId());
@@ -255,8 +318,14 @@ public class SupplierReturnService {
                     i.getName(), i.getUnit(), w.getName(), r.getQty(), r.getReason(), r.getStatus(), r.getStatus().getLabel(), r.getCancelReason(), r.getSignedBy(),
                     r.getSignedAt(), r.getCarrier(), r.getTrackingNo(), r.getShippedBy(), r.getShippedAt(),
                     r.getSupplierConfirmedBy(), r.getSupplierConfirmedAt(), r.getSupplierNote(),
+                    r.getReceiptSource(), r.getReceivedOn(), r.getReceiptReference(), r.awaitingReceipt() && !portalSuppliers.contains(r.getSupplierId()),
                     r.getCreatedBy(), r.getCreatedAt());
         }).toList();
+    }
+
+    private Set<Long> enabledPortalSuppliers(List<SupplierReturn> list) {
+        List<Long> ids = list.stream().filter(SupplierReturn::awaitingReceipt).map(SupplierReturn::getSupplierId).distinct().toList();
+        return ids.isEmpty() ? Set.of() : users.partnersWithEnabledPortalRole(Role.SUPPLIER_PORTAL, ids);
     }
 
     private static String plain(BigDecimal v) {

@@ -36,7 +36,12 @@
         </el-table-column>
         <el-table-column label="本轮报价情况" min-width="210">
           <template #default="{ row }">
-            <div v-for="s in row.suppliers" :key="s.supplierId" class="small">{{ s.supplierName }} <el-tag size="small" :type="s.quoted ? 'success' : 'info'" disable-transitions>{{ s.quoted ? '已报' : '未报' }}</el-tag></div>
+            <div v-for="s in row.suppliers" :key="s.supplierId" class="small">
+              {{ s.supplierName }}
+              <el-tag size="small" :type="s.quotedLines === row.lines.length ? 'success' : s.quoted ? 'warning' : 'info'" disable-transitions>
+                {{ s.quotedLines === row.lines.length ? '已报' : s.quoted ? `已报 ${s.quotedLines}/${row.lines.length} 行` : '未报' }}
+              </el-tag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="130"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /><div v-if="row.closeReason" class="muted small">{{ row.closeReason }}</div></template></el-table-column>
@@ -86,7 +91,7 @@
 
     <el-dialog v-model="nr.visible" :title="`发起下一轮议价：${nr.rfq?.rfqNo || ''}`" width="520px" :close-on-click-modal="false">
       <el-form label-position="top" @submit.prevent>
-        <p class="muted small" style="margin-top:0">当前为第 {{ nr.rfq?.roundNo || 1 }} 轮。发起下一轮后，原报价会自动保存为“上轮报价”供对比，询价单重新封标并开放供应商二次报价。</p>
+        <p class="muted small" style="margin-top:0">当前为第 {{ nr.rfq?.roundNo || 1 }} 轮。开启下一轮后，供应商须重新提交。定标只使用新一轮的报价。</p>
         <el-form-item label="新报价截止日期">
           <el-date-picker id="nr-deadline" v-model="nr.deadline" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d < startOfToday" />
         </el-form-item>
@@ -107,23 +112,24 @@
           <span v-if="l.lastPoPrice != null" class="muted small mono" style="margin-left:8px">· 最近采购单价 ¥{{ fmtQty(l.lastPoPrice) }}</span>
           <el-button v-if="!aw.readonly && l.quotes.length" size="small" text @click="aw.picks[l.id] = null">本行不定标</el-button>
           <span v-if="!aw.readonly && l.quotes.length && !aw.picks[l.id]" class="late small">本行不定标，不生成采购单</span>
-          <el-empty v-if="!l.quotes.length" description="没有供应商报价，这一行不定标" :image-size="40" />
+          <el-empty v-if="!l.quotes.length" description="本轮没有供应商报价，这一行不定标" :image-size="40" />
           <el-table v-else :data="l.quotes" size="small" scrollbar-tabindex="0">
             <el-table-column v-if="!aw.readonly" label="" width="70">
-              <template #default="{ row }"><el-radio v-model="aw.picks[l.id]" :value="row.supplierId" :aria-label="`定 ${row.supplierName}`">选</el-radio></template>
+              <template #default="{ row }"><el-radio v-model="aw.picks[l.id]" :value="row.supplierId" :disabled="row.validUntil < todayStr" :aria-label="`定 ${row.supplierName}`">选</el-radio></template>
             </el-table-column>
             <el-table-column label="供应商" min-width="150">
               <template #default="{ row }">
                 {{ row.supplierName }}
                 <el-tag v-if="row.lowest" size="small" type="success" disable-transitions>最低</el-tag>
                 <el-tag v-if="row.awarded" size="small" type="primary" disable-transitions>中标</el-tag>
+                <el-tag v-if="row.roundNo !== aw.rfq.roundNo" size="small" type="info" disable-transitions>第 {{ row.roundNo }} 轮</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="含税单价" width="130" align="right">
               <template #default="{ row }">
                 <span class="mono">{{ fmtQty(row.unitPrice) }}</span>
                 <div v-if="row.prevUnitPrice != null && Number(row.prevUnitPrice) !== Number(row.unitPrice)" class="muted small mono">
-                  上轮 {{ fmtQty(row.prevUnitPrice) }}
+                  此前 {{ fmtQty(row.prevUnitPrice) }}
                 </div>
               </template>
             </el-table-column>
@@ -237,8 +243,8 @@ async function submitNextRound() {
   if (!nr.deadline || !nr.note.trim()) return ElMessage.warning('请填写新截止日期和议价说明')
   nr.saving = true
   try {
-    await http.post(`/rfqs/${nr.rfq.id}/next-round`, { deadline: nr.deadline, note: nr.note })
-    ElMessage.success(`已开启第 ${(nr.rfq.roundNo || 1) + 1} 轮议价`)
+    const r = await http.post(`/rfqs/${nr.rfq.id}/next-round`, { deadline: nr.deadline, note: nr.note, roundNo: nr.rfq.roundNo })
+    ElMessage.success(`已开启第 ${r.roundNo} 轮议价`)
     nr.visible = false
     load()
   } finally {
@@ -275,7 +281,7 @@ async function submitAward() {
   if (!aw.password) return ElMessage.warning('请输入签批密码')
   aw.saving = true
   try {
-    await http.post(`/rfqs/${aw.rfq.id}/award`, { lines, reason: aw.reason, password: aw.password })
+    await http.post(`/rfqs/${aw.rfq.id}/award`, { lines, reason: aw.reason, password: aw.password, roundNo: aw.rfq.roundNo })
     ElMessage.success('已定标，采购单已生成')
     aw.visible = false
     load()

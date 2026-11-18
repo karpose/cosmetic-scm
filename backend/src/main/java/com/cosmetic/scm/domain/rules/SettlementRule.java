@@ -7,6 +7,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -123,7 +124,7 @@ public final class SettlementRule {
                 throw new IllegalArgumentException("发票号不能为空");
             }
             String no = inv.invoiceNo().trim();
-            if (!seenNos.add(no)) {
+            if (!seenNos.add(invoiceKey(no))) {
                 throw new IllegalArgumentException("同一张对账单内发票号重复：" + no);
             }
             if (inv.invoiceDate() == null || (today != null && inv.invoiceDate().isAfter(today))) {
@@ -149,5 +150,9 @@ public final class SettlementRule {
             throw new IllegalArgumentException("发票金额合计 " + sum.toPlainString() + " 与对账单合计 " + expected.toPlainString() + " 不一致");
         }
         return sum;
+    }
+
+    public static String invoiceKey(String invoiceNo) {
+        return invoiceNo.trim().toUpperCase(Locale.ROOT);
     }
 }

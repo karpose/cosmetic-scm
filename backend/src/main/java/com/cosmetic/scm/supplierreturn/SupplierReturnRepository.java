@@ -18,11 +18,24 @@ public interface SupplierReturnRepository extends JpaRepository<SupplierReturn, 
 
     List<SupplierReturn> findTop300ByOrderByIdDesc();
 
+    Optional<SupplierReturn> findByReturnNo(String returnNo);
+
     List<SupplierReturn> findAllByOrderByIdDesc();
 
     List<SupplierReturn> findTop300BySupplierIdAndStatusOrderByIdDesc(Long supplierId, SupplierReturnStatus status);
 
     List<SupplierReturn> findByStatusOrderById(SupplierReturnStatus status);
+
+    List<SupplierReturn> findByStatusAndShippedAtIsNullAndSupplierConfirmedAtIsNullOrderById(SupplierReturnStatus status);
+
+    List<SupplierReturn> findByStatusAndShippedAtIsNotNullAndSupplierConfirmedAtIsNullOrderById(SupplierReturnStatus status);
+
+    @Query("""
+            select r from SupplierReturn r
+            where r.supplierId = :supplierId and r.status = :done and r.shippedAt is not null and r.supplierConfirmedAt is null
+            order by r.id desc
+            """)
+    List<SupplierReturn> findAwaitingReceipt(@Param("supplierId") Long supplierId, @Param("done") SupplierReturnStatus done);
 
     List<SupplierReturn> findByBatchIdOrderById(Long batchId);
 
