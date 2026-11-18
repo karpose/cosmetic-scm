@@ -115,7 +115,7 @@ const shown = (r) => [r.value != null ? `${fmtQty(r.value)}${lineOf(r.lineId)?.u
 
 const rc = reactive({ visible: false, saving: false, date: '', note: '', sampleNote: '', coaNo: '', lines: [] })
 function openRecord() {
-  Object.assign(rc, { visible: true, saving: false, date: today(), note: '', sampleNote: '', coaNo: '', lines: panel.value.spec.lines.map((line) => ({ line, value: undefined, text: '', passed: null, fromCoa: false })) })
+  Object.assign(rc, { visible: true, saving: false, date: today(), note: '', sampleNote: '', coaNo: panel.value.defaultCoaNo || '', lines: panel.value.spec.lines.map((line) => ({ line, value: undefined, text: '', passed: null, fromCoa: false })) })
 }
 const hasCoaLines = computed(() => !!panel.value?.spec?.lines.some((l) => l.coaAllowed))
 const anyCoa = computed(() => rc.lines.some((l) => l.fromCoa))

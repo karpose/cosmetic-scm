@@ -112,13 +112,16 @@ test('主数据岗位下载模板导入物料、往来单位和配方，上线�
   ])
   await page.goto('/master')
   await page.getByRole('tab', { name: '往来单位' }).click()
-  await importCsv(page, '批量导入', '批量导入往来单位', '编码,名称,类别,资质编号,资质有效期,许可范围,批号前缀,渠道,最低剩余效期（%）,联系人,地址,合格名录,关键供应商', [
-    'SUP-1,华澄原料,物料供应商,L1,2030-01-01,,,,,张经理,上海,是,否',
-    'OEM-1,禾川受托,受托生产企业,L2,2030-01-01,,HC,,,,,是,否',
-    'OWN-1,自有工厂,自有工厂,L3,2030-01-01,,ZY,,,,,是,否',
-    'CUS-1,华东客户,客户渠道,,,,,线下,,陈经理,杭州,是,否',
-    'CUS-2,天猫旗舰店,客户渠道,,,,,电商,,店长,杭州,是,否'
+  await importCsv(page, '批量导入', '批量导入往来单位', '编码,名称,类别,资质编号,资质有效期,许可范围,批号前缀,渠道,最低剩余效期（%）,联系人,地址,合格名录,关键供应商,税号,开户银行,银行账号,默认账期（天）,默认税率（%）,财务客商编码', [
+    'SUP-1,华澄原料,物料供应商,L1,2030-01-01,,,,,张经理,上海,是,否,,,,45,6,FIN-SUP-1',
+    'SUP-2,明源物料,物料供应商,L4,2030-01-01,,,,,,,是,否,,,,60,9,FIN-SUP-2',
+    'OEM-1,禾川受托,受托生产企业,L2,2030-01-01,,HC,,,,,是,否,,,,,,',
+    'OWN-1,自有工厂,自有工厂,L3,2030-01-01,,ZY,,,,,是,否,,,,,,',
+    'CUS-1,华东客户,客户渠道,,,,,线下,,陈经理,杭州,是,否,,,,,,',
+    'CUS-2,天猫旗舰店,客户渠道,,,,,电商,,店长,杭州,是,否,,,,,,'
   ])
+  const supplier = (await api(page, '/partners')).find((p) => p.code === 'SUP-1')
+  expect(supplier?.financeCode).toBe('FIN-SUP-1')
   await page.goto('/master')
   await page.getByRole('tab', { name: 'BOM' }).click()
   await importCsv(page, '批量导入首版配方', '批量导入首版配方', '成品编码,物料编码,单耗,供料方式', [
@@ -148,14 +151,26 @@ test('采购下单，仓库收货，质量放行', async ({ page }) => {
   await login(page, 'buy_wang')
   await page.goto('/purchase')
   await page.getByRole('button', { name: '新建采购单' }).click()
-  await choose(page, selectOf(page, 'po-supplier'), '华澄')
+  await choose(page, selectOf(page, 'po-supplier'), '明源')
   await choose(page, selectOf(page, 'po-item-0'), 'RM-NIA')
   await page.locator('#po-qty-0').fill('20')
+  await page.locator('#po-price-0').fill('80')
+  await expect(page.locator('#po-tax-0')).toHaveAttribute('placeholder', '默认 9%')
   await dialog(page).getByRole('button', { name: '添加一行' }).click()
   await choose(page, selectOf(page, 'po-item-1'), 'PK-BOT')
   await page.locator('#po-qty-1').fill('2000')
-  await dialog(page).getByRole('button', { name: '保存采购单' }).click()
+  await page.locator('#po-tax-1').fill('0')
+  await choose(page, selectOf(page, 'po-supplier'), '华澄')
+  await expect(page.locator('#po-tax-0')).toHaveAttribute('placeholder', '默认 6%')
+  await expect(page.locator('#po-tax-1')).toHaveValue('0.00')
+  await page.locator('#po-price-1').fill('1.5')
+  const [created] = await Promise.all([
+    page.waitForResponse((res) => res.url().endsWith('/api/purchase-orders') && res.request().method() === 'POST'),
+    dialog(page).getByRole('button', { name: '保存采购单' }).click()
+  ])
   await toast(page, '已保存')
+  const po = await created.json()
+  expect(po.lines.map((line) => line.taxRate)).toEqual([6, 0])
 
   await login(page, 'wh_qian')
   await page.goto('/purchase')
@@ -181,6 +196,24 @@ test('采购下单，仓库收货，质量放行', async ({ page }) => {
     await dialog(page).getByRole('button', { name: '签批' }).click()
     await toast(page, '已放行')
   }
+
+  await login(page, 'buy_wang')
+  await page.goto('/settlement')
+  await page.getByRole('button', { name: '生成对账单' }).click()
+  await choose(page, selectOf(page, 'st-supplier'), '明源')
+  const terms = page.locator('#st-credit-days')
+  await expect(terms).toHaveAttribute('placeholder', '默认 60 天')
+  await terms.fill('0')
+  await choose(page, selectOf(page, 'st-supplier'), '华澄')
+  await expect(terms).toHaveValue('0')
+  await expect(terms).toHaveAttribute('placeholder', '默认 45 天')
+  await terms.clear()
+  const [statement] = await Promise.all([
+    page.waitForResponse((res) => res.url().endsWith('/api/statements') && res.request().method() === 'POST'),
+    dialog(page).getByRole('button', { name: '生成并发给供应商' }).click()
+  ])
+  await toast(page, '等供应商确认')
+  expect((await statement.json()).creditDays).toBe(45)
 })
 
 test('供应商账号：确认订单、发送货通知，仓库按通知收货', async ({ page }) => {

@@ -4,6 +4,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
+import com.cosmetic.scm.domain.FinanceSyncStatus;
 import com.cosmetic.scm.domain.StatementStatus;
 
 import jakarta.persistence.LockModeType;
@@ -64,4 +65,12 @@ public interface SupplierStatementRepository extends JpaRepository<SupplierState
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from SupplierStatement x where x.id = :id")
     Optional<SupplierStatement> lockById(@Param("id") Long id);
+
+    /** 只在写事务里用。 */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select x from SupplierStatement x where x.statementNo = :statementNo")
+    Optional<SupplierStatement> lockByStatementNo(@Param("statementNo") String statementNo);
+
+    List<SupplierStatement> findByStatusInAndFinanceSyncStatusInOrderById(Collection<StatementStatus> statuses,
+                                                                         Collection<FinanceSyncStatus> syncStatuses);
 }

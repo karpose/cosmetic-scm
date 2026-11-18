@@ -165,7 +165,7 @@ public class SettlementService {
     }
 
     public record PaymentView(String paymentType, String paymentTypeLabel, LocalDate payDate, BigDecimal amount, String referenceNo,
-                              String createdBy, LocalDateTime createdAt) {
+                              String extPaymentNo, String createdBy, LocalDateTime createdAt) {
     }
 
     public record StatementView(Long id, String statementNo, Long supplierId, String supplierName, LocalDate periodTo,
@@ -176,6 +176,8 @@ public class SettlementService {
                                 String invoiceNo, LocalDate invoiceDate, BigDecimal invoiceAmount,
                                 int invoiceReviewVersion, boolean invoiceCorrectionPending, List<InvoiceReturnView> invoiceReturns,
                                 String approvedBy, LocalDateTime approvedAt, BigDecimal paidAmount, BigDecimal unpaid,
+                                com.cosmetic.scm.domain.FinanceSyncStatus financeSyncStatus, String financeSyncLabel,
+                                String extVoucherNo, LocalDateTime financeSyncedAt, String financeSyncNote,
                                 String createdBy, LocalDateTime createdAt, List<LineView> lines,
                                 List<TaxBreakdown> taxBreakdown, List<InvoiceView> invoices, List<PaymentView> payments,
                                 List<ReceiptDisputeFlag> receiptDisputes) {
@@ -257,7 +259,8 @@ public class SettlementService {
         }
         int creditDays;
         try {
-            creditDays = SettlementRule.normalizeCreditDays(req.creditDays());
+            Integer rawCreditDays = req.creditDays() != null ? req.creditDays() : s.getDefaultCreditDays();
+            creditDays = SettlementRule.normalizeCreditDays(rawCreditDays);
         } catch (IllegalArgumentException ex) {
             throw new BizException(ex.getMessage());
         }
@@ -397,6 +400,11 @@ public class SettlementService {
 
     @Transactional
     public StatementView pay(Long id, PayReq req) {
+        return pay(id, req, null);
+    }
+
+    @Transactional
+    public StatementView pay(Long id, PayReq req, String extPaymentNo) {
         SupplierStatement st = locked(id);
         require(st, StatementStatus.APPROVED, "付款");
         if (st.getTotalAmount().signum() < 0) {
@@ -416,6 +424,7 @@ public class SettlementService {
         p.setPayDate(req.payDate());
         p.setAmount(req.amount());
         p.setReferenceNo(req.referenceNo() == null || req.referenceNo().isBlank() ? null : req.referenceNo().trim());
+        p.setExtPaymentNo(extPaymentNo == null || extPaymentNo.isBlank() ? null : extPaymentNo.trim());
         p.setCreatedBy(currentUser.usernameOrSystem());
         p.setCreatedAt(time.now());
         payments.save(p);
@@ -431,6 +440,11 @@ public class SettlementService {
     /** 退货冲减超过当期货款生成的红字对账单（totalAmount < 0），登记供应商退回款项。 */
     @Transactional
     public StatementView refund(Long id, PayReq req) {
+        return refund(id, req, null);
+    }
+
+    @Transactional
+    public StatementView refund(Long id, PayReq req, String extPaymentNo) {
         SupplierStatement st = locked(id);
         require(st, StatementStatus.APPROVED, "登记供应商退款");
         if (st.getTotalAmount().signum() >= 0) {
@@ -450,6 +464,7 @@ public class SettlementService {
         p.setPayDate(req.payDate());
         p.setAmount(req.amount().negate());
         p.setReferenceNo(req.referenceNo() == null || req.referenceNo().isBlank() ? null : req.referenceNo().trim());
+        p.setExtPaymentNo(extPaymentNo == null || extPaymentNo.isBlank() ? null : extPaymentNo.trim());
         p.setCreatedBy(currentUser.usernameOrSystem());
         p.setCreatedAt(time.now());
         payments.save(p);
@@ -727,7 +742,7 @@ public class SettlementService {
                 Collectors.mapping(p -> new PaymentView(
                         p.getPaymentType() == null ? "PAY" : p.getPaymentType(),
                         "REFUND".equals(p.getPaymentType()) ? "供应商退款" : "付款",
-                        p.getPayDate(), p.getAmount(), p.getReferenceNo(), p.getCreatedBy(), p.getCreatedAt()), Collectors.toList())));
+                        p.getPayDate(), p.getAmount(), p.getReferenceNo(), p.getExtPaymentNo(), p.getCreatedBy(), p.getCreatedAt()), Collectors.toList())));
         return list.stream().map(s -> {
             List<SupplierStatementLine> sLines = byStatement.getOrDefault(s.getId(), List.of());
             List<TaxBreakdown> taxBreakdown = SettlementRule.breakdownByTaxRate(
@@ -735,12 +750,15 @@ public class SettlementService {
             LocalDate dueDate = s.effectiveDueDate();
             boolean settledOrCancelled = s.getStatus() == StatementStatus.PAID || s.getStatus() == StatementStatus.CANCELLED;
             long overdueDays = SettlementRule.overdueDays(dueDate, today, settledOrCancelled);
+            com.cosmetic.scm.domain.FinanceSyncStatus syncStatus = s.effectiveFinanceSyncStatus();
             return new StatementView(s.getId(), s.getStatementNo(), s.getSupplierId(), lookup.partner(s.getSupplierId()).getName(), s.getPeriodTo(),
                     s.getCreditDays(), dueDate, overdueDays > 0, overdueDays,
                     s.getStatus(), s.statusLabel(), s.getGoodsAmount(), s.getTaxAmount(), s.getAdjustment(), s.getAdjustmentNote(), s.getTotalAmount(), s.getDisputeNote(),
                     s.getCancelReason(), s.getConfirmedBy(), s.getConfirmedAt(), s.getInvoiceNo(), s.getInvoiceDate(), s.getInvoiceAmount(),
                     s.getInvoiceReviewVersion(), s.invoiceCorrectionPending(), corrections.getOrDefault(s.getId(), List.of()), s.getApprovedBy(), s.getApprovedAt(),
-                    s.getPaidAmount(), s.outstandingAmount(), s.getCreatedBy(), s.getCreatedAt(),
+                    s.getPaidAmount(), s.outstandingAmount(),
+                    syncStatus, syncStatus.getLabel(), s.getExtVoucherNo(), s.getFinanceSyncedAt(), s.getFinanceSyncNote(),
+                    s.getCreatedBy(), s.getCreatedAt(),
                     sLines.stream().map(l -> {
                         Batch b = bm.get(l.getBatchId());
                         Item i = items.get(b.getItemId());

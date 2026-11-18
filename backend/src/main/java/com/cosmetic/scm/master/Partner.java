@@ -1,5 +1,6 @@
 package com.cosmetic.scm.master;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 import com.cosmetic.scm.domain.PartnerKind;
@@ -53,6 +54,18 @@ public class Partner {
     private boolean qualified = true;
 
     private boolean criticalSupplier;
+
+    private String taxId;
+
+    private String bankName;
+
+    private String bankAccount;
+
+    private Integer defaultCreditDays;
+
+    private BigDecimal defaultTaxRate;
+
+    private String financeCode;
 
     /** 资质已过期。 */
     public boolean licenseExpired(LocalDate today) {

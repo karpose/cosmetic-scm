@@ -434,7 +434,16 @@ class SupplierReturnTest {
                 .andExpect(jsonPath("$.length()").value(1)).andExpect(jsonPath("$[0].statusLabel").value("待供应商退款"));
         assertThat(reportSheet(finance, "statements")).contains("到期日", "逾期天数", "待供应商退款", "-25.00");
         call(finance, internal + "/refund", Map.of("payDate", today(), "amount", 26)).andExpect(status().isBadRequest());
-        call(finance, internal + "/refund", Map.of("payDate", today(), "amount", 25)).andExpect(status().isOk())
+
+        var refundCallback = Map.of("statementNo", no, "extPaymentNo", "RS-BANK-REFUND-001", "payDate", today(), "amount", 5);
+        for (boolean duplicate : new boolean[]{false, true}) {
+            mvc.perform(post("/api/integration/finance/payments").header("X-Api-Key", "test-integration-key")
+                            .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(refundCallback)))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.duplicate").value(duplicate))
+                    .andExpect(jsonPath("$.paymentType").value("REFUND"))
+                    .andExpect(jsonPath("$.amount").value(5.0)).andExpect(jsonPath("$.unpaid").value(-20.0));
+        }
+        call(finance, internal + "/refund", Map.of("payDate", today(), "amount", 20)).andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusLabel").value("供应商已退款")).andExpect(jsonPath("$.overdue").value(false));
         read(finance, "/api/statements?followUp=OVERDUE").andExpect(status().isOk()).andExpect(jsonPath(listItem).isEmpty());
         read(finance, "/api/dashboard").andExpect(status().isOk()).andExpect(jsonPath(todo).isEmpty());

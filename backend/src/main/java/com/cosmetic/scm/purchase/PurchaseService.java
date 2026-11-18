@@ -63,6 +63,7 @@ public class PurchaseService {
     private final CurrentUser currentUser;
     private final PoShipmentRepository shipments;
     private final PoShipmentLineRepository shipmentLines;
+    private final com.cosmetic.scm.attachment.AttachmentService attachmentService;
     private final com.cosmetic.scm.security.UserRepository users;
     private final com.cosmetic.scm.settlement.SupplierStatementLineRepository statementLines;
     private final com.cosmetic.scm.master.RegulatoryService regulatory;
@@ -121,8 +122,8 @@ public class PurchaseService {
                          LocalDate lastReceivedOn, List<ShipmentView> shipments, boolean supplierHasPortal) {
     }
 
-    public record ShipmentLineView(Long poLineId, String itemCode, String itemName, String unit, BigDecimal qty,
-                                   String extBatchNo, LocalDate mfgDate, LocalDate expDate) {
+    public record ShipmentLineView(Long id, Long poLineId, String itemCode, String itemName, String unit, BigDecimal qty,
+                                   String extBatchNo, LocalDate mfgDate, LocalDate expDate, String coaNo, Long coaAttachmentId) {
     }
 
     public record ShipmentView(Long id, String shipmentNo, LocalDate shipDate, ShipmentStatus status, String statusLabel,
@@ -210,7 +211,8 @@ public class PurchaseService {
             line.setQty(l.qty());
             line.setReceivedQty(BigDecimal.ZERO);
             line.setUnitPrice(l.unitPrice());
-            line.setTaxRate(l.unitPrice() == null ? null : l.taxRate());
+            BigDecimal rate = l.taxRate() != null ? l.taxRate() : supplier.getDefaultTaxRate();
+            line.setTaxRate(l.unitPrice() == null ? null : rate);
             lines.save(line);
         }
         audit.log("新建采购单", po.getPoNo(), supplier.getName() + "，" + req.lines().size() + " 行");
@@ -282,12 +284,14 @@ public class PurchaseService {
             throw new BizException("采购单 " + po.getPoNo() + " 当前为" + po.getStatus().getLabel() + "，不能收货");
         }
         PoShipment shipment = lockShipmentForReceipt(po, req.shipmentId());
+        Map<Long, PoShipmentLine> shipmentLineMap = new HashMap<>();
         if (shipment != null) {
-            Set<Long> notifiedLines = shipmentLines.findByShipmentIdInOrderById(List.of(shipment.getId())).stream()
-                    .map(PoShipmentLine::getPoLineId).collect(Collectors.toSet());
+            List<PoShipmentLine> sLines = shipmentLines.findByShipmentIdInOrderById(List.of(shipment.getId()));
+            Set<Long> notifiedLines = sLines.stream().map(PoShipmentLine::getPoLineId).collect(Collectors.toSet());
             if (req.lines().stream().anyMatch(l -> !notifiedLines.contains(l.poLineId()))) {
                 throw new BizException("只能按送货通知收货其中的物料，其他物料请另行收货");
             }
+            sLines.forEach(sl -> shipmentLineMap.put(sl.getPoLineId(), sl));
         }
         LocalDate today = time.today();
         Map<Long, PoLine> lineMap = lines.findByPoIdOrderByLineNo(poId).stream()
@@ -319,12 +323,21 @@ public class PurchaseService {
             }
             String prefix = item.getItemType() == ItemType.PK ? "P" : "R";
             String batchNo = docNo.next(prefix, today);
+            String actualLot = r.extBatchNo().trim();
             Batch b = inventory.createBatch(batchNo, item, mfg, exp, BatchStatus.QUARANTINE, SourceType.PO, po.getPoNo(),
-                    po.getSupplierId(), r.extBatchNo().trim(), r.qty());
+                    po.getSupplierId(), actualLot, r.qty());
             if (shipment != null) {
                 b.setPoShipmentId(shipment.getId());
             }
             inventory.change(b, wh.getId(), r.qty(), TxnType.RECEIPT, po.getPoNo());
+            // COA 只适用于通知上申报的批号，批号有差异时仍按实物收货。
+            PoShipmentLine sl = shipmentLineMap.get(r.poLineId());
+            if (sl != null && actualLot.equals(sl.getExtBatchNo())) {
+                b.setCoaNo(sl.getCoaNo());
+                if (sl.getCoaAttachmentId() != null) {
+                    attachmentService.linkShipmentCoaToBatch(sl.getCoaAttachmentId(), b.getId(), sl.getCoaNo());
+                }
+            }
             line.setReceivedQty(line.getReceivedQty().add(r.qty()));
             lines.save(line);
             made.add(batchNo);
@@ -385,8 +398,8 @@ public class PurchaseService {
                                      Map<Long, Item> items, boolean showReceiptDispute) {
         List<ShipmentLineView> lv = shipmentLines.stream().map(l -> {
             Item item = items.get(poLines.get(l.getPoLineId()).getItemId());
-            return new ShipmentLineView(l.getPoLineId(), item.getCode(), item.getName(), item.getUnit(), l.getQty(),
-                    l.getExtBatchNo(), l.getMfgDate(), l.getExpDate());
+            return new ShipmentLineView(l.getId(), l.getPoLineId(), item.getCode(), item.getName(), item.getUnit(), l.getQty(),
+                    l.getExtBatchNo(), l.getMfgDate(), l.getExpDate(), l.getCoaNo(), l.getCoaAttachmentId());
         }).toList();
         return new ShipmentView(shipment.getId(), shipment.getShipmentNo(), shipment.getShipDate(), shipment.getStatus(),
                 shipment.getStatus().getLabel(), shipment.getNote(), shipment.getCreatedBy(), shipment.getCreatedAt(), lv,

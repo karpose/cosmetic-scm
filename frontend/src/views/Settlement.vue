@@ -7,6 +7,7 @@
       </div>
       <div class="toolbar">
         <ExportButton report="statements" />
+        <el-button v-if="canFinance" @click="exportVouchers">导出应付凭证</el-button>
         <el-button v-if="canBuy" type="primary" @click="openCreate">生成对账单</el-button>
       </div>
     </div>
@@ -55,6 +56,11 @@
         <el-table-column label="状态" min-width="150">
           <template #default="{ row }">
             <StatusTag :status="row.status" :label="row.statusLabel" />
+            <div v-if="(row.status === 'APPROVED' || row.status === 'PAID') && (row.extVoucherNo || row.financeSyncStatus !== 'PENDING')" class="small" style="margin-top:2px">
+              <el-tag size="small" :type="row.financeSyncStatus === 'SYNCED' ? 'success' : row.financeSyncStatus === 'FAILED' ? 'danger' : 'info'" disable-transitions>
+                {{ row.extVoucherNo ? `凭证 ${row.extVoucherNo}` : row.financeSyncLabel }}
+              </el-tag>
+            </div>
             <div v-if="row.receiptDisputes?.length" class="small"><el-tag size="small" type="warning" disable-transitions>收货异议 {{ row.receiptDisputes.length }}</el-tag></div>
             <div v-if="row.status === 'DISPUTED'" class="late small">{{ row.disputeNote }}</div>
             <div v-if="row.cancelReason" class="muted small">{{ row.cancelReason }}</div>
@@ -84,7 +90,7 @@
             </el-select>
           </el-form-item>
           <el-form-item label="对账截止日期（这天及以前入库的）"><el-date-picker id="st-period" v-model="cr.periodTo" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d > startOfToday" @change="loadPreview" /></el-form-item>
-          <el-form-item label="信用账期（天，用于计算应付到期日）"><el-input-number id="st-credit-days" v-model="cr.creditDays" :min="0" :max="365" :precision="0" :controls="false" style="width:100%" /></el-form-item>
+          <el-form-item label="信用账期（天，用于计算应付到期日）"><el-input-number id="st-credit-days" v-model="cr.creditDays" :min="0" :max="365" :precision="0" :controls="false" :placeholder="`默认 ${defaultCreditDays} 天`" style="width:100%" /></el-form-item>
         </div>
         <StatementReceiptDisputes :disputes="cr.preview?.receiptDisputes" :can-open="canBuy" />
         <el-alert v-if="cr.preview?.missingPrice.length" type="warning" :closable="false" show-icon :title="`${cr.preview.missingPrice.length} 个批次的采购单没有单价，不会进这张对账单。请先到采购入库录入单价：${missingText}`" />
@@ -136,6 +142,12 @@
           <el-descriptions-item label="供应商确认">{{ dt.s.confirmedBy ? `${dt.s.confirmedBy} · ${fmtTime(dt.s.confirmedAt)}` : '-' }}</el-descriptions-item>
           <el-descriptions-item label="发票汇总">{{ dt.s.invoiceNo ? `${dt.s.invoiceNo} · ${dt.s.invoiceDate} · ${fmtMoney(dt.s.invoiceAmount)}` : '-' }}</el-descriptions-item>
           <el-descriptions-item label="审批">{{ dt.s.approvedBy ? `${dt.s.approvedBy} · ${fmtTime(dt.s.approvedAt)}` : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="财务凭证同步" :span="2">
+            {{ dt.s.financeSyncLabel || '待同步' }}
+            <span v-if="dt.s.extVoucherNo" class="mono"> · 凭证 {{ dt.s.extVoucherNo }}</span>
+            <span v-if="dt.s.financeSyncedAt" class="muted"> · {{ fmtTime(dt.s.financeSyncedAt) }}</span>
+            <span v-if="dt.s.financeSyncNote" class="muted"> · {{ dt.s.financeSyncNote }}</span>
+          </el-descriptions-item>
         </el-descriptions>
         <div v-if="dt.s.taxBreakdown?.length" class="muted small" style="margin-top:8px">
           <b>分税率拆分：</b>
@@ -164,7 +176,7 @@
           <div v-for="(p, i) in dt.s.payments" :key="i" class="small">
             <el-tag size="small" :type="p.paymentType === 'REFUND' ? 'warning' : 'success'" disable-transitions>{{ p.paymentTypeLabel || '付款' }}</el-tag>
             <span class="mono" style="margin-left:6px">{{ p.payDate }} · {{ fmtMoney(Math.abs(Number(p.amount))) }}</span>
-            <span class="muted"> · {{ p.referenceNo || '无凭证号' }} · {{ p.createdBy }}</span>
+            <span class="muted"> · {{ p.referenceNo || '无凭证号' }}<span v-if="p.extPaymentNo" class="mono">（水单 {{ p.extPaymentNo }}）</span> · {{ p.createdBy }}</span>
           </div>
         </div>
         <StatementInvoiceReturns :statement="dt.s" />
@@ -312,7 +324,8 @@ onMounted(() => window.addEventListener('resize', onResize))
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
 const previewReq = latestOnly()
-const cr = reactive({ visible: false, saving: false, supplierId: null, periodTo: null, creditDays: 30, allowNegative: false, preview: null, adjustment: undefined, adjustmentNote: '' })
+const cr = reactive({ visible: false, saving: false, supplierId: null, periodTo: null, creditDays: undefined, allowNegative: false, preview: null, adjustment: undefined, adjustmentNote: '' })
+const defaultCreditDays = computed(() => rd.suppliers.value.find((p) => p.id === cr.supplierId)?.defaultCreditDays ?? 30)
 const missingText = computed(() => {
   const list = cr.preview?.missingPrice || []
   return list.slice(0, 5).map((m) => m.poNo + ' ' + m.itemName).join('、') + (list.length > 5 ? ` 等 ${list.length} 个` : '')
@@ -320,7 +333,7 @@ const missingText = computed(() => {
 const previewTotal = computed(() => Number(cr.preview?.goodsAmount || 0) + Number(cr.adjustment || 0))
 async function openCreate() {
   await rd.ready()
-  Object.assign(cr, { visible: true, saving: false, supplierId: null, periodTo: today(), creditDays: 30, allowNegative: false, preview: null, adjustment: undefined, adjustmentNote: '' })
+  Object.assign(cr, { visible: true, saving: false, supplierId: null, periodTo: today(), creditDays: undefined, allowNegative: false, preview: null, adjustment: undefined, adjustmentNote: '' })
 }
 async function loadPreview() {
   const current = previewReq()
@@ -336,7 +349,7 @@ async function submitCreate() {
     const s = await http.post('/statements', {
       supplierId: cr.supplierId,
       periodTo: cr.periodTo,
-      creditDays: cr.creditDays ?? 30,
+      creditDays: cr.creditDays ?? null,
       allowNegative: cr.allowNegative,
       adjustment: cr.adjustment || 0,
       adjustmentNote: cr.adjustmentNote
@@ -459,6 +472,19 @@ async function submitPay() {
   } finally {
     pa.saving = false
   }
+}
+
+async function exportVouchers() {
+  const data = await http.get('/statements/finance-vouchers')
+  if (!data.length) return ElMessage.info('暂无已审批的应付凭证可导出')
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `ap-vouchers-${today()}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success(`已导出 ${data.length} 张应付凭证`)
 }
 </script>
 

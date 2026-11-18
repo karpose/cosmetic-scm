@@ -83,7 +83,11 @@ public class SupplierPortalService {
 
     public record ShipmentLineReq(@NotNull Long poLineId, @NotNull @Positive @Qty BigDecimal qty,
                                   @NotBlank(message = "请填写批号") @Size(max = 60) String extBatchNo,
-                                  @NotNull(message = "请填写生产日期") LocalDate mfgDate, LocalDate expDate) {
+                                  @NotNull(message = "请填写生产日期") LocalDate mfgDate, LocalDate expDate,
+                                  @Size(max = 60) String coaNo) {
+        public ShipmentLineReq(Long poLineId, BigDecimal qty, String extBatchNo, LocalDate mfgDate, LocalDate expDate) {
+            this(poLineId, qty, extBatchNo, mfgDate, expDate, null);
+        }
     }
 
     public record ShipmentReq(@NotNull(message = "请选择发货日期") LocalDate shipDate, @Size(max = 300) String note,
@@ -111,7 +115,8 @@ public class SupplierPortalService {
     /** 门户看到的本单位情况。评分是品牌方内部的，不给供应商看。 */
     public record ProfileView(String code, String name, String licenseNo, LocalDate licenseExpiry, Long licenseDaysLeft,
                               String licenseScope, boolean qualified, LocalDate lastAuditDate, String lastAuditResult,
-                              LocalDate nextAuditDate, long received, long rejected, long dueTotal, long onTime) {
+                              LocalDate nextAuditDate, long received, long rejected, long dueTotal, long onTime,
+                              String taxId, String bankName, String bankAccount, Integer defaultCreditDays, BigDecimal defaultTaxRate) {
     }
 
     @Transactional(readOnly = true)
@@ -127,7 +132,8 @@ public class SupplierPortalService {
         Long days = p.getLicenseExpiry() == null ? null : ChronoUnit.DAYS.between(time.today(), p.getLicenseExpiry());
         return new ProfileView(p.getCode(), p.getName(), p.getLicenseNo(), p.getLicenseExpiry(), days, p.getLicenseScope(),
                 p.isQualified(), r.lastAuditDate(), r.lastResultLabel(), r.nextAuditDate(), r.received(), r.rejected(),
-                r.dueTotal(), r.onTime());
+                r.dueTotal(), r.onTime(),
+                p.getTaxId(), p.getBankName(), p.getBankAccount(), p.getDefaultCreditDays(), p.getDefaultTaxRate());
     }
 
     /** 回复交期：第一次算确认订单，之后修改要写原因。准时率一直按第一次的交期算。 */
@@ -229,6 +235,7 @@ public class SupplierPortalService {
             l.setExtBatchNo(r.extBatchNo().trim());
             l.setMfgDate(r.mfgDate());
             l.setExpDate(r.expDate());
+            l.setCoaNo(r.coaNo() == null || r.coaNo().isBlank() ? null : r.coaNo().trim());
             shipmentLines.save(l);
         }
         audit.log("供应商送货通知", s.getShipmentNo(), po.getPoNo() + "：" + String.join("，", detail));

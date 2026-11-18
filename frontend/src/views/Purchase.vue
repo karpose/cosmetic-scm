@@ -86,10 +86,10 @@
               <el-button text :disabled="create.lines.length === 1" @click="create.lines.splice(i, 1)">删除</el-button>
               <div class="price-row">
                 <el-input-number :id="`po-price-${i}`" aria-label="含税单价" v-model="l.unitPrice" :min="0" :precision="4" :controls="false" placeholder="含税单价（选填，对账按它算）" style="width:100%" />
-                <el-input-number :id="`po-tax-${i}`" aria-label="税率" v-model="l.taxRate" :min="0" :max="100" :precision="2" :controls="false" placeholder="税率 %" style="width:100%" />
+                <el-input-number :id="`po-tax-${i}`" aria-label="税率" v-model="l.taxRate" :min="0" :max="100" :precision="2" :controls="false" :placeholder="`默认 ${fmtQty(createDefaultTaxRate)}%`" style="width:100%" />
               </div>
             </div>
-            <el-button size="small" @click="create.lines.push({ itemId: null, qty: null, unitPrice: undefined, taxRate: 13 })">添加一行</el-button>
+            <el-button size="small" @click="create.lines.push(newPurchaseLine())">添加一行</el-button>
           </div>
         </el-form-item>
       </el-form>
@@ -125,7 +125,13 @@
       </el-form-item>
       <p v-if="!receiveLines.length" class="muted small">该通知的物料已收齐，请选择其他通知或手工收货。</p>
       <el-card v-for="l in receiveLines" :key="l.poLineId" shadow="never" style="margin-bottom:12px">
-        <div style="margin-bottom:8px"><b>{{ l.itemName }}</b> <span class="muted small">{{ l.itemCode }} · 未收 {{ fmtQty(l.remaining) }} {{ l.unit }}{{ l.shelfMonths ? ` · 保质期 ${l.shelfMonths} 个月` : '' }}</span></div>
+        <div style="margin-bottom:8px">
+          <b>{{ l.itemName }}</b> <span class="muted small">{{ l.itemCode }} · 未收 {{ fmtQty(l.remaining) }} {{ l.unit }}{{ l.shelfMonths ? ` · 保质期 ${l.shelfMonths} 个月` : '' }}</span>
+          <template v-if="l.coaAttachmentId || l.coaNo">
+            <el-tag v-if="l.extBatchNo.trim() === l.notifiedBatchNo" size="small" type="success" disable-transitions style="margin-left:8px">已绑定 COA{{ l.coaNo ? `：${l.coaNo}` : '' }}（收货自动挂载）</el-tag>
+            <p v-else class="warn small" style="margin:4px 0 0">通知批号为 {{ l.notifiedBatchNo }}，本次不会挂载原 COA。请补传实收批次的报告。</p>
+          </template>
+        </div>
         <div class="form-grid">
           <el-form-item label="本次收货数量"><el-input-number :id="`rv-qty-${l.poLineId}`" v-model="l.qty" :min="0" :max="Number(l.remaining)" :precision="4" :controls="false" style="width:100%" /></el-form-item>
           <el-form-item label="供应商批号"><el-input :id="`rv-ext-${l.poLineId}`" v-model="l.extBatchNo" placeholder="来料标签上的批号" /></el-form-item>
@@ -253,9 +259,16 @@ const receiveLines = computed(() => {
   return shipment ? recv.lines.filter((l) => shipment.lines.some((n) => n.poLineId === l.poLineId)) : recv.lines
 })
 const price = reactive({ visible: false, saving: false, po: null, lines: [], reason: '' })
+const defaultTaxRateFor = (supplierId) => {
+  const s = rd.suppliers.value.find((p) => p.id === supplierId)
+  return s?.defaultTaxRate != null ? Number(s.defaultTaxRate) : 13
+}
+const createDefaultTaxRate = computed(() => defaultTaxRateFor(create.supplierId))
+const newPurchaseLine = () => ({ itemId: null, qty: null, unitPrice: undefined, taxRate: undefined })
 function openPrice(po) {
+  const fallback = defaultTaxRateFor(po.supplierId)
   Object.assign(price, { visible: true, saving: false, po, reason: '', lines: po.lines.map((l) => ({
-    poLineId: l.id, itemName: l.itemName, unit: l.unit, unitPrice: l.unitPrice ?? undefined, taxRate: l.taxRate ?? 13
+    poLineId: l.id, itemName: l.itemName, unit: l.unit, unitPrice: l.unitPrice ?? undefined, taxRate: l.taxRate ?? fallback
   })) })
 }
 async function submitPrice() {
@@ -327,11 +340,14 @@ async function load() {
 }
 
 function openCreate() {
-  Object.assign(create, { visible: true, supplierId: null, expectedDate: null, lines: [{ itemId: null, qty: null, unitPrice: undefined, taxRate: 13 }] })
+  Object.assign(create, { visible: true, supplierId: null, expectedDate: null, lines: [newPurchaseLine()] })
 }
 
 async function submitCreate() {
-  const lines = create.lines.filter((l) => l.itemId || l.qty).map((l) => ({ itemId: l.itemId, qty: l.qty, unitPrice: l.unitPrice > 0 ? l.unitPrice : null, taxRate: l.unitPrice > 0 ? (l.taxRate ?? 0) : null }))
+  const lines = create.lines.filter((l) => l.itemId || l.qty).map((l) => ({
+    itemId: l.itemId, qty: l.qty, unitPrice: l.unitPrice > 0 ? l.unitPrice : null,
+    taxRate: l.unitPrice > 0 ? (l.taxRate ?? createDefaultTaxRate.value) : null
+  }))
   if (!create.supplierId) return ElMessage.warning('请选择供应商')
   if (!lines.length || lines.some((l) => !l.itemId || !(l.qty > 0))) return ElMessage.warning('请把每一行的物料和数量填完整')
   create.saving = true
@@ -364,9 +380,12 @@ function applyShipment() {
   const s = selectedShipment.value
   for (const l of recv.lines) {
     const n = s?.lines.find((x) => x.poLineId === l.poLineId)
-    Object.assign(l, s
-      ? { qty: n ? Math.min(Number(n.qty), Number(l.remaining)) : 0, extBatchNo: n?.extBatchNo || '', mfgDate: n?.mfgDate || today(), expDate: n?.expDate || null }
-      : { qty: Number(l.remaining), extBatchNo: '', mfgDate: today(), expDate: null })
+    const notifiedBatchNo = n?.extBatchNo || ''
+    Object.assign(l, {
+      qty: s ? (n ? Math.min(Number(n.qty), Number(l.remaining)) : 0) : Number(l.remaining),
+      notifiedBatchNo, extBatchNo: notifiedBatchNo, mfgDate: n?.mfgDate || today(), expDate: n?.expDate || null,
+      coaNo: n?.coaNo || null, coaAttachmentId: n?.coaAttachmentId || null
+    })
   }
 }
 

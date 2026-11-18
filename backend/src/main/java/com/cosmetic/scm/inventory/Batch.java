@@ -72,4 +72,7 @@ public class Batch {
 
     /** 包材放行时依据的供应商签样。 */
     private Long proofId;
+
+    /** 收货时从送货通知带入的供方 COA 报告编号。 */
+    private String coaNo;
 }

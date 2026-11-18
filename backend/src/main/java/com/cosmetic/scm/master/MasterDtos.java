@@ -63,7 +63,20 @@ public final class MasterDtos {
             @Size(max = 100) String contact,
             @Size(max = 200) String address,
             boolean qualified,
-            boolean criticalSupplier) {
+            boolean criticalSupplier,
+            @Size(max = 40) String taxId,
+            @Size(max = 120) String bankName,
+            @Size(max = 60) String bankAccount,
+            @Min(0) @Max(365) Integer defaultCreditDays,
+            @DecimalMin(value = "0", message = "默认税率不能为负") @jakarta.validation.constraints.DecimalMax(value = "100", message = "默认税率不能超过 100")
+            @jakarta.validation.constraints.Digits(integer = 3, fraction = 2, message = "默认税率最多 2 位小数") BigDecimal defaultTaxRate,
+            @Size(max = 40) String financeCode) {
+        public PartnerReq(String code, String name, PartnerKind kind, String licenseNo, LocalDate licenseExpiry,
+                          String licenseScope, String batchPrefix, String channel, Integer minShelfPct,
+                          String contact, String address, boolean qualified, boolean criticalSupplier) {
+            this(code, name, kind, licenseNo, licenseExpiry, licenseScope, batchPrefix, channel, minShelfPct,
+                    contact, address, qualified, criticalSupplier, null, null, null, null, null, null);
+        }
     }
 
     /** licenseState: OK / EXPIRING（60 天内到期）/ EXPIRED / NONE */
@@ -71,7 +84,9 @@ public final class MasterDtos {
                               String licenseNo, LocalDate licenseExpiry, String licenseScope,
                               String licenseState, Long licenseDaysLeft, boolean usable,
                               String batchPrefix, String channel, int minShelfPct, String contact, String address,
-                              boolean qualified, boolean criticalSupplier) {
+                              boolean qualified, boolean criticalSupplier,
+                              String taxId, String bankName, String bankAccount,
+                              Integer defaultCreditDays, BigDecimal defaultTaxRate, String financeCode) {
     }
 
     public record WarehouseReq(

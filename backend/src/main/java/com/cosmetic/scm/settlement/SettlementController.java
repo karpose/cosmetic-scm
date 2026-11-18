@@ -3,6 +3,9 @@ package com.cosmetic.scm.settlement;
 import java.time.LocalDate;
 import java.util.List;
 
+import com.cosmetic.scm.domain.FinanceSyncStatus;
+import com.cosmetic.scm.integration.FinanceIntegrationService;
+import com.cosmetic.scm.integration.FinanceIntegrationService.ApVoucherView;
 import com.cosmetic.scm.settlement.SettlementService.ApproveReq;
 import com.cosmetic.scm.settlement.SettlementService.BatchInvoiceReq;
 import com.cosmetic.scm.settlement.SettlementService.CancelReq;
@@ -38,6 +41,7 @@ public class SettlementController {
     private static final String FINANCE = "hasAnyRole('ADMIN','FINANCE')";
 
     private final SettlementService settlement;
+    private final FinanceIntegrationService financeIntegration;
 
     @GetMapping
     @PreAuthorize(READ)
@@ -97,5 +101,12 @@ public class SettlementController {
     @PreAuthorize(FINANCE)
     public StatementView refund(@PathVariable Long id, @Valid @RequestBody PayReq req) {
         return settlement.refund(id, req);
+    }
+
+    @GetMapping("/finance-vouchers")
+    @PreAuthorize(FINANCE)
+    public List<ApVoucherView> financeVouchers(@RequestParam(required = false) FinanceSyncStatus syncStatus,
+                                               @RequestParam(required = false) Boolean pendingOnly) {
+        return financeIntegration.vouchers(syncStatus, pendingOnly, false);
     }
 }

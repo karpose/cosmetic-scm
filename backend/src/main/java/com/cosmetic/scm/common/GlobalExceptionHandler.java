@@ -65,7 +65,9 @@ public class GlobalExceptionHandler {
             java.util.Map.entry("level", "等级"), java.util.Map.entry("sourceType", "来源"), java.util.Map.entry("actionType", "措施类型"),
             java.util.Map.entry("disposition", "处置方式"), java.util.Map.entry("decision", "结论"), java.util.Map.entry("filingType", "备案类型"),
             java.util.Map.entry("orderNo", "订单号"), java.util.Map.entry("sku", "SKU"), java.util.Map.entry("platform", "平台"),
-            java.util.Map.entry("orders", "订单"), java.util.Map.entry("roles", "角色"), java.util.Map.entry("email", "邮箱"), java.util.Map.entry("severity", "严重程度"));
+            java.util.Map.entry("orders", "订单"), java.util.Map.entry("roles", "角色"), java.util.Map.entry("email", "邮箱"), java.util.Map.entry("severity", "严重程度"),
+            java.util.Map.entry("taxId", "税号"), java.util.Map.entry("bankName", "开户银行"), java.util.Map.entry("bankAccount", "银行账号"),
+            java.util.Map.entry("defaultCreditDays", "默认账期"), java.util.Map.entry("defaultTaxRate", "默认税率"), java.util.Map.entry("financeCode", "财务客商编码"));
 
     /** 地址写错、参数缺失或类型不对是调用方的问题，不是系统错误，不该进错误日志。 */
     @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)

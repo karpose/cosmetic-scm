@@ -290,6 +290,10 @@ class SupplierPortalTest {
         JsonNode notice = body(call(supplier, portal + "/shipments", shipment(shipLine(po, "6", "DECLARED-LOT")))
                 .andExpect(status().isOk())).path("shipments").get(0);
         long shipmentId = notice.path("id").asLong();
+        long shipmentLineId = notice.path("lines").get(0).path("id").asLong();
+        mvc.perform(multipart("/api/portal/supplier/shipment-lines/" + shipmentLineId + "/coa")
+                .file(new MockMultipartFile("file", "declared-coa.pdf", "application/pdf", PDF)).param("coaNo", "COA-DECLARED")
+                .header("Authorization", "Bearer " + supplier)).andExpect(status().isOk());
         long wh = warehouses.findAll().stream().filter(w -> "WH-MAIN".equals(w.getCode())).findFirst().orElseThrow().getId();
         long notifiedLine = po.path("lines").get(0).path("id").asLong();
         long otherLine = po.path("lines").get(1).path("id").asLong();
@@ -314,7 +318,14 @@ class SupplierPortalTest {
         assertThat(diff.path("batchChanged").asBoolean()).isTrue();
 
         long batchId = batches.findByBatchNo(batchNo).orElseThrow().getId();
-        call(login("qa1"), "/api/quality/batches/" + batchId + "/material-decision",
+        String qa = login("qa1");
+        read(qa, "/api/attachments?ownerType=BATCH&ownerId=" + batchId).andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+        read(qa, "/api/quality/batches/" + batchId + "/inspections").andExpect(status().isOk())
+                .andExpect(jsonPath("$.defaultCoaNo").doesNotExist());
+        read(supplier, "/api/portal/supplier/shipment-lines/" + shipmentLineId + "/attachments")
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].fileName").value("declared-coa.pdf"));
+        call(qa, "/api/quality/batches/" + batchId + "/material-decision",
                 Map.of("decision", "REJECTED", "reportNo", "INTERNAL-REPORT", "note", "内部检验说明", "password", DemoDataLoader.DEMO_PASSWORD))
                 .andExpect(status().isOk());
         JsonNode checked = supplierOrder(supplier, id).path("receipts").get(0);
@@ -525,5 +536,55 @@ class SupplierPortalTest {
         assertThat(files.findValues("fileName").stream().map(JsonNode::asText)).doesNotContain("审核报告.pdf");
         mvc.perform(multipart("/api/portal/supplier/profile/attachments").file(new MockMultipartFile("file", "假的.pdf", "application/pdf", "MZ".getBytes(StandardCharsets.ISO_8859_1)))
                 .header("Authorization", "Bearer " + sup1)).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void shipmentLineCoaAttachesToReceivedBatchAndPrefillsInspection() throws Exception {
+        ensureOtherSupplierAccount();
+        String sup1 = login("sup1");
+        String sup2 = login("sup2");
+        String purchase = login("purchase1");
+        JsonNode po = newPo(supplierId("sup1"), "5", today().plusDays(5));
+        long poId = po.path("id").asLong();
+        long poLineId = po.path("lines").get(0).path("id").asLong();
+        call(sup1, "/api/portal/supplier/orders/" + poId + "/promise", Map.of("promisedDate", today().plusDays(5))).andExpect(status().isOk());
+
+        // 创建送货通知时填报行级 COA 报告编号，并按明细行上传 COA PDF
+        JsonNode shipped = body(call(sup1, "/api/portal/supplier/orders/" + poId + "/shipments", Map.of(
+                "shipDate", today().toString(),
+                "lines", List.of(Map.of("poLineId", poLineId, "qty", 5, "extBatchNo", "COA-LOT-01", "mfgDate", today().minusDays(2).toString(), "coaNo", "COA-2026-888"))
+        )).andExpect(status().isOk()));
+        long shipmentId = shipped.path("shipments").get(0).path("id").asLong();
+        long shipmentLineId = shipped.path("shipments").get(0).path("lines").get(0).path("id").asLong();
+
+        // 别的供应商不能上传或查看
+        mvc.perform(multipart("/api/portal/supplier/shipment-lines/" + shipmentLineId + "/coa")
+                .file(new MockMultipartFile("file", "coa.pdf", "application/pdf", PDF)).header("Authorization", "Bearer " + sup2))
+                .andExpect(status().isNotFound());
+        long coaAttId = body(mvc.perform(multipart("/api/portal/supplier/shipment-lines/" + shipmentLineId + "/coa")
+                .file(new MockMultipartFile("file", "COA-LOT-01.pdf", "application/pdf", PDF)).header("Authorization", "Bearer " + sup1))
+                .andExpect(status().isOk())).path("id").asLong();
+        read(sup1, "/api/portal/supplier/shipment-lines/" + shipmentLineId + "/attachments").andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1));
+        read(sup1, "/api/portal/supplier/attachments/" + coaAttId + "/download").andExpect(status().isOk()).andExpect(content().bytes(PDF));
+
+        // 仓库按该送货通知收货：自动将 COA 编号和附件挂载到生成的批次
+        long wh = warehouses.findAll().stream().filter(w -> "WH-MAIN".equals(w.getCode())).findFirst().orElseThrow().getId();
+        String batchNo = body(call(purchase, "/api/purchase-orders/" + poId + "/receipts", Map.of(
+                "shipmentId", shipmentId,
+                "lines", List.of(Map.of("poLineId", poLineId, "qty", 5, "extBatchNo", "  COA-LOT-01  ", "warehouseId", wh))
+        )).andExpect(status().isOk())).path("batchNos").get(0).asText();
+        long batchId = batches.findByBatchNo(batchNo).orElseThrow().getId();
+
+        // 批次附件与质量检验面板均已自动带入
+        String qa = login("qa1");
+        long batchAttachmentId = body(read(qa, "/api/attachments?ownerType=BATCH&ownerId=" + batchId).andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].fileName").value("COA-LOT-01.pdf"))).get(0).path("id").asLong();
+        assertThat(batchAttachmentId).isNotEqualTo(coaAttId);
+        read(qa, "/api/attachments/" + batchAttachmentId + "/download").andExpect(status().isOk()).andExpect(content().bytes(PDF));
+        read(sup1, "/api/portal/supplier/attachments/" + coaAttId + "/download").andExpect(status().isOk()).andExpect(content().bytes(PDF));
+        read(qa, "/api/quality/batches/" + batchId + "/inspections").andExpect(status().isOk())
+                .andExpect(jsonPath("$.defaultCoaNo").value("COA-2026-888"));
     }
 }

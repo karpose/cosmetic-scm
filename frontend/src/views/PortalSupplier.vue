@@ -163,7 +163,12 @@
               <div class="small">
                 <span class="mono">{{ s.shipmentNo }}</span> · 发货 {{ s.shipDate }}
                 <el-tag size="small" :type="SHIP_TAG[s.status]" disable-transitions>{{ s.statusLabel }}</el-tag>
-                <div v-for="l in s.lines" :key="l.poLineId" class="muted">{{ l.itemName }} {{ fmtQty(l.qty) }} {{ l.unit }} · 批号 <span class="mono">{{ l.extBatchNo }}</span> · 生产 {{ l.mfgDate }}<template v-if="l.expDate"> · 有效期 {{ l.expDate }}</template></div>
+                <div v-for="l in s.lines" :key="l.poLineId" class="muted">
+                  {{ l.itemName }} {{ fmtQty(l.qty) }} {{ l.unit }} · 批号 <span class="mono">{{ l.extBatchNo }}</span> · 生产 {{ l.mfgDate }}<template v-if="l.expDate"> · 有效期 {{ l.expDate }}</template>
+                  <template v-if="l.coaNo"> · COA <span class="mono">{{ l.coaNo }}</span></template>
+                  <el-tag v-if="l.coaAttachmentId" size="small" type="success" disable-transitions style="margin-left:4px">已传 COA</el-tag>
+                  <el-button v-if="s.status !== 'CANCELLED' && o.status !== 'CANCELLED'" size="small" text type="primary" @click="triggerLineCoa(l)">{{ l.coaAttachmentId ? '重传 COA' : '上传 COA' }}</el-button>
+                </div>
                 <div v-if="s.note" class="muted">{{ s.note }}</div>
                 <template v-if="o.receiptDifferences?.[s.id]">
                   <div v-for="d in o.receiptDifferences[s.id]" :key="d.poLineId" class="receipt-difference">
@@ -234,6 +239,10 @@
           <el-descriptions-item label="下次审核"><span class="mono">{{ profile.nextAuditDate || '-' }}</span></el-descriptions-item>
           <el-descriptions-item label="近 12 个月来料"><span class="mono">{{ profile.received }}</span> 批，拒收 <span class="mono">{{ profile.rejected }}</span> 批</el-descriptions-item>
           <el-descriptions-item label="近 12 个月交货"><template v-if="profile.dueTotal">到期 <span class="mono">{{ profile.dueTotal }}</span> 单，按时 <span class="mono">{{ profile.onTime }}</span> 单</template><template v-else>-</template></el-descriptions-item>
+          <el-descriptions-item label="税号 / 信用代码">{{ profile.taxId || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="默认账期 / 税率">{{ profile.defaultCreditDays != null ? `${profile.defaultCreditDays} 天` : '30 天（默认）' }} / {{ profile.defaultTaxRate != null ? `${fmtQty(profile.defaultTaxRate)}%` : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="开户银行">{{ profile.bankName || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="银行账号"><span class="mono">{{ profile.bankAccount || '-' }}</span></el-descriptions-item>
         </el-descriptions>
         <p class="muted small">资质信息由品牌方维护。有新证时请上传，品牌方核对后更新。交货按贵司第一次回复的交期计算。</p>
         <AttachmentList owner-type="PARTNER" :owner-id="0" list-path="/portal/supplier/profile/attachments" download-prefix="/portal/supplier/attachments" can-upload title="资质文件" empty-text="还没有上传资质文件" notice="这里只列贵司上传的文件，上传后品牌方能看到。" />
@@ -341,6 +350,7 @@
             <el-form-item label="贵司批号"><el-input :id="`sp-batch-${l.poLineId}`" v-model="l.extBatchNo" maxlength="60" /></el-form-item>
             <el-form-item label="生产日期"><el-date-picker :id="`sp-mfg-${l.poLineId}`" v-model="l.mfgDate" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d > startOfToday" /></el-form-item>
             <el-form-item label="有效期至（选填）"><el-date-picker :id="`sp-exp-${l.poLineId}`" v-model="l.expDate" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
+            <el-form-item label="COA 报告编号（选填）"><el-input :id="`sp-coa-${l.poLineId}`" v-model="l.coaNo" maxlength="60" placeholder="收货时自动带入批次" /></el-form-item>
           </div>
         </el-card>
       </el-form>
@@ -349,13 +359,14 @@
         <el-button type="primary" :loading="sh.saving" @click="submitShip">发送送货通知</el-button>
       </template>
     </el-dialog>
+    <input ref="coaFileInput" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.xlsx,.docx,.csv,.txt" hidden @change="onLineCoaSelected" />
   </div>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import http from '../api'
+import http, { LONG_TIMEOUT } from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
 import LoadError from '../components/LoadError.vue'
 import StatementInvoiceReturns from '../components/StatementInvoiceReturns.vue'
@@ -557,9 +568,29 @@ function openShip(o) {
     shipDate: today(),
     note: '',
     lines: o.lines.filter((l) => leftOf(l) > 0).map((l) => ({
-      poLineId: l.id, itemName: l.itemName, unit: l.unit, left: leftOf(l), qty: leftOf(l), extBatchNo: '', mfgDate: null, expDate: null
+      poLineId: l.id, itemName: l.itemName, unit: l.unit, left: leftOf(l), qty: leftOf(l), extBatchNo: '', mfgDate: null, expDate: null, coaNo: ''
     }))
   })
+}
+const coaFileInput = ref(null)
+const coaTargetLine = ref(null)
+function triggerLineCoa(line) {
+  coaTargetLine.value = line
+  if (coaFileInput.value) {
+    coaFileInput.value.value = ''
+    coaFileInput.value.click()
+  }
+}
+async function onLineCoaSelected(e) {
+  const file = e.target.files?.[0]
+  const line = coaTargetLine.value
+  if (!file || !line) return
+  const fd = new FormData()
+  fd.append('file', file)
+  if (line.coaNo) fd.append('coaNo', line.coaNo)
+  await http.post(`/portal/supplier/shipment-lines/${line.id}/coa`, fd, { timeout: LONG_TIMEOUT })
+  ElMessage.success('COA 报告已上传并绑定到该送货明细')
+  load()
 }
 async function submitShip() {
   const lines = sh.lines.filter((l) => l.qty > 0)
@@ -571,7 +602,7 @@ async function submitShip() {
     replace(await http.post(`/portal/supplier/orders/${sh.order.id}/shipments`, {
       shipDate: sh.shipDate,
       note: sh.note,
-      lines: lines.map(({ poLineId, qty, extBatchNo, mfgDate, expDate }) => ({ poLineId, qty, extBatchNo, mfgDate, expDate }))
+      lines: lines.map(({ poLineId, qty, extBatchNo, mfgDate, expDate, coaNo }) => ({ poLineId, qty, extBatchNo, mfgDate, expDate, coaNo }))
     }))
     ElMessage.success('送货通知已发送')
     sh.visible = false

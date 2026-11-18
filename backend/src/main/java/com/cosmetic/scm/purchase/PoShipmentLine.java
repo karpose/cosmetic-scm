@@ -35,4 +35,8 @@ public class PoShipmentLine {
     private LocalDate mfgDate;
 
     private LocalDate expDate;
+
+    private String coaNo;
+
+    private Long coaAttachmentId;
 }
