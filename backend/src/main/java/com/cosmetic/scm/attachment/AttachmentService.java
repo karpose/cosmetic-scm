@@ -21,13 +21,18 @@ import com.cosmetic.scm.complaint.ComplaintRepository;
 import com.cosmetic.scm.domain.MoStatus;
 import com.cosmetic.scm.domain.MoType;
 import com.cosmetic.scm.domain.OwnerType;
-import com.cosmetic.scm.purchase.PurchaseOrder;
 import com.cosmetic.scm.domain.PoStatus;
+import com.cosmetic.scm.domain.ShipmentStatus;
 import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.master.PartnerRepository;
 import com.cosmetic.scm.mes.EquipmentRepository;
 import com.cosmetic.scm.production.MfgOrder;
 import com.cosmetic.scm.production.MfgOrderRepository;
+import com.cosmetic.scm.purchase.PoShipment;
+import com.cosmetic.scm.purchase.PoShipmentLine;
+import com.cosmetic.scm.purchase.PoShipmentLineRepository;
+import com.cosmetic.scm.purchase.PoShipmentRepository;
+import com.cosmetic.scm.purchase.PurchaseOrder;
 import com.cosmetic.scm.purchase.PurchaseOrderRepository;
 import com.cosmetic.scm.recall.RecallRepository;
 import com.cosmetic.scm.salesreturn.SalesReturnRepository;
@@ -62,6 +67,8 @@ public class AttachmentService {
     private final FileStorage storage;
     private final BatchRepository batches;
     private final PurchaseOrderRepository purchaseOrders;
+    private final com.cosmetic.scm.purchase.PoShipmentRepository shipments;
+    private final com.cosmetic.scm.purchase.PoShipmentLineRepository shipmentLines;
     private final MfgOrderRepository mfgOrders;
     private final ComplaintRepository complaints;
     private final RecallRepository recalls;
@@ -178,6 +185,45 @@ public class AttachmentService {
         return uploadedByMyPartner(list(OwnerType.PARTNER, currentUser.portalPartnerId()));
     }
 
+    @Transactional
+    public AttachmentView uploadForSupplierShipmentLine(Long lineId, MultipartFile file, String coaNo, String note) {
+        PoShipmentLine line = requireOwnShipmentLine(lineId, true);
+        AttachmentView saved = store(OwnerType.PO_SHIPMENT_LINE, lineId, file, note);
+        line.setCoaAttachmentId(saved.id());
+        if (coaNo != null && !coaNo.isBlank()) {
+            String trimmed = coaNo.trim();
+            line.setCoaNo(trimmed.length() <= 60 ? trimmed : trimmed.substring(0, 60));
+        }
+        shipmentLines.save(line);
+        return saved;
+    }
+
+    @Transactional(readOnly = true)
+    public List<AttachmentView> listForSupplierShipmentLine(Long lineId) {
+        requireOwnShipmentLine(lineId, false);
+        return uploadedByMyPartner(list(OwnerType.PO_SHIPMENT_LINE, lineId));
+    }
+
+    @Transactional
+    public void linkShipmentCoaToBatch(Long attachmentId, Long batchId, String coaNo) {
+        Attachment src = attachments.findById(attachmentId).orElse(null);
+        if (src == null) {
+            return;
+        }
+        Attachment copy = new Attachment();
+        copy.setOwnerType(OwnerType.BATCH);
+        copy.setOwnerId(batchId);
+        copy.setFileName(src.getFileName());
+        copy.setContentType(src.getContentType());
+        copy.setSizeBytes(src.getSizeBytes());
+        copy.setSha256(src.getSha256());
+        copy.setStorageKey(src.getStorageKey());
+        copy.setNote(coaNo != null && !coaNo.isBlank() ? "随送货通知自动挂载（COA：" + coaNo + "）" : "随送货通知自动挂载");
+        copy.setUploadedBy(src.getUploadedBy());
+        copy.setUploadedAt(time.now());
+        attachments.save(copy);
+    }
+
     @Transactional(readOnly = true)
     public Download downloadForSupplier(Long id) {
         Attachment a = attachments.findById(id).orElseThrow(() -> BizException.notFound("附件"));
@@ -186,6 +232,10 @@ public class AttachmentService {
             case PURCHASE_ORDER -> purchaseOrders.findById(a.getOwnerId()).filter(p -> mine.equals(p.getSupplierId())).isPresent();
             case PARTNER -> mine.equals(a.getOwnerId());
             case SUPPLIER_STATEMENT -> statements.findById(a.getOwnerId()).filter(x -> mine.equals(x.getSupplierId())).isPresent();
+            case PO_SHIPMENT_LINE -> shipmentLines.findById(a.getOwnerId())
+                    .flatMap(l -> shipments.findById(l.getShipmentId()))
+                    .flatMap(s -> purchaseOrders.findById(s.getPoId()))
+                    .filter(p -> mine.equals(p.getSupplierId())).isPresent();
             default -> false;
         };
         if (!ownerIsMine || !users.usernamesOfPartner(mine).contains(a.getUploadedBy())) {
@@ -220,6 +270,17 @@ public class AttachmentService {
         Long mine = currentUser.portalPartnerId();
         return purchaseOrders.findById(poId).filter(p -> mine.equals(p.getSupplierId()))
                 .orElseThrow(() -> BizException.notFound("采购单"));
+    }
+
+    private com.cosmetic.scm.purchase.PoShipmentLine requireOwnShipmentLine(Long lineId, boolean forUpload) {
+        var line = shipmentLines.findById(lineId).orElseThrow(() -> BizException.notFound("送货通知明细"));
+        var shipment = (forUpload ? shipments.lockById(line.getShipmentId()) : shipments.findById(line.getShipmentId()))
+                .orElseThrow(() -> BizException.notFound("送货通知"));
+        PurchaseOrder po = requireOwnPo(shipment.getPoId());
+        if (forUpload && (po.getStatus() == PoStatus.CANCELLED || shipment.getStatus() == com.cosmetic.scm.domain.ShipmentStatus.CANCELLED)) {
+            throw new BizException("送货通知或采购单已取消，不能上传 COA");
+        }
+        return line;
     }
 
     // ---------- 内部 ----------
@@ -311,6 +372,7 @@ public class AttachmentService {
             case CHANGE_REQUEST -> changeRequests;
             case LABEL_ARTWORK -> labelArtworks;
             case ARTWORK_PROOF -> artworkProofs;
+            case PO_SHIPMENT_LINE -> shipmentLines;
         };
     }
 

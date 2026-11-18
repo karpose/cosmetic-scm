@@ -83,7 +83,11 @@ public class SupplierPortalService {
 
     public record ShipmentLineReq(@NotNull Long poLineId, @NotNull @Positive @Qty BigDecimal qty,
                                   @NotBlank(message = "请填写批号") @Size(max = 60) String extBatchNo,
-                                  @NotNull(message = "请填写生产日期") LocalDate mfgDate, LocalDate expDate) {
+                                  @NotNull(message = "请填写生产日期") LocalDate mfgDate, LocalDate expDate,
+                                  @Size(max = 60) String coaNo) {
+        public ShipmentLineReq(Long poLineId, BigDecimal qty, String extBatchNo, LocalDate mfgDate, LocalDate expDate) {
+            this(poLineId, qty, extBatchNo, mfgDate, expDate, null);
+        }
     }
 
     public record ShipmentReq(@NotNull(message = "请选择发货日期") LocalDate shipDate, @Size(max = 300) String note,
@@ -231,6 +235,7 @@ public class SupplierPortalService {
             l.setExtBatchNo(r.extBatchNo().trim());
             l.setMfgDate(r.mfgDate());
             l.setExpDate(r.expDate());
+            l.setCoaNo(r.coaNo() == null || r.coaNo().isBlank() ? null : r.coaNo().trim());
             shipmentLines.save(l);
         }
         audit.log("供应商送货通知", s.getShipmentNo(), po.getPoNo() + "：" + String.join("，", detail));

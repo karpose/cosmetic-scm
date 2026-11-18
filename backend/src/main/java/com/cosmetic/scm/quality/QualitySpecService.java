@@ -131,7 +131,7 @@ public class QualitySpecService {
      * 放行弹窗用：生效标准、这个批次的检验记录，以及现在放不了行的原因（能放行时为空）。
      * coaBlocker：标准里有可采用供方报告的项目、但这批不能采用时的原因；能采用或标准里没有这类项目时为空。
      */
-    public record Panel(SpecView spec, List<InspectionView> inspections, String blocker, String supplierName, String coaBlocker) {
+    public record Panel(SpecView spec, List<InspectionView> inspections, String blocker, String supplierName, String coaBlocker, String defaultCoaNo) {
     }
 
     /** 检验结果导出：每次检验的每个项目一行。 */
@@ -250,7 +250,7 @@ public class QualitySpecService {
         // 标准里没有可采用供方报告的项目时不用算，页面上也不显示
         String coaBlocker = view != null && view.lines().stream().anyMatch(LineView::coaAllowed) ? coaBlocker(b, spec.get(), lookup.item(b.getItemId())).orElse(null) : null;
         String supplier = b.getPartnerId() == null ? null : lookup.partner(b.getPartnerId()).getName();
-        return new Panel(view, inspectionViews(inspections.findByBatchIdOrderByIdDesc(batchId)), blocker(b).orElse(null), supplier, coaBlocker);
+        return new Panel(view, inspectionViews(inspections.findByBatchIdOrderByIdDesc(batchId)), blocker(b).orElse(null), supplier, coaBlocker, b.getCoaNo());
     }
 
     /**

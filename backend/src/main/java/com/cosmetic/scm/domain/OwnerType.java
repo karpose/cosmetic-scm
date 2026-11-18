@@ -18,7 +18,8 @@ public enum OwnerType {
     DOC_REVISION("受控文件修订"),
     CHANGE_REQUEST("变更"),
     LABEL_ARTWORK("标签设计稿"),
-    ARTWORK_PROOF("包材打样");
+    ARTWORK_PROOF("包材打样"),
+    PO_SHIPMENT_LINE("送货通知明细");
 
     private final String label;
 
