@@ -15,6 +15,9 @@ import java.time.LocalDateTime;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
@@ -255,6 +258,8 @@ class SupplierPortalTest {
         assertThat(mine.get("lines").get(0).get("notifiedQty").decimalValue()).isEqualByComparingTo("4");
         assertThat(mine.path("receiptDifferences").path(Long.toString(firstShipment)).isArray()).isTrue();
         assertThat(mine.path("receiptDifferences").path(Long.toString(firstShipment)).isEmpty()).isTrue();
+        call(sup, "/api/portal/supplier/shipments/" + firstShipment + "/receipt-dispute", Map.of("note", "请核对"))
+                .andExpect(status().isBadRequest());
 
         // 关闭采购单：没收的通知作废，总览不会一直显示待收货
         call(wms, "/api/purchase-orders/" + id + "/close", Map.of("reason", "余量不要了")).andExpect(status().isOk());
@@ -345,6 +350,76 @@ class SupplierPortalTest {
             }
         }
         throw new AssertionError("找不到供应商采购单 " + poId);
+    }
+
+    @Test
+    void supplierReceiptDisputeIsAnsweredOnceByPurchaseAndLeavesReceiptIntact() throws Exception {
+        ensureOtherSupplierAccount();
+        String supplier = login("sup1");
+        String otherSupplier = login("sup2");
+        String purchase = login("purchase1");
+        String qa = login("qa1");
+        JsonNode po = newPo(supplierId("sup1"), "5", today().plusDays(5));
+        long poId = po.path("id").asLong();
+        String portalOrder = "/api/portal/supplier/orders/" + poId;
+        call(supplier, portalOrder + "/promise", Map.of("promisedDate", today().plusDays(5))).andExpect(status().isOk());
+        JsonNode notice = body(call(supplier, portalOrder + "/shipments", shipment(shipLine(po, "5", "NOTICE-LOT")))
+                .andExpect(status().isOk())).path("shipments").get(0);
+        long shipmentId = notice.path("id").asLong();
+        String report = "/api/portal/supplier/shipments/" + shipmentId + "/receipt-dispute";
+        String detail = "/api/purchase-orders/shipments/" + shipmentId + "/receipt-dispute";
+        String resolve = detail + "/resolve";
+        String todoRoute = "/purchase?receiptDispute=" + shipmentId;
+        var reportBody = Map.of("note", "  请核对外箱与送货单的批号  ");
+        var answer = Map.of("resolution", "  已核对外箱标签，按实收批号记录  ");
+        call(supplier, report, reportBody).andExpect(status().isBadRequest());
+        call(purchase, resolve, answer).andExpect(status().isNotFound());
+
+        long wh = warehouses.findAll().stream().filter(w -> "WH-MAIN".equals(w.getCode())).findFirst().orElseThrow().getId();
+        var line = Map.of("poLineId", po.path("lines").get(0).path("id").asLong(), "qty", 5, "extBatchNo", "RECEIPT-DISPUTE-LOT",
+                "warehouseId", wh);
+        call(purchase, "/api/purchase-orders/" + poId + "/receipts", Map.of("shipmentId", shipmentId, "lines", List.of(line)))
+                .andExpect(status().isOk());
+        JsonNode originalReceipt = supplierOrder(supplier, poId).path("receipts");
+        call(otherSupplier, report, reportBody).andExpect(status().isNotFound());
+        call(supplier, report, Map.of("note", " ")).andExpect(status().isBadRequest());
+
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            Callable<Integer> attempt = () -> call(supplier, report, reportBody).andReturn().getResponse().getStatus();
+            var submissions = pool.invokeAll(List.of(attempt, attempt), 20, TimeUnit.SECONDS);
+            assertThat(List.of(submissions.get(0).get(), submissions.get(1).get())).containsExactlyInAnyOrder(200, 400);
+        } finally {
+            pool.shutdownNow();
+        }
+        JsonNode pending = supplierOrder(supplier, poId).path("shipments").get(0).path("receiptDispute");
+        assertThat(pending.path("note").asText()).isEqualTo("请核对外箱与送货单的批号");
+        assertThat(pending.path("reportedAt").asText()).isNotBlank();
+        assertThat(pending.path("resolvedAt").isNull()).isTrue();
+        read(qa, detail).andExpect(status().isForbidden());
+        call(qa, resolve, answer).andExpect(status().isForbidden());
+        call(supplier, resolve, answer).andExpect(status().isForbidden());
+        JsonNode purchaseDetail = body(read(purchase, detail).andExpect(status().isOk()));
+        assertThat(purchaseDetail.path("received").get(0).path("extBatchNo").asText()).isEqualTo("RECEIPT-DISPUTE-LOT");
+        assertThat(purchaseDetail.path("differences").get(0).path("batchChanged").asBoolean()).isTrue();
+        assertThat(body(read(purchase, "/api/dashboard").andExpect(status().isOk())).path("todos").findValuesAsText("route"))
+                .contains(todoRoute);
+        assertThat(body(read(qa, "/api/purchase-orders/" + poId).andExpect(status().isOk())).toString())
+                .doesNotContain(pending.path("note").asText());
+
+        call(purchase, resolve, Map.of("resolution", " ")).andExpect(status().isBadRequest());
+        call(purchase, resolve, answer).andExpect(status().isOk());
+        call(purchase, resolve, Map.of("resolution", "覆盖已发送答复")).andExpect(status().isBadRequest());
+        call(supplier, report, reportBody).andExpect(status().isBadRequest());
+        JsonNode finalized = supplierOrder(supplier, poId);
+        JsonNode reply = finalized.path("shipments").get(0).path("receiptDispute");
+        assertThat(reply.path("resolution").asText()).isEqualTo("已核对外箱标签，按实收批号记录");
+        assertThat(reply.path("resolvedAt").asText()).isNotBlank();
+        assertThat(finalized.path("receipts")).isEqualTo(originalReceipt);
+        assertThat(body(read(purchase, "/api/dashboard").andExpect(status().isOk())).path("todos").findValuesAsText("route"))
+                .doesNotContain(todoRoute);
+        assertThat(body(read(otherSupplier, "/api/portal/supplier/orders").andExpect(status().isOk())).toString())
+                .doesNotContain(pending.path("note").asText(), reply.path("resolution").asText());
     }
 
     @Test

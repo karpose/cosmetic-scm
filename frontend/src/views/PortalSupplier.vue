@@ -172,8 +172,21 @@
                   <div v-if="!o.receiptDifferences[s.id].length" class="muted">实收数量与批号一致</div>
                 </template>
                 <div v-else-if="s.status === 'RECEIVED'" class="muted">该通知没有关联收货明细</div>
+                <div v-if="s.receiptDispute" class="receipt-feedback">
+                  <el-tag size="small" :type="s.receiptDispute.resolvedAt ? 'success' : 'warning'" disable-transitions>
+                    {{ s.receiptDispute.resolvedAt ? '收货异议已回复' : '收货异议待处理' }}
+                  </el-tag>
+                  <div class="muted">提交于 {{ fmtTime(s.receiptDispute.reportedAt) }}</div>
+                  <div class="receipt-note">{{ s.receiptDispute.note }}</div>
+                  <template v-if="s.receiptDispute.resolvedAt">
+                    <div class="muted">采购答复 · {{ fmtTime(s.receiptDispute.resolvedAt) }}</div>
+                    <div class="receipt-note">{{ s.receiptDispute.resolution }}</div>
+                  </template>
+                </div>
               </div>
               <el-button v-if="s.status === 'OPEN'" size="small" text @click="cancelShipment(s)">取消通知</el-button>
+              <el-button v-else-if="o.receiptDifferences?.[s.id]?.length && !s.receiptDispute" size="small" plain
+                         @click="openReceiptDispute(s)">提交收货异议</el-button>
             </div>
           </div>
 
@@ -248,6 +261,20 @@
       <template #footer>
         <el-button @click="qt.visible = false">取消</el-button>
         <el-button type="primary" :loading="qt.saving" @click="submitQuote">提交报价</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="receiptDispute.visible" title="提交收货异议" width="min(calc(100vw - 32px), 520px)">
+      <p class="muted small">{{ receiptDispute.shipment?.shipmentNo }}</p>
+      <el-form label-position="top" @submit.prevent="submitReceiptDispute">
+        <el-form-item label="异议说明">
+          <el-input id="supplier-receipt-dispute" v-model="receiptDispute.note" type="textarea" :rows="4" maxlength="500" show-word-limit
+                    placeholder="请说明需要采购核对的物料、数量或批号" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="receiptDispute.visible = false">取消</el-button>
+        <el-button type="primary" :loading="receiptDispute.saving" :disabled="!receiptDispute.note.trim()" @click="submitReceiptDispute">提交异议</el-button>
       </template>
     </el-dialog>
 
@@ -560,6 +587,27 @@ async function cancelShipment(s) {
   replace(await http.post(`/portal/supplier/shipments/${s.id}/cancel`))
   ElMessage.success('送货通知已取消')
 }
+
+const receiptDispute = reactive({ visible: false, saving: false, shipment: null, note: '' })
+
+function openReceiptDispute(shipment) {
+  Object.assign(receiptDispute, { visible: true, shipment, note: '' })
+}
+
+async function submitReceiptDispute() {
+  if (receiptDispute.saving || !receiptDispute.note.trim()) return
+  const shipment = receiptDispute.shipment
+  receiptDispute.saving = true
+  try {
+    shipment.receiptDispute = await http.post(`/portal/supplier/shipments/${shipment.id}/receipt-dispute`, {
+      note: receiptDispute.note
+    })
+    receiptDispute.visible = false
+    ElMessage.success('收货异议已提交')
+  } finally {
+    receiptDispute.saving = false
+  }
+}
 </script>
 
 <style scoped>
@@ -572,6 +620,8 @@ h4 { margin: 0 0 8px; font-size: 13px; color: var(--el-text-color-secondary); fo
 .mat { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--lg-hairline); flex-wrap: wrap; }
 .mat:last-child { border-bottom: 0; }
 .receipt-difference { font-weight: 600; }
+.receipt-feedback { display: grid; gap: 4px; justify-items: start; margin-top: 8px; }
+.receipt-note { white-space: pre-wrap; overflow-wrap: anywhere; }
 .receipts > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 .ship-line { margin-bottom: 12px; }
 .ship-h { margin-bottom: 8px; }

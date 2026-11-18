@@ -32,6 +32,18 @@ public interface SupplierStatementRepository extends JpaRepository<SupplierState
 
     List<SupplierStatement> findByStatusAndInvoiceReviewVersionGreaterThanOrderById(StatementStatus status, int version);
 
+    @Query("""
+            select s from SupplierStatement s
+            where s.status not in :finished and exists (
+                select l.id from SupplierStatementLine l
+                join Batch b on b.id = l.batchId
+                join PoShipment n on n.id = b.poShipmentId
+                where l.statementId = s.id and n.receiptDisputedAt is not null and n.receiptResolvedAt is null
+            )
+            order by s.id desc
+            """)
+    List<SupplierStatement> findWithPendingReceiptDisputes(@Param("finished") Collection<StatementStatus> finished);
+
     @Query("select s.supplierId from SupplierStatement s where s.id = :id")
     Optional<Long> findSupplierIdById(@Param("id") Long id);
 

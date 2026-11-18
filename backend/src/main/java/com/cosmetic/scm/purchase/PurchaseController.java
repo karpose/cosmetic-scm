@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class PurchaseController {
 
     private final PurchaseService purchase;
+    private final ReceiptDisputeService receiptDisputes;
 
     @GetMapping
     public List<PoView> list() {
@@ -57,5 +58,18 @@ public class PurchaseController {
     @PreAuthorize("hasAnyRole('ADMIN','PURCHASE','WAREHOUSE')")
     public Map<String, List<String>> receive(@PathVariable Long id, @Valid @RequestBody ReceiveReq req) {
         return Map.of("batchNos", purchase.receive(id, req));
+    }
+
+    @GetMapping("/shipments/{id}/receipt-dispute")
+    @PreAuthorize("hasAnyRole('ADMIN','PURCHASE')")
+    public ReceiptDisputeService.Details receiptDispute(@PathVariable Long id) {
+        return receiptDisputes.get(id);
+    }
+
+    @PostMapping("/shipments/{id}/receipt-dispute/resolve")
+    @PreAuthorize("hasAnyRole('ADMIN','PURCHASE')")
+    public ReceiptDisputeService.DisputeView resolveReceiptDispute(@PathVariable Long id,
+            @Valid @RequestBody ReceiptDisputeService.ResolveReq req) {
+        return receiptDisputes.resolve(id, req);
     }
 }

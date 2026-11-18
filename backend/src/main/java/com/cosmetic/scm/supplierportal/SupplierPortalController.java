@@ -2,6 +2,7 @@ package com.cosmetic.scm.supplierportal;
 
 import java.util.List;
 
+import com.cosmetic.scm.purchase.ReceiptDisputeService;
 import com.cosmetic.scm.settlement.SettlementService;
 import com.cosmetic.scm.sourcing.RfqService;
 import com.cosmetic.scm.supplierportal.SupplierPortalService.ProfileView;
@@ -28,6 +29,7 @@ public class SupplierPortalController {
 
     private final SupplierPortalService portal;
     private final RfqService rfqs;
+    private final ReceiptDisputeService receiptDisputes;
     private final SettlementService settlement;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnService supplierReturns;
 
@@ -101,5 +103,11 @@ public class SupplierPortalController {
     @PostMapping("/shipments/{id}/cancel")
     public SupplierOrderView cancelShipment(@PathVariable Long id) {
         return portal.cancelShipment(id);
+    }
+
+    @PostMapping("/shipments/{id}/receipt-dispute")
+    public ReceiptDisputeService.DisputeView reportReceiptDispute(@PathVariable Long id,
+            @Valid @RequestBody ReceiptDisputeService.ReportReq req) {
+        return receiptDisputes.report(id, req);
     }
 }

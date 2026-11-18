@@ -447,6 +447,78 @@ class SourcingSettlementTest {
         call(fin, "/api/statements/" + id + "/pay", Map.of("payDate", d(0).toString(), "amount", 100)).andExpect(status().isOk());
     }
 
+    @Test
+    void settlementSurfacesPendingReceiptDisputesForItsOwnBatchesWithoutChangingAmounts() throws Exception {
+        Long supplierId = supplier("SUP-SET-RECEIPT", "set_receipt");
+        supplier("SUP-SET-RECEIPT-OTHER", "set_receipt_other");
+        String buyer = login("purchase1");
+        String supplier = login("set_receipt");
+        String finance = login("finance1");
+        JsonNode po = body(call(buyer, "/api/purchase-orders", Map.of("supplierId", supplierId, "expectedDate", d(3),
+                "lines", List.of(Map.of("itemId", item("RM-GLY-002"), "qty", 2, "unitPrice", 20, "taxRate", 0),
+                        Map.of("itemId", item("RM-NIA-001"), "qty", 1, "unitPrice", 60, "taxRate", 0)))).andExpect(status().isOk()));
+        long poId = po.path("id").asLong();
+        long glycerin = po.path("lines").get(0).path("id").asLong();
+        long niacinamide = po.path("lines").get(1).path("id").asLong();
+        String portalOrder = "/api/portal/supplier/orders/" + poId;
+        call(supplier, portalOrder + "/promise", Map.of("promisedDate", d(3))).andExpect(status().isOk());
+        JsonNode notice = body(call(supplier, portalOrder + "/shipments", Map.of("shipDate", d(0), "lines", List.of(
+                Map.of("poLineId", glycerin, "qty", 2, "extBatchNo", "GLY-NOTICE", "mfgDate", d(-1)),
+                Map.of("poLineId", niacinamide, "qty", 1, "extBatchNo", "NIA-NOTICE", "mfgDate", d(-1)))))
+                .andExpect(status().isOk())).path("shipments").get(0);
+        long shipmentId = notice.path("id").asLong();
+        long warehouse = warehouses.findAll().stream().filter(w -> "WH-MAIN".equals(w.getCode())).findFirst().orElseThrow().getId();
+        JsonNode affected = body(call(buyer, "/api/purchase-orders/" + poId + "/receipts", Map.of("shipmentId", shipmentId, "lines", List.of(
+                Map.of("poLineId", glycerin, "qty", 2, "extBatchNo", "GLY-ACTUAL", "warehouseId", warehouse),
+                Map.of("poLineId", niacinamide, "qty", 1, "extBatchNo", "NIA-NOTICE", "warehouseId", warehouse))))
+                .andExpect(status().isOk())).path("batchNos");
+        for (JsonNode no : affected) {
+            setStatus(batches.findByBatchNo(no.asText()).orElseThrow(), BatchStatus.RELEASED);
+        }
+        Batch manual = buyAndReceive(buyer, supplierId, "RM-GLY-002", "1", "5", "0").get(0);
+        setStatus(manual, BatchStatus.RELEASED);
+        String preview = "/api/statements/preview?supplierId=" + supplierId + "&periodTo=" + d(0);
+        assertThat(body(read(buyer, preview).andExpect(status().isOk())).path("receiptDisputes").isEmpty()).isTrue();
+
+        call(supplier, "/api/portal/supplier/shipments/" + shipmentId + "/receipt-dispute", Map.of("note", "核对甘油外箱批号"))
+                .andExpect(status().isOk());
+        JsonNode flaggedPreview = body(read(buyer, preview).andExpect(status().isOk()));
+        assertThat(flaggedPreview.path("goodsAmount").decimalValue()).isEqualByComparingTo("105");
+        assertThat(flaggedPreview.path("lines").size()).isEqualTo(3);
+        assertThat(flaggedPreview.path("receiptDisputes").size()).isEqualTo(1);
+        JsonNode flag = flaggedPreview.path("receiptDisputes").get(0);
+        assertThat(flag.path("shipmentNo").asText()).isEqualTo(notice.path("shipmentNo").asText());
+        assertThat(flag.path("poNo").asText()).isEqualTo(po.path("poNo").asText());
+        assertThat(flag.path("batchNos")).isEqualTo(affected);
+        assertThat(flag.toString()).doesNotContain(manual.getBatchNo(), "核对甘油外箱批号");
+        assertThat(body(read(buyer, "/api/statements/preview?supplierId=" + supplierId + "&periodTo=" + d(-1))
+                .andExpect(status().isOk())).path("receiptDisputes").isEmpty()).isTrue();
+
+        JsonNode statement = body(call(buyer, "/api/statements", Map.of("supplierId", supplierId, "periodTo", d(0))).andExpect(status().isOk()));
+        long id = statement.path("id").asLong();
+        String statementNo = statement.path("statementNo").asText();
+        String followUp = "/api/statements?followUp=RECEIPT_DISPUTE";
+        assertThat(statement.path("receiptDisputes")).isEqualTo(flaggedPreview.path("receiptDisputes"));
+        assertThat(body(read(finance, followUp).andExpect(status().isOk())).findValuesAsText("statementNo")).contains(statementNo);
+        read(login("qa1"), followUp).andExpect(status().isForbidden());
+        assertThat(body(read(login("set_receipt_other"), "/api/portal/supplier/statements").andExpect(status().isOk()))
+                .findValuesAsText("shipmentNo")).doesNotContain(notice.path("shipmentNo").asText());
+
+        call(supplier, "/api/portal/supplier/statements/" + id + "/confirm", Map.of()).andExpect(status().isOk());
+        call(supplier, "/api/portal/supplier/statements/" + id + "/invoice",
+                Map.of("invoiceNo", "INV-SET-RECEIPT", "invoiceDate", d(0), "amount", 105)).andExpect(status().isOk());
+        assertThat(body(call(finance, "/api/statements/" + id + "/approve", Map.of("password", PWD)).andExpect(status().isOk()))
+                .path("receiptDisputes")).isEqualTo(flaggedPreview.path("receiptDisputes"));
+
+        call(buyer, "/api/purchase-orders/shipments/" + shipmentId + "/receipt-dispute/resolve", Map.of("resolution", "核对完成"))
+                .andExpect(status().isOk());
+        assertThat(body(read(finance, followUp).andExpect(status().isOk())).findValuesAsText("statementNo")).doesNotContain(statementNo);
+        JsonNode refreshed = body(read(finance, "/api/statements?statementNo=" + statementNo).andExpect(status().isOk())).get(0);
+        assertThat(refreshed.path("receiptDisputes").isEmpty()).isTrue();
+        assertThat(refreshed.path("lines")).isEqualTo(statement.path("lines"));
+        assertThat(refreshed.path("totalAmount").decimalValue()).isEqualByComparingTo("105");
+    }
+
     private JsonNode poByNo(String token, String poNo) throws Exception {
         for (JsonNode p : body(read(token, "/api/purchase-orders").andExpect(status().isOk()))) {
             if (poNo.equals(p.get("poNo").asText())) {

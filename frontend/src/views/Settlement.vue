@@ -19,10 +19,11 @@
         </div>
         <div v-else class="filters">
           <el-input v-model="t.keyword.value" placeholder="搜索单号、供应商、发票号" clearable />
-          <el-select aria-label="收付跟进" v-model="followUp" placeholder="收付跟进" clearable>
+          <el-select aria-label="对账跟进" v-model="followUp" placeholder="对账跟进" clearable>
             <el-option value="PAY" label="待付款" />
             <el-option value="REFUND" label="待收退款" />
             <el-option value="OVERDUE" label="收付款已逾期" />
+            <el-option value="RECEIPT_DISPUTE" label="收货异议待处理" />
           </el-select>
           <el-select aria-label="按状态筛选" v-model="filterBy" placeholder="全部状态" clearable>
             <el-option v-for="o in filterOptions" :key="o.value" :value="o.value" :label="o.label" />
@@ -51,14 +52,21 @@
             <div v-if="row.invoiceDate" class="muted small mono">{{ row.invoiceDate }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" min-width="150"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /><div v-if="row.status === 'DISPUTED'" class="late small">{{ row.disputeNote }}</div><div v-if="row.cancelReason" class="muted small">{{ row.cancelReason }}</div></template></el-table-column>
+        <el-table-column label="状态" min-width="150">
+          <template #default="{ row }">
+            <StatusTag :status="row.status" :label="row.statusLabel" />
+            <div v-if="row.receiptDisputes?.length" class="small"><el-tag size="small" type="warning" disable-transitions>收货异议 {{ row.receiptDisputes.length }}</el-tag></div>
+            <div v-if="row.status === 'DISPUTED'" class="late small">{{ row.disputeNote }}</div>
+            <div v-if="row.cancelReason" class="muted small">{{ row.cancelReason }}</div>
+          </template>
+        </el-table-column>
         <el-table-column label="" width="220" :fixed="narrow ? false : 'right'">
           <template #default="{ row }">
             <el-button v-if="row.status === 'CONFIRMED' && canBuy" size="small" @click="openInvoice(row)">{{ row.invoiceCorrectionPending ? '代更正发票' : '代登记发票' }}</el-button>
             <el-button v-if="row.status === 'INVOICED' && canFinance" size="small" type="primary" @click="openApprove(row)">审批</el-button>
             <el-button v-if="row.status === 'INVOICED' && canFinance" size="small" @click="openInvoiceReturn(row)">退回发票</el-button>
-            <el-button v-if="row.status === 'APPROVED' && canFinance && Number(row.totalAmount) > 0" size="small" type="primary" @click="openPay(row)">登记付款</el-button>
-            <el-button v-if="row.status === 'APPROVED' && canFinance && Number(row.totalAmount) < 0" size="small" type="warning" @click="openRefund(row)">登记退款</el-button>
+            <el-button v-if="row.status === 'APPROVED' && canFinance && Number(row.totalAmount) > 0" size="small" type="primary" @click="openCash(row, false)">登记付款</el-button>
+            <el-button v-if="row.status === 'APPROVED' && canFinance && Number(row.totalAmount) < 0" size="small" type="warning" @click="openCash(row, true)">登记退款</el-button>
             <el-button v-if="canVoid(row) && canBuy" size="small" text @click="voidStatement(row)">作废</el-button>
           </template>
         </el-table-column>
@@ -78,6 +86,7 @@
           <el-form-item label="对账截止日期（这天及以前入库的）"><el-date-picker id="st-period" v-model="cr.periodTo" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d > startOfToday" @change="loadPreview" /></el-form-item>
           <el-form-item label="信用账期（天，用于计算应付到期日）"><el-input-number id="st-credit-days" v-model="cr.creditDays" :min="0" :max="365" :precision="0" :controls="false" style="width:100%" /></el-form-item>
         </div>
+        <StatementReceiptDisputes :disputes="cr.preview?.receiptDisputes" :can-open="canBuy" />
         <el-alert v-if="cr.preview?.missingPrice.length" type="warning" :closable="false" show-icon :title="`${cr.preview.missingPrice.length} 个批次的采购单没有单价，不会进这张对账单。请先到采购入库录入单价：${missingText}`" />
         <el-table v-if="cr.preview" :data="cr.preview.lines" size="small" max-height="260" empty-text="这段时间没有可结算的批次（只结算检验放行的来料）" scrollbar-tabindex="0">
           <el-table-column label="批号" width="150"><template #default="{ row }"><span class="mono">{{ row.batchNo }}</span><div class="muted small mono">{{ row.poNo }}</div></template></el-table-column>
@@ -111,6 +120,7 @@
 
     <el-dialog v-model="dt.visible" :title="`对账单：${dt.s?.statementNo || ''}`" width="840px">
       <template v-if="dt.s">
+        <StatementReceiptDisputes :disputes="dt.s.receiptDisputes" :can-open="canBuy" />
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="供应商">{{ dt.s.supplierName }}</el-descriptions-item>
           <el-descriptions-item label="状态"><StatusTag :status="dt.s.status" :label="dt.s.statusLabel" /></el-descriptions-item>
@@ -197,6 +207,7 @@
 
     <el-dialog v-model="ap.visible" :title="`审批：${ap.s?.statementNo || ''}`" width="440px" :close-on-click-modal="false">
       <el-form label-position="top" @submit.prevent>
+        <StatementReceiptDisputes :disputes="ap.s?.receiptDisputes" :can-open="canBuy" />
         <p style="margin-top:0">{{ ap.s?.supplierName }}，合计 <b class="mono">¥{{ fmtMoney(ap.s?.totalAmount) }}</b>，发票 <span class="mono">{{ ap.s?.invoiceNo }}</span>。</p>
         <ul v-if="ap.s?.invoices.length" class="small">
           <li v-for="inv in ap.s.invoices" :key="inv.id">{{ inv.invoiceNo }} · {{ inv.invoiceDate }} · 税率 {{ fmtQty(inv.taxRate) }}% · ¥{{ fmtMoney(inv.amount) }}</li>
@@ -226,6 +237,7 @@
 
     <el-dialog v-model="pa.visible" :title="`${pa.isRefund ? '登记供应商退款' : '登记付款'}：${pa.s?.statementNo || ''}`" width="460px" :close-on-click-modal="false">
       <el-form label-position="top" @submit.prevent>
+        <StatementReceiptDisputes :disputes="pa.s?.receiptDisputes" :can-open="canBuy" />
         <p class="muted small" style="margin-top:0">
           {{ pa.isRefund ? `红字冲减对账单，待供应商退回 ¥${fmtMoney(Math.abs(Number(pa.s?.unpaid || 0)))}。` : `只做登记，实际付款在银行或财务系统完成。未付 ¥${fmtMoney(pa.s?.unpaid)}。` }}
         </p>
@@ -252,6 +264,7 @@ import ListCapHint from '../components/ListCapHint.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatementInvoiceReturns from '../components/StatementInvoiceReturns.vue'
+import StatementReceiptDisputes from '../components/StatementReceiptDisputes.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
 import { fmtMoney, fmtQty, fmtTime, startOfBusinessDay, today } from '../utils/format'
@@ -336,8 +349,18 @@ async function submitCreate() {
   }
 }
 
+const dialogRequest = latestOnly()
+async function currentStatement(s) {
+  const current = dialogRequest()
+  const [fresh] = await http.get('/statements', { params: { statementNo: s.statementNo } })
+  if (current()) return fresh
+}
+
 const dt = reactive({ visible: false, s: null })
-function openDetail(s) { Object.assign(dt, { visible: true, s }) }
+async function openDetail(row) {
+  const s = await currentStatement(row)
+  if (s) Object.assign(dt, { visible: true, s })
+}
 
 async function voidStatement(s) {
   let reason
@@ -375,7 +398,15 @@ async function submitInvoice() {
 }
 
 const ap = reactive({ visible: false, saving: false, s: null, password: '' })
-function openApprove(s) { Object.assign(ap, { visible: true, saving: false, s, password: '' }) }
+async function openApprove(row) {
+  const s = await currentStatement(row)
+  if (!s) return
+  if (s.status !== 'INVOICED') {
+    ElMessage.warning('对账单状态已更新')
+    return load()
+  }
+  Object.assign(ap, { visible: true, saving: false, s, password: '' })
+}
 async function submitApprove() {
   if (!ap.password) return ElMessage.warning('请输入签批密码')
   ap.saving = true
@@ -407,8 +438,15 @@ async function submitInvoiceReturn() {
 }
 
 const pa = reactive({ visible: false, saving: false, isRefund: false, s: null, payDate: null, amount: undefined, referenceNo: '' })
-function openPay(s) { Object.assign(pa, { visible: true, saving: false, isRefund: false, s, payDate: today(), amount: Number(s.unpaid), referenceNo: '' }) }
-function openRefund(s) { Object.assign(pa, { visible: true, saving: false, isRefund: true, s, payDate: today(), amount: Math.abs(Number(s.unpaid)), referenceNo: '' }) }
+async function openCash(row, isRefund) {
+  const s = await currentStatement(row)
+  if (!s) return
+  if (s.status !== 'APPROVED') {
+    ElMessage.warning('对账单状态已更新')
+    return load()
+  }
+  Object.assign(pa, { visible: true, saving: false, isRefund, s, payDate: today(), amount: Math.abs(Number(s.unpaid)), referenceNo: '' })
+}
 async function submitPay() {
   if (!pa.payDate || !(pa.amount > 0)) return ElMessage.warning('请填写日期和金额')
   pa.saving = true

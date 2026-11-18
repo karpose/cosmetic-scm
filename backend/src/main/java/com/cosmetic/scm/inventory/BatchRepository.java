@@ -22,6 +22,9 @@ public interface BatchRepository extends JpaRepository<Batch, Long> {
 
     List<Batch> findByPartnerIdAndSourceTypeAndSourceNoInOrderByIdDesc(Long partnerId, SourceType sourceType, Collection<String> sourceNos);
 
+    List<Batch> findByPoShipmentIdAndPartnerIdAndSourceTypeAndSourceNoOrderById(
+            Long poShipmentId, Long partnerId, SourceType sourceType, String sourceNo);
+
     /** 对账：某供应商某日之前入库、状态符合的来料批次。 */
     List<Batch> findByPartnerIdAndSourceTypeAndStatusAndCreatedAtLessThanOrderById(Long partnerId, com.cosmetic.scm.domain.SourceType sourceType,
                                                                                   BatchStatus status, java.time.LocalDateTime before);

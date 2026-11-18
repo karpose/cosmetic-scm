@@ -39,6 +39,14 @@
             <div v-if="dueOf(row)" class="muted small">{{ row.promisedDate ? '供应商回复' : '采购期望' }}</div>
             <div v-if="isOpen(row) && row.supplierHasPortal && !row.supplierConfirmedAt" class="muted small">供应商未确认</div>
             <el-tag v-if="openShipments(row).length" size="small" type="primary" disable-transitions>已发货待收 {{ openShipments(row).length }}</el-tag>
+            <el-dropdown v-if="canCreate && receiptDisputesOf(row).length" trigger="click" @command="openReceiptDispute">
+              <el-button size="small" text>收货异议（{{ receiptDisputesOf(row).length }}）</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item v-for="s in receiptDisputesOf(row)" :key="s.id" :command="s.id">{{ s.shipmentNo }}</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="130"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /><div v-if="row.closeReason" class="muted small" :title="row.closedBy">{{ row.closeReason }}</div></template></el-table-column>
@@ -136,11 +144,54 @@
         <el-button type="primary" :loading="recv.saving" :disabled="!receiveLines.length" @click="submitReceive">确认收货</el-button>
       </template>
     </el-dialog>
+    <el-dialog v-model="receiptDispute.visible" title="收货异议" width="min(calc(100vw - 32px), 680px)" @closed="clearReceiptDisputeLink">
+      <LoadError v-if="receiptDispute.error" :message="receiptDispute.error" :loading="receiptDispute.loading"
+                 @retry="openReceiptDispute(receiptDispute.id)" />
+      <p v-else-if="receiptDispute.loading" role="status" class="muted">正在加载收货异议</p>
+      <template v-else-if="receiptDispute.detail">
+        <p class="small">
+          <span class="mono">{{ receiptDispute.detail.poNo }}</span> · {{ receiptDispute.detail.supplierName }}<br />
+          送货通知 <span class="mono">{{ receiptDispute.detail.shipment.shipmentNo }}</span>
+        </p>
+        <dl class="receipt-detail">
+          <dt>收货差异</dt>
+          <dd v-for="d in receiptDispute.detail.differences" :key="d.poLineId">
+            {{ d.itemName }} · 通知 {{ fmtQty(d.notifiedQty) }} {{ d.unit }} · 实收 {{ fmtQty(d.receivedQty) }} {{ d.unit }}<template v-if="d.batchChanged"> · 批号有差异</template>
+          </dd>
+          <dt>送货通知</dt>
+          <dd v-for="l in receiptDispute.detail.shipment.lines" :key="l.poLineId">
+            {{ l.itemName }} · {{ fmtQty(l.qty) }} {{ l.unit }} · <span class="mono">{{ l.extBatchNo }}</span>
+          </dd>
+          <dt>实际收货</dt>
+          <dd v-for="(l, index) in receiptDispute.detail.received" :key="index">
+            {{ l.itemName }} · {{ fmtQty(l.qty) }} {{ l.unit }} · <span class="mono">{{ l.extBatchNo }}</span>
+          </dd>
+          <dt>供应商异议 · {{ fmtTime(receiptDispute.detail.shipment.receiptDispute.reportedAt) }}</dt>
+          <dd class="receipt-note">{{ receiptDispute.detail.shipment.receiptDispute.note }}</dd>
+          <template v-if="receiptDispute.detail.shipment.receiptDispute.resolvedAt">
+            <dt>采购答复 · {{ fmtTime(receiptDispute.detail.shipment.receiptDispute.resolvedAt) }}</dt>
+            <dd class="receipt-note">{{ receiptDispute.detail.shipment.receiptDispute.resolution }}</dd>
+          </template>
+        </dl>
+        <el-form v-if="!receiptDispute.detail.shipment.receiptDispute.resolvedAt" label-position="top" @submit.prevent="resolveReceiptDispute">
+          <el-form-item label="处理结果（供应商可见）">
+            <el-input id="purchase-receipt-resolution" v-model="receiptDispute.resolution" type="textarea" :rows="4" maxlength="500" show-word-limit />
+          </el-form-item>
+        </el-form>
+      </template>
+      <template #footer>
+        <el-button @click="receiptDispute.visible = false">关闭</el-button>
+        <el-button v-if="receiptDispute.detail && !receiptDispute.detail.shipment.receiptDispute.resolvedAt" type="primary"
+                   :loading="receiptDispute.saving" :disabled="!receiptDispute.resolution.trim()"
+                   @click="resolveReceiptDispute">发送答复</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
@@ -152,9 +203,12 @@ import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
-import { fmtQty, startOfBusinessDay, today } from '../utils/format'
+import { fmtQty, fmtTime, startOfBusinessDay, today } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 
 const auth = useAuth()
+const route = useRoute()
+const router = useRouter()
 const narrow = ref(window.innerWidth <= 768)
 const onResize = () => { narrow.value = window.innerWidth <= 768 }
 onMounted(() => window.addEventListener('resize', onResize))
@@ -220,6 +274,45 @@ async function submitPrice() {
 const dueOf = (po) => po.promisedDate || po.expectedDate
 const isLate = (po) => isOpen(po) && dueOf(po) && dueOf(po) < today()
 const openShipments = (po) => (po.shipments || []).filter((s) => s.status === 'OPEN')
+const receiptDisputesOf = (po) => (po.shipments || []).filter((s) => s.receiptDisputed)
+const receiptDispute = reactive({ visible: false, loading: false, saving: false, detail: null, id: null, error: '', resolution: '' })
+const latestDispute = latestOnly()
+const disputePath = (id) => `/purchase-orders/shipments/${id}/receipt-dispute`
+
+async function openReceiptDispute(id) {
+  const current = latestDispute()
+  Object.assign(receiptDispute, { visible: true, loading: true, detail: null, id, error: '', resolution: '' })
+  try {
+    const detail = await http.get(disputePath(id), { silent: true })
+    if (current()) receiptDispute.detail = detail
+  } catch (e) {
+    if (current()) receiptDispute.error = e.message
+  } finally {
+    if (current()) receiptDispute.loading = false
+  }
+}
+
+async function resolveReceiptDispute() {
+  if (receiptDispute.saving || !receiptDispute.resolution.trim()) return
+  const detail = receiptDispute.detail
+  receiptDispute.saving = true
+  try {
+    detail.shipment.receiptDispute = await http.post(`${disputePath(detail.shipment.id)}/resolve`, {
+      resolution: receiptDispute.resolution
+    })
+    ElMessage.success('收货异议已回复')
+  } finally {
+    receiptDispute.saving = false
+  }
+}
+
+watch(() => route.query.receiptDispute, (id) => {
+  if (canCreate.value && typeof id === 'string' && /^[1-9]\d*$/.test(id)) openReceiptDispute(id)
+}, { immediate: true })
+
+function clearReceiptDisputeLink() {
+  if (route.query.receiptDispute) router.replace({ query: { ...route.query, receiptDispute: undefined } })
+}
 
 async function load() {
   loading.value = true
@@ -301,4 +394,7 @@ onMounted(() => Promise.all([load(), rd.load()]))
 <style scoped>
 .price-row { grid-column: 1 / -1; display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 8px; }
 .late { color: var(--el-color-danger); font-weight: 600; }
+.receipt-detail dt { margin-top: 12px; font-weight: 600; }
+.receipt-detail dd { margin: 4px 0; }
+.receipt-note { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

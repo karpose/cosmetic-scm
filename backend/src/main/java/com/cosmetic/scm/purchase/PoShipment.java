@@ -43,4 +43,12 @@ public class PoShipment {
     private String createdBy;
 
     private LocalDateTime createdAt;
+
+    private String receiptDisputeNote;
+
+    private LocalDateTime receiptDisputedAt;
+
+    private String receiptResolutionNote;
+
+    private LocalDateTime receiptResolvedAt;
 }

@@ -126,7 +126,8 @@ public class PurchaseService {
     }
 
     public record ShipmentView(Long id, String shipmentNo, LocalDate shipDate, ShipmentStatus status, String statusLabel,
-                               String note, String createdBy, LocalDateTime createdAt, List<ShipmentLineView> lines) {
+                               String note, String createdBy, LocalDateTime createdAt, List<ShipmentLineView> lines,
+                               boolean receiptDisputed, ReceiptDisputeService.DisputeView receiptDispute) {
     }
 
     @Transactional(readOnly = true)
@@ -147,7 +148,7 @@ public class PurchaseService {
         Map<Long, Item> im = lookup.itemMap();
         Map<Long, Partner> pm = lookup.partnerMap();
         Map<Long, PoLine> lineMap = byPo.values().stream().flatMap(List::stream).collect(Collectors.toMap(PoLine::getId, l -> l));
-        Map<Long, List<ShipmentView>> sm = shipmentViews(list.stream().map(PurchaseOrder::getId).toList(), lineMap, im);
+        Map<Long, List<ShipmentView>> sm = shipmentViews(list.stream().map(PurchaseOrder::getId).toList(), lineMap, im, false);
         Set<Long> withPortal = users.partnersWithAccounts();
         return list.stream().map(po -> toView(po, byPo.getOrDefault(po.getId(), List.of()), im, pm, sm.getOrDefault(po.getId(), List.of()), withPortal)).toList();
     }
@@ -364,7 +365,8 @@ public class PurchaseService {
     }
 
     /** 送货通知视图。poLines 是这些通知所属采购单的行。 */
-    public Map<Long, List<ShipmentView>> shipmentViews(Collection<Long> poIds, Map<Long, PoLine> poLines, Map<Long, Item> im) {
+    public Map<Long, List<ShipmentView>> shipmentViews(Collection<Long> poIds, Map<Long, PoLine> poLines, Map<Long, Item> im,
+                                                       boolean showReceiptDispute) {
         if (poIds.isEmpty()) {
             return Map.of();
         }
@@ -373,19 +375,27 @@ public class PurchaseService {
                 .stream().collect(Collectors.groupingBy(PoShipmentLine::getShipmentId));
         Map<Long, List<ShipmentView>> out = new HashMap<>();
         for (PoShipment s : list) {
-            List<ShipmentLineView> lv = byShipment.getOrDefault(s.getId(), List.of()).stream().map(l -> {
-                Item i = im.get(poLines.get(l.getPoLineId()).getItemId());
-                return new ShipmentLineView(l.getPoLineId(), i.getCode(), i.getName(), i.getUnit(), l.getQty(), l.getExtBatchNo(), l.getMfgDate(), l.getExpDate());
-            }).toList();
-            out.computeIfAbsent(s.getPoId(), k -> new ArrayList<>()).add(new ShipmentView(s.getId(), s.getShipmentNo(), s.getShipDate(),
-                    s.getStatus(), s.getStatus().getLabel(), s.getNote(), s.getCreatedBy(), s.getCreatedAt(), lv));
+            out.computeIfAbsent(s.getPoId(), k -> new ArrayList<>())
+                    .add(shipmentView(s, byShipment.getOrDefault(s.getId(), List.of()), poLines, im, showReceiptDispute));
         }
         return out;
     }
 
+    static ShipmentView shipmentView(PoShipment shipment, List<PoShipmentLine> shipmentLines, Map<Long, PoLine> poLines,
+                                     Map<Long, Item> items, boolean showReceiptDispute) {
+        List<ShipmentLineView> lv = shipmentLines.stream().map(l -> {
+            Item item = items.get(poLines.get(l.getPoLineId()).getItemId());
+            return new ShipmentLineView(l.getPoLineId(), item.getCode(), item.getName(), item.getUnit(), l.getQty(),
+                    l.getExtBatchNo(), l.getMfgDate(), l.getExpDate());
+        }).toList();
+        return new ShipmentView(shipment.getId(), shipment.getShipmentNo(), shipment.getShipDate(), shipment.getStatus(),
+                shipment.getStatus().getLabel(), shipment.getNote(), shipment.getCreatedBy(), shipment.getCreatedAt(), lv,
+                shipment.getReceiptDisputedAt() != null, showReceiptDispute ? ReceiptDisputeService.disputeView(shipment) : null);
+    }
+
     private PoView toView(PurchaseOrder po, List<PoLine> poLines, Map<Long, Item> im, Map<Long, Partner> pm) {
         Map<Long, PoLine> lineMap = poLines.stream().collect(Collectors.toMap(PoLine::getId, l -> l));
-        return toView(po, poLines, im, pm, shipmentViews(List.of(po.getId()), lineMap, im).getOrDefault(po.getId(), List.of()), users.partnersWithAccounts());
+        return toView(po, poLines, im, pm, shipmentViews(List.of(po.getId()), lineMap, im, false).getOrDefault(po.getId(), List.of()), users.partnersWithAccounts());
     }
 
     private PoView toView(PurchaseOrder po, List<PoLine> poLines, Map<Long, Item> im, Map<Long, Partner> pm, List<ShipmentView> sv, Set<Long> withPortal) {

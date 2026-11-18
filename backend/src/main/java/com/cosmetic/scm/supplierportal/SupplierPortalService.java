@@ -39,6 +39,8 @@ import com.cosmetic.scm.purchase.PurchaseOrder;
 import com.cosmetic.scm.purchase.PurchaseOrderRepository;
 import com.cosmetic.scm.purchase.PurchaseService;
 import com.cosmetic.scm.purchase.PurchaseService.ShipmentView;
+import com.cosmetic.scm.purchase.ReceiptDisputeService;
+import com.cosmetic.scm.purchase.ReceiptDisputeService.ReceiptDifference;
 import com.cosmetic.scm.qms.SupplierAuditService;
 import com.cosmetic.scm.security.CurrentUser;
 
@@ -98,10 +100,6 @@ public class SupplierPortalService {
 
     public record ReceiptBatchView(String itemCode, String itemName, String unit, String extBatchNo, BigDecimal qty,
                                    LocalDate receivedOn, BatchStatus qualityStatus, String qualityLabel, String shipmentNo) {
-    }
-
-    public record ReceiptDifference(Long poLineId, String itemName, String unit, BigDecimal notifiedQty,
-                                    BigDecimal receivedQty, boolean batchChanged) {
     }
 
     public record SupplierOrderView(Long id, String poNo, LocalDate orderDate, LocalDate expectedDate, PoStatus status,
@@ -289,7 +287,7 @@ public class SupplierPortalService {
         Map<Long, PoLine> lineMap = all.stream().collect(Collectors.toMap(PoLine::getId, l -> l));
         Map<Long, List<PoLine>> byPo = all.stream().collect(Collectors.groupingBy(PoLine::getPoId));
         Map<Long, Item> im = lookup.itemMap();
-        Map<Long, List<ShipmentView>> sm = purchase.shipmentViews(ids, lineMap, im);
+        Map<Long, List<ShipmentView>> sm = purchase.shipmentViews(ids, lineMap, im, true);
         Map<Long, BigDecimal> notified = notifiedByLine(ids);
         Map<Long, List<PromiseView>> pm = promises.findByPoIdInOrderById(ids).stream().collect(Collectors.groupingBy(PoPromiseLog::getPoId,
                 Collectors.mapping(p -> new PromiseView(p.getPromisedDate(), p.getNote(), p.getCreatedBy(), p.getCreatedAt()), Collectors.toList())));
@@ -320,24 +318,14 @@ public class SupplierPortalService {
 
     private static Map<Long, List<ReceiptDifference>> receiptDifferences(List<ShipmentView> notices, List<Batch> received,
                                                                           Map<Long, PoLine> orderLines) {
-        Map<Long, Map<Long, List<Batch>>> byNoticeAndItem = received.stream().filter(b -> b.getPoShipmentId() != null)
-                .collect(Collectors.groupingBy(Batch::getPoShipmentId, Collectors.groupingBy(Batch::getItemId)));
+        Map<Long, List<Batch>> byNotice = received.stream().filter(b -> b.getPoShipmentId() != null)
+                .collect(Collectors.groupingBy(Batch::getPoShipmentId));
         Map<Long, List<ReceiptDifference>> result = new HashMap<>();
         for (ShipmentView notice : notices) {
-            Map<Long, List<Batch>> byItem = byNoticeAndItem.get(notice.id());
-            if (byItem == null) {
-                continue;
+            List<Batch> actual = byNotice.get(notice.id());
+            if (actual != null) {
+                result.put(notice.id(), ReceiptDisputeService.compare(notice, actual, orderLines));
             }
-            List<ReceiptDifference> differences = new ArrayList<>();
-            for (var line : notice.lines()) {
-                List<Batch> actual = byItem.getOrDefault(orderLines.get(line.poLineId()).getItemId(), List.of());
-                BigDecimal qty = actual.stream().map(Batch::getQtyIn).reduce(BigDecimal.ZERO, BigDecimal::add);
-                boolean batchChanged = actual.stream().anyMatch(b -> !line.extBatchNo().equals(b.getExtBatchNo()));
-                if (qty.compareTo(line.qty()) != 0 || batchChanged) {
-                    differences.add(new ReceiptDifference(line.poLineId(), line.itemName(), line.unit(), line.qty(), qty, batchChanged));
-                }
-            }
-            result.put(notice.id(), differences);
         }
         return result;
     }

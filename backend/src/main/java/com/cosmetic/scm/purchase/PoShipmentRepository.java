@@ -19,6 +19,14 @@ public interface PoShipmentRepository extends JpaRepository<PoShipment, Long> {
 
     List<PoShipment> findByStatusOrderById(ShipmentStatus status);
 
+    List<PoShipment> findByReceiptResolvedAtIsNullAndReceiptDisputedAtIsNotNullOrderByReceiptDisputedAtAscIdAsc();
+
+    @Query("""
+            select x from PoShipment x
+            where x.id in :ids and x.receiptDisputedAt is not null and x.receiptResolvedAt is null
+            """)
+    List<PoShipment> findPendingReceiptDisputes(@Param("ids") Collection<Long> ids);
+
     @Query("select x.id from PoShipment x where x.poId = :poId and x.status = :status order by x.id")
     List<Long> findIdsByPoIdAndStatus(@Param("poId") Long poId, @Param("status") ShipmentStatus status);
 

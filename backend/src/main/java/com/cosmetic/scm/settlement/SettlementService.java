@@ -5,11 +5,13 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -34,6 +36,8 @@ import com.cosmetic.scm.master.Partner;
 import com.cosmetic.scm.master.PartnerRepository;
 import com.cosmetic.scm.purchase.PoLine;
 import com.cosmetic.scm.purchase.PoLineRepository;
+import com.cosmetic.scm.purchase.PoShipment;
+import com.cosmetic.scm.purchase.PoShipmentRepository;
 import com.cosmetic.scm.purchase.PurchaseOrder;
 import com.cosmetic.scm.purchase.PurchaseOrderRepository;
 import com.cosmetic.scm.security.AppUser;
@@ -80,6 +84,7 @@ public class SettlementService {
     private final BatchRepository batches;
     private final PurchaseOrderRepository orders;
     private final PoLineRepository poLines;
+    private final PoShipmentRepository shipments;
     private final PartnerRepository partners;
     private final MasterLookup lookup;
     private final SignatureService signature;
@@ -143,6 +148,9 @@ public class SettlementService {
     public record MissingPrice(String batchNo, String poNo, String itemName) {
     }
 
+    public record ReceiptDisputeFlag(Long shipmentId, String shipmentNo, String poNo, List<String> batchNos) {
+    }
+
     public record InvoiceView(Long id, String invoiceNo, String invoiceType, String invoiceTypeLabel, LocalDate invoiceDate,
                               BigDecimal taxRate, BigDecimal amount, BigDecimal taxAmount, String note, String createdBy, LocalDateTime createdAt) {
     }
@@ -153,7 +161,7 @@ public class SettlementService {
 
     /** 生成前预览。missingPrice：放行了但采购单没单价的批次，不会进这张对账单；taxBreakdown：多税率拆分汇总。 */
     public record PreviewView(List<LineView> lines, List<MissingPrice> missingPrice, BigDecimal goodsAmount, BigDecimal taxAmount,
-                              List<TaxBreakdown> taxBreakdown) {
+                              List<TaxBreakdown> taxBreakdown, List<ReceiptDisputeFlag> receiptDisputes) {
     }
 
     public record PaymentView(String paymentType, String paymentTypeLabel, LocalDate payDate, BigDecimal amount, String referenceNo,
@@ -169,7 +177,8 @@ public class SettlementService {
                                 int invoiceReviewVersion, boolean invoiceCorrectionPending, List<InvoiceReturnView> invoiceReturns,
                                 String approvedBy, LocalDateTime approvedAt, BigDecimal paidAmount, BigDecimal unpaid,
                                 String createdBy, LocalDateTime createdAt, List<LineView> lines,
-                                List<TaxBreakdown> taxBreakdown, List<InvoiceView> invoices, List<PaymentView> payments) {
+                                List<TaxBreakdown> taxBreakdown, List<InvoiceView> invoices, List<PaymentView> payments,
+                                List<ReceiptDisputeFlag> receiptDisputes) {
     }
 
     /** ret 不为空的是冲减行。settled 是这一行顺带算过的退货，要标记，下次不再算。 */
@@ -181,7 +190,7 @@ public class SettlementService {
     }
 
     public enum FollowUp {
-        PAY, REFUND, OVERDUE
+        PAY, REFUND, OVERDUE, RECEIPT_DISPUTE
     }
 
     @Transactional(readOnly = true)
@@ -192,6 +201,10 @@ public class SettlementService {
         if (followUp == null) {
             return views(statements.findTop300ByOrderByIdDesc());
         }
+        if (followUp == FollowUp.RECEIPT_DISPUTE) {
+            return views(statements.findWithPendingReceiptDisputes(List.of(StatementStatus.PAID, StatementStatus.CANCELLED)))
+                    .stream().filter(s -> !s.receiptDisputes().isEmpty()).toList();
+        }
         LocalDate today = time.today();
         return views(statements.findByStatusInOrderById(List.of(StatementStatus.APPROVED)).stream()
                 .filter(s -> {
@@ -200,6 +213,7 @@ public class SettlementService {
                         case PAY -> sign > 0;
                         case REFUND -> sign < 0;
                         case OVERDUE -> sign != 0 && s.effectiveDueDate().isBefore(today);
+                        case RECEIPT_DISPUTE -> false;
                     };
                 })
                 .sorted(Comparator.comparing(SupplierStatement::effectiveDueDate).thenComparing(SupplierStatement::getId))
@@ -219,11 +233,12 @@ public class SettlementService {
         BigDecimal tax = u.priced().stream().map(Priced::tax).reduce(BigDecimal.ZERO, BigDecimal::add);
         List<TaxBreakdown> taxBreakdown = SettlementRule.breakdownByTaxRate(
                 u.priced().stream().map(p -> new TaxLineInput(p.taxRate(), p.amount(), p.tax())).toList());
+        List<Batch> included = u.priced().stream().map(Priced::batch).toList();
         return new PreviewView(u.priced().stream().map(p -> {
             Item i = items.get(p.batch().getItemId());
             return new LineView(p.batch().getBatchNo(), p.batch().getExtBatchNo(), p.poNo(), i.getCode(), i.getName(), i.getUnit(), p.qty(),
                     p.unitPrice(), p.taxRate(), p.amount(), p.tax(), p.batch().getCreatedAt().toLocalDate(), p.ret() == null ? null : p.ret().getReturnNo());
-        }).toList(), u.missing(), goods, tax, taxBreakdown);
+        }).toList(), u.missing(), goods, tax, taxBreakdown, receiptDisputeFlags(included, pendingReceiptShipments(included)));
     }
 
     /**
@@ -686,6 +701,7 @@ public class SettlementService {
         List<SupplierStatementLine> all = statementLines.findByStatementIdInOrderById(ids);
         Map<Long, Batch> bm = new HashMap<>();
         batches.findAllById(all.stream().map(SupplierStatementLine::getBatchId).distinct().toList()).forEach(b -> bm.put(b.getId(), b));
+        Map<Long, PoShipment> pending = pendingReceiptShipments(bm.values());
         Map<Long, Item> items = lookup.itemMap();
         Map<Long, String> returnNos = new HashMap<>();
         returns.findAllById(all.stream().map(SupplierStatementLine::getReturnId).filter(java.util.Objects::nonNull).toList()).forEach(r -> returnNos.put(r.getId(), r.getReturnNo()));
@@ -733,7 +749,28 @@ public class SettlementService {
                     }).toList(),
                     taxBreakdown,
                     invs.getOrDefault(s.getId(), List.of()),
-                    pays.getOrDefault(s.getId(), List.of()));
+                    pays.getOrDefault(s.getId(), List.of()),
+                    receiptDisputeFlags(sLines.stream().map(l -> bm.get(l.getBatchId())).toList(), pending));
         }).toList();
+    }
+
+    private Map<Long, PoShipment> pendingReceiptShipments(Collection<Batch> included) {
+        List<Long> ids = included.stream().map(Batch::getPoShipmentId).filter(Objects::nonNull).distinct().toList();
+        return ids.isEmpty() ? Map.of() : shipments.findPendingReceiptDisputes(ids).stream()
+                .collect(Collectors.toMap(PoShipment::getId, s -> s));
+    }
+
+    private static List<ReceiptDisputeFlag> receiptDisputeFlags(List<Batch> included, Map<Long, PoShipment> pending) {
+        if (pending.isEmpty()) {
+            return List.of();
+        }
+        return included.stream().filter(b -> b.getPoShipmentId() != null && pending.containsKey(b.getPoShipmentId()))
+                .collect(Collectors.groupingBy(Batch::getPoShipmentId, LinkedHashMap::new, Collectors.toList()))
+                .entrySet().stream().map(entry -> {
+                    PoShipment shipment = pending.get(entry.getKey());
+                    List<Batch> affected = entry.getValue();
+                    return new ReceiptDisputeFlag(shipment.getId(), shipment.getShipmentNo(), affected.get(0).getSourceNo(),
+                            affected.stream().map(Batch::getBatchNo).distinct().toList());
+                }).toList();
     }
 }

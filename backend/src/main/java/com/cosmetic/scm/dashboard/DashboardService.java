@@ -200,6 +200,16 @@ public class DashboardService {
             todos.add(new Todo("PO_LATE", "采购单超交期", "warn", lookup.partner(po.getSupplierId()).getName(), po.getPoNo(),
                     "交期 " + (po.getPromisedDate() != null ? po.getPromisedDate() : po.getExpectedDate()) + "，还没到齐", "/purchase"));
         }
+        var receiptDisputes = poShipments.findByReceiptResolvedAtIsNullAndReceiptDisputedAtIsNotNullOrderByReceiptDisputedAtAscIdAsc();
+        if (!receiptDisputes.isEmpty()) {
+            var disputedOrders = purchaseOrders.findAllById(receiptDisputes.stream().map(s -> s.getPoId()).distinct().toList())
+                    .stream().collect(java.util.stream.Collectors.toMap(com.cosmetic.scm.purchase.PurchaseOrder::getId, p -> p));
+            for (var notice : receiptDisputes) {
+                var po = disputedOrders.get(notice.getPoId());
+                todos.add(new Todo("RECEIPT_DISPUTE", "收货异议待处理", "warn", lookup.partner(po.getSupplierId()).getName(),
+                        notice.getShipmentNo(), "采购单 " + po.getPoNo(), "/purchase?receiptDispute=" + notice.getId()));
+            }
+        }
         // 法规目录变了，生效配方可能已经不合规
         for (com.cosmetic.scm.master.RegulatoryService.Violation v : regulatory.violations()) {
             todos.add(new Todo("REG_VIOLATION", "配方不符合法规目录", "bad", v.fgName(), v.fgCode(), v.message(), "/compliance?tab=regulatory"));
