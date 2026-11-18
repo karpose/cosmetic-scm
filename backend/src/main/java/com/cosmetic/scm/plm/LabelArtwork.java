@@ -56,4 +56,7 @@ public class LabelArtwork {
     private String approvedBy;
 
     private LocalDateTime approvedAt;
+
+    /** 关联的变更，改版时用。 */
+    private Long changeId;
 }

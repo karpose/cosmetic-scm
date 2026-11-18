@@ -73,6 +73,8 @@ scm:
   change:
     # 打开后，发起配方变更要先关联一项已批准的变更（变更控制）
     require-for-formula: ${SCM_REQUIRE_CHANGE_FOR_FORMULA:false}
+    # 打开后，标签设计稿改版（第 2 版起）要先关联一项已批准的标签、包材或配方变更
+    require-for-artwork: ${SCM_REQUIRE_CHANGE_FOR_ARTWORK:false}
   notify:
     # 每日待办摘要。enabled=false 时不启动定时任务，管理员仍可在“消息提醒”页手工发送
     enabled: ${SCM_NOTIFY_ENABLED:false}

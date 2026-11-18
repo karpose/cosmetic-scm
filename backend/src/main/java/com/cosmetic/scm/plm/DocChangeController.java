@@ -80,6 +80,24 @@ public class DocChangeController {
         return docs.reject(id, revId, req);
     }
 
+    @PostMapping("/docs/{id}/copies")
+    @PreAuthorize("hasAnyRole('QA','QSO')")
+    public DocControlService.DocDetail issueCopies(@PathVariable Long id, @Valid @RequestBody DocControlService.IssueReq req) {
+        return docs.issueCopies(id, req);
+    }
+
+    @PostMapping("/docs/{id}/copies/{copyId}/retrieve")
+    @PreAuthorize("hasAnyRole('QA','QSO')")
+    public DocControlService.DocDetail retrieveCopy(@PathVariable Long id, @PathVariable Long copyId, @Valid @RequestBody DocControlService.CloseReq req) {
+        return docs.retrieveCopy(id, copyId, req);
+    }
+
+    @PostMapping("/docs/{id}/copies/{copyId}/lost")
+    @PreAuthorize("hasAnyRole('QA','QSO')")
+    public DocControlService.DocDetail loseCopy(@PathVariable Long id, @PathVariable Long copyId, @Valid @RequestBody DocControlService.NoteReq req) {
+        return docs.loseCopy(id, copyId, req);
+    }
+
     @PostMapping("/docs/{id}/review")
     @PreAuthorize("hasRole('QSO')")
     public DocControlService.DocDetail review(@PathVariable Long id, @Valid @RequestBody DocControlService.NoteReq req) {
@@ -95,6 +113,11 @@ public class DocChangeController {
     @GetMapping("/changes")
     public List<ChangeService.ChangeRow> changes() {
         return changes.list();
+    }
+
+    @GetMapping("/changes/artwork-options")
+    public ChangeService.FormulaOptions artworkOptions() {
+        return changes.artworkOptions();
     }
 
     @GetMapping("/changes/formula-options")

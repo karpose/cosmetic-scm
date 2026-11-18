@@ -1909,6 +1909,34 @@ test('受控文件：没有文件不能签批，上传后 QSO 签批成为现行
   await expect(page.locator('.mine')).toHaveCount(0)
 })
 
+test('受控文件纸质副本：发放现行版本，收回和登记遗失', async ({ page }) => {
+  await login(page, 'qa1')
+  await page.goto('/docs')
+  await page.locator('.el-table__row').filter({ hasText: 'SOP-QA-001' }).getByRole('button', { name: '详情' }).click()
+  const dt = page.getByRole('dialog', { name: /^受控文件 SOP-QA-001/ })
+  await expect(dt.getByText('还没有发放纸质副本。')).toBeVisible()
+  await dt.getByRole('button', { name: '发放纸质副本' }).click()
+  const is = page.getByRole('dialog', { name: /发放纸质副本/ })
+  await is.locator('#dc-holder').fill('E2E 灌装车间')
+  await is.getByRole('spinbutton', { name: '份数' }).fill('2')
+  await is.getByRole('button', { name: '发放', exact: true }).click()
+  await toast(page, '已发放 2 份')
+  await expect(dt.getByText('在用 2 份')).toBeVisible()
+  const row = (n) => dt.locator('.el-table__row').filter({ hasText: `第 1 版第 ${n} 份` })
+  await row(1).getByRole('button', { name: '收回' }).click()
+  await page.locator('.el-message-box input').fill('E2E 已销毁')
+  await page.locator('.el-message-box').getByRole('button', { name: '收回' }).click()
+  await toast(page, '已收回')
+  await expect(row(1)).toContainText('已回收')
+  await row(2).getByRole('button', { name: '遗失' }).click()
+  await page.locator('.el-message-box input').fill('E2E 车间搬迁时丢失')
+  await page.locator('.el-message-box').getByRole('button', { name: '登记遗失' }).click()
+  await toast(page, '已登记遗失')
+  await expect(row(2)).toContainText('遗失')
+  await expect(row(2)).toContainText('E2E 车间搬迁时丢失')
+  await expect(dt.getByText('在用 0 份')).toBeVisible()
+})
+
 test('变更控制：评估生成行动项、QSO 批准、负责人完成、QSO 关闭', async ({ page }) => {
   test.setTimeout(240_000)
   const open = async () => {
@@ -2053,6 +2081,48 @@ test('包材放行：要确认印刷内容一致，供应商送来的还要有�
   await page.goto('/artworks')
   await page.locator('.el-table__row').filter({ hasText: 'PK-JAR-003' }).getByRole('button', { name: '详情' }).click()
   await expect(dt.locator('.el-table__row').filter({ hasText: batchNo })).toContainText('E2E-JAR-1')
+})
+
+test('标签设计稿改版关联变更：选实施中的标签变更，两边都能看到', async ({ page }) => {
+  await login(page, 'qa1')
+  const changeNo = await page.evaluate(async () => {
+    const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
+    const j = async (r) => { const x = await r.json(); if (!r.ok) throw new Error(JSON.stringify(x)); return x }
+    const c = await j(await fetch('/api/changes', { method: 'POST', headers: h, body: JSON.stringify({ title: 'E2E 面霜瓶改警示语', changeType: 'LABEL', reason: '新规', description: '改警示用语' }) }))
+    await j(await fetch(`/api/changes/${c.change.id}/assess`, { method: 'POST', headers: h, body: JSON.stringify({ risk: 'LOW', impact: '只改标签', needFiling: false, needStability: false, needLabel: false, needValidation: false }) }))
+    return c.change.changeNo
+  })
+  await login(page, 'qso1')
+  await page.evaluate(async (no) => {
+    const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
+    const c = (await (await fetch('/api/changes', { headers: h })).json()).find((x) => x.changeNo === no)
+    const r = await fetch(`/api/changes/${c.id}/approve`, { method: 'POST', headers: h, body: JSON.stringify({ password: 'Demo@12345' }) })
+    if (!r.ok) throw new Error(await r.text())
+  }, changeNo)
+
+  await login(page, 'qa1')
+  await page.goto('/artworks')
+  await page.getByRole('button', { name: '提交设计稿' }).click()
+  const cr = dialog(page, '提交设计稿')
+  await cr.locator('#aw-fg').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: 'FG-CRM-002' }).click()
+  await cr.locator('#aw-pk').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: 'PK-JAR-003' }).click()
+  await cr.locator('.el-form-item').filter({ hasText: '关联的变更' }).locator('.el-select').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: changeNo }).click()
+  await cr.locator('#aw-note').fill('E2E 改警示用语')
+  await cr.getByRole('button', { name: '保存设计稿' }).click()
+  await toast(page, '请上传文件')
+  const dt = page.getByRole('dialog', { name: /^设计稿 LA/ })
+  await expect(dt.getByText('第 2 版').first()).toBeVisible()
+  await expect(dt.getByRole('link', { name: changeNo })).toBeVisible()
+  await dt.getByRole('button', { name: '关闭', exact: true }).click()
+
+  await page.goto('/changes')
+  await page.getByRole('link', { name: changeNo }).click()
+  const cd = page.getByRole('dialog', { name: /^变更 CC/ })
+  await expect(cd.getByText('关联的标签设计稿')).toBeVisible()
+  await expect(cd.getByText('关联的设计稿批准或退回之前，这项变更不能关闭。')).toBeVisible()
 })
 
 test('主数据：原料的 CAS 号保存时校验校验位', async ({ page }) => {

@@ -45,9 +45,13 @@ public class ChangeService {
     private final ChangeActionRepository actions;
     private final UserRepository users;
     private final FormulaVersionRepository formulaVersions;
+    private final LabelArtworkRepository labelArtworks;
     private final com.cosmetic.scm.master.MasterLookup lookup;
     @org.springframework.beans.factory.annotation.Value("${scm.change.require-for-formula:false}")
     private boolean requireForFormula;
+
+    @org.springframework.beans.factory.annotation.Value("${scm.change.require-for-artwork:false}")
+    private boolean requireForArtwork;
     private final SignatureService signature;
     private final DocNoService docNo;
     private final AuditService audit;
@@ -87,7 +91,10 @@ public class ChangeService {
     public record LinkedFormula(Long versionId, String fgCode, String fgName, int versionNo, String status, String statusLabel) {
     }
 
-    public record ChangeDetail(ChangeRow change, List<ActionView> actions, List<LinkedFormula> formulas) {
+    public record LinkedArtwork(Long artworkId, String artworkNo, String pkCode, String pkName, int versionNo, String status, String statusLabel) {
+    }
+
+    public record ChangeDetail(ChangeRow change, List<ActionView> actions, List<LinkedFormula> formulas, List<LinkedArtwork> artworks) {
     }
 
     public record Option(Long id, String changeNo, String title, String changeTypeLabel) {
@@ -101,6 +108,14 @@ public class ChangeService {
     public FormulaOptions formulaOptions() {
         return new FormulaOptions(requireForFormula, changes.findByStatusInOrderById(List.of(ChangeStatus.APPROVED)).stream()
                 .filter(c -> c.getChangeType() == ChangeType.FORMULA || c.getChangeType() == ChangeType.MATERIAL)
+                .map(c -> new Option(c.getId(), c.getChangeNo(), c.getTitle(), c.getChangeType().getLabel())).toList());
+    }
+
+    /** 提交设计稿时可选的变更：实施中的标签、包材或配方变更。required 为 true 时改版必须选。 */
+    @Transactional(readOnly = true)
+    public FormulaOptions artworkOptions() {
+        return new FormulaOptions(requireForArtwork, changes.findByStatusInOrderById(List.of(ChangeStatus.APPROVED)).stream()
+                .filter(c -> ArtworkService.LINKABLE.contains(c.getChangeType()))
                 .map(c -> new Option(c.getId(), c.getChangeNo(), c.getTitle(), c.getChangeType().getLabel())).toList());
     }
 
@@ -258,6 +273,11 @@ public class ChangeService {
         if (!pendingFormulas.isEmpty()) {
             throw new BizException("关联的配方 " + String.join("、", pendingFormulas) + " 还没签批或放弃，不能关闭");
         }
+        List<String> pendingArtworks = labelArtworks.findByChangeIdOrderById(c.getId()).stream().filter(a -> a.getStatus() == com.cosmetic.scm.domain.ArtworkStatus.PENDING)
+                .map(LabelArtwork::getArtworkNo).toList();
+        if (!pendingArtworks.isEmpty()) {
+            throw new BizException("关联的设计稿 " + String.join("、", pendingArtworks) + " 还没批准或退回，不能关闭");
+        }
         c.setStatus(ChangeStatus.CLOSED);
         c.setCloseNote(req.note().trim());
         c.setClosedBy(signer.getUsername());
@@ -344,6 +364,10 @@ public class ChangeService {
             var fg = lookup.item(v.getFgItemId());
             return new LinkedFormula(v.getId(), fg.getCode(), fg.getName(), v.getVersionNo(), v.getStatus().name(), v.getStatus().getLabel());
         }).toList();
-        return new ChangeDetail(rows(List.of(c)).get(0), actions.findByChangeIdOrderByLineNo(c.getId()).stream().map(this::view).toList(), formulas);
+        List<LinkedArtwork> arts = labelArtworks.findByChangeIdOrderById(c.getId()).stream().map(a -> {
+            var pk = lookup.item(a.getPkItemId());
+            return new LinkedArtwork(a.getId(), a.getArtworkNo(), pk.getCode(), pk.getName(), a.getVersionNo(), a.getStatus().name(), a.getStatus().getLabel());
+        }).toList();
+        return new ChangeDetail(rows(List.of(c)).get(0), actions.findByChangeIdOrderByLineNo(c.getId()).stream().map(this::view).toList(), formulas, arts);
     }
 }

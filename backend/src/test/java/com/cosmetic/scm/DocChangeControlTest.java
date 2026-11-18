@@ -42,6 +42,7 @@ class DocChangeControlTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired TimeProvider time;
+    @Autowired com.cosmetic.scm.plm.DocRevisionRepository revisionRepo;
 
     private String login(String u) throws Exception {
         return login(u, PWD);
@@ -128,6 +129,94 @@ class DocChangeControlTest {
         assertThat(d.get("doc").get("status").asText()).isEqualTo("OBSOLETE");
         assertThat(d.get("doc").get("pendingRevisionId").isNull()).isTrue();
         call(qa, base + "/revisions", Map.of("changeSummary", "x")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("作废")));
+    }
+
+    private JsonNode copy(JsonNode d, int revNo, int copyNo) {
+        for (JsonNode c : d.get("copies")) {
+            if (c.get("revNo").asInt() == revNo && c.get("copyNo").asInt() == copyNo) {
+                return c;
+            }
+        }
+        throw new AssertionError(revNo + "/" + copyNo);
+    }
+
+    @Test
+    void paperCopiesAreIssuedForTheCurrentRevisionAndOldOnesMustComeBack() throws Exception {
+        String qa = login("qa1");
+        String qso = login("qso1");
+        LocalDate today = time.today();
+        // 没有生效版本的不能发
+        JsonNode draft = ok(call(qa, "/api/docs", doc("SOP-CP-0", null)));
+        call(qa, "/api/docs/" + draft.get("doc").get("id").asLong() + "/copies", Map.of("holder", "车间", "quantity", 1)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("还没有生效的版本")));
+
+        JsonNode d = ok(call(qa, "/api/docs", doc("SOP-CP-1", null)));
+        String base = "/api/docs/" + d.get("doc").get("id").asLong();
+        long rev1 = d.get("revisions").get(0).get("id").asLong();
+        upload(qa, rev1);
+        ok(call(qso, base + "/revisions/" + rev1 + "/approve", Map.of("password", PWD)));
+        call(login("prod1"), base + "/copies", Map.of("holder", "车间", "quantity", 1)).andExpect(status().isForbidden());
+        call(qa, base + "/copies", Map.of("holder", "车间", "quantity", 0)).andExpect(status().isBadRequest());
+        call(qa, base + "/copies", Map.of("holder", "车间", "quantity", 21)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("最多发 20 份")));
+        call(qa, base + "/copies", Map.of("holder", " ", "quantity", 1)).andExpect(status().isBadRequest());
+
+        // 按版本连续编号
+        ok(call(qa, base + "/copies", Map.of("holder", "灌装车间", "quantity", 2)));
+        d = ok(call(qa, base + "/copies", Map.of("holder", "QA 办公室", "quantity", 1)));
+        assertThat(d.get("doc").get("copiesOut").asInt()).isEqualTo(3);
+        assertThat(d.get("doc").get("copiesToRetrieve").asInt()).isZero();
+        assertThat(copy(d, 1, 3).get("holder").asText()).isEqualTo("QA 办公室");
+        assertThat(copy(d, 1, 1).get("mustRetrieve").asBoolean()).isFalse();
+        // 现行版本也可以提前收回
+        String c3 = base + "/copies/" + copy(d, 1, 3).get("id").asLong();
+        d = ok(call(qa, c3 + "/retrieve", Map.of("note", "办公室不再需要")));
+        assertThat(copy(d, 1, 3).get("status").asText()).isEqualTo("RETRIEVED");
+        assertThat(copy(d, 1, 3).get("closedBy").asText()).isEqualTo("qa1");
+        call(qa, c3 + "/retrieve", Map.of()).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("已回收")));
+
+        // 第 2 版生效：第 1 版在用的两份要收回，7 天期限
+        d = ok(call(qa, base + "/revisions", Map.of("changeSummary", "改步骤")));
+        long rev2 = d.get("revisions").get(0).get("id").asLong();
+        upload(qa, rev2);
+        d = ok(call(qso, base + "/revisions/" + rev2 + "/approve", Map.of("password", PWD)));
+        assertThat(d.get("doc").get("copiesToRetrieve").asInt()).isEqualTo(2);
+        assertThat(d.get("doc").get("retrieveDue").asText()).isEqualTo(today.plusDays(7).toString());
+        assertThat(d.get("doc").get("retrieveOverdue").asBoolean()).isFalse();
+        assertThat(copy(d, 1, 1).get("mustRetrieve").asBoolean()).isTrue();
+        assertThat(read(qa, "/api/dashboard").get("todos").toString()).contains("纸质受控文件待回收").contains("SOP-CP-1");
+        // 新版从第 1 份重新编号
+        d = ok(call(qa, base + "/copies", Map.of("holder", "灌装车间", "quantity", 1)));
+        assertThat(copy(d, 2, 1).get("mustRetrieve").asBoolean()).isFalse();
+
+        // 过了期限算超期
+        var r2 = revisionRepo.findById(rev2).orElseThrow();
+        r2.setEffectiveDate(today.minusDays(10));
+        revisionRepo.save(r2);
+        d = read(qa, base);
+        assertThat(d.get("doc").get("retrieveOverdue").asBoolean()).isTrue();
+        assertThat(copy(d, 1, 2).get("overdue").asBoolean()).isTrue();
+        assertThat(read(qa, "/api/dashboard").get("todos").toString()).contains("纸质受控文件回收已超期");
+
+        // 遗失要写原因
+        String c2 = base + "/copies/" + copy(d, 1, 2).get("id").asLong();
+        call(qa, c2 + "/lost", Map.of("note", " ")).andExpect(status().isBadRequest());
+        d = ok(call(qa, c2 + "/lost", Map.of("note", "车间搬迁时丢失")));
+        assertThat(copy(d, 1, 2).get("status").asText()).isEqualTo("LOST");
+        d = ok(call(qa, base + "/copies/" + copy(d, 1, 1).get("id").asLong() + "/retrieve", Map.of()));
+        assertThat(d.get("doc").get("copiesToRetrieve").asInt()).isZero();
+        assertThat(d.get("doc").get("copiesOut").asInt()).isEqualTo(1);
+        // 别的文件的副本不能拿来处理
+        call(qa, "/api/docs/" + draft.get("doc").get("id").asLong() + "/copies/" + copy(d, 2, 1).get("id").asLong() + "/retrieve", Map.of()).andExpect(status().isNotFound());
+
+        // 作废后在用的都要收回，作废的文件不能再发，但能收回
+        d = ok(call(qso, base + "/obsolete", Map.of("note", "流程合并")));
+        assertThat(d.get("doc").get("copiesToRetrieve").asInt()).isEqualTo(1);
+        assertThat(d.get("doc").get("retrieveDue").asText()).isEqualTo(today.plusDays(7).toString());
+        call(qa, base + "/copies", Map.of("holder", "车间", "quantity", 1)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("作废")));
+        d = ok(call(qa, base + "/copies/" + copy(d, 2, 1).get("id").asLong() + "/retrieve", Map.of("note", "已收回销毁")));
+        assertThat(d.get("doc").get("copiesOut").asInt()).isZero();
+        assertThat(read(qa, "/api/audit?q=SOP-CP-1").toString()).contains("发放受控文件纸质副本").contains("第 1 版第 1～2 份，持有人 灌装车间")
+                .contains("受控文件纸质副本遗失").contains("车间搬迁时丢失").contains("收回受控文件纸质副本");
     }
 
     @Test

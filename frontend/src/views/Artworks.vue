@@ -42,19 +42,25 @@
             <el-option v-for="i in packages" :key="i.id" :value="i.id" :label="`${i.name}（${i.code}）`" />
           </el-select>
         </el-form-item>
+        <el-form-item :label="cr.required && isRevision ? '关联的变更（改版必选）' : '关联的变更（选填）'">
+          <el-select id="aw-change" v-model="cr.changeId" clearable :placeholder="cr.options ? (cr.options.length ? '选择实施中的标签、包材或配方变更' : '没有实施中的标签、包材或配方变更') : '正在读取…'" style="width:100%">
+            <el-option v-for="o in cr.options || []" :key="o.id" :value="o.id" :label="`${o.changeNo} ${o.title}（${o.changeTypeLabel}）`" />
+          </el-select>
+          <p v-if="cr.required && isRevision && cr.options && !cr.options.length" class="small late" style="margin:4px 0 0">这个包材已有设计稿，改版要先到“变更控制”提出标签、包材或配方变更并批准。</p>
+        </el-form-item>
         <el-form-item label="设计稿内容或改了什么"><el-input id="aw-note" v-model="cr.changeNote" maxlength="300" placeholder="如：首版；按新规改警示用语" /></el-form-item>
         <p class="muted small">保存后上传设计稿文件，再由质量安全负责人评审。</p>
       </el-form>
       <template #footer>
         <el-button @click="cr.visible = false">取消</el-button>
-        <el-button type="primary" :loading="cr.saving" @click="submitCreate">保存设计稿</el-button>
+        <el-button type="primary" :loading="cr.saving" :disabled="!cr.options" @click="submitCreate">保存设计稿</el-button>
       </template>
     </el-dialog>
 
     <el-dialog v-model="dt.visible" :title="`设计稿 ${a?.artworkNo || ''}`" width="720px">
       <template v-if="a">
         <p class="summary-line"><StatusTag :status="a.status" :label="a.statusLabel" /> <b>{{ a.pkName }}</b> 第 {{ a.versionNo }} 版 · {{ a.fgName }} 配方 V{{ a.formulaVersionNo }}</p>
-        <p class="small">{{ a.changeNote }} <span class="muted">（{{ a.createdBy }} 提交<template v-if="a.approvedBy">，{{ a.approvedBy }} 批准于 {{ fmtTime(a.approvedAt) }}</template>）</span></p>
+        <p class="small">{{ a.changeNote }}<template v-if="a.changeNo"> · 关联变更 <router-link to="/changes" class="mono">{{ a.changeNo }}</router-link></template> <span class="muted">（{{ a.createdBy }} 提交<template v-if="a.approvedBy">，{{ a.approvedBy }} 批准于 {{ fmtTime(a.approvedAt) }}</template>）</span></p>
         <el-alert v-if="a.stale" type="warning" :closable="false" show-icon title="成品的生效配方已经变了，成分表可能要改，请提交新版设计稿重新评审。" />
         <el-alert v-if="a.rejectNote" type="info" :closable="false" show-icon :title="`退回：${a.rejectNote}`" />
         <AttachmentList owner-type="LABEL_ARTWORK" :owner-id="a.id" :can-upload="canEdit && a.status === 'PENDING'" title="设计稿文件" empty-text="还没有上传设计稿" />
@@ -196,15 +202,25 @@ const onResize = () => { narrow.value = window.innerWidth <= 768 }
 onMounted(() => { load(); rd.load(); window.addEventListener('resize', onResize) })
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
-const cr = reactive({ visible: false, saving: false, fgItemId: null, pkItemId: null, changeNote: '' })
-function openCreate() {
-  Object.assign(cr, { visible: true, saving: false, fgItemId: null, pkItemId: null, changeNote: '' })
+const cr = reactive({ visible: false, saving: false, fgItemId: null, pkItemId: null, changeNote: '', changeId: null, options: null, required: false })
+// 这个包材已有设计稿就是改版；开关打开时改版要关联变更（列表只有最近 300 条，以后端为准）
+const isRevision = computed(() => !!cr.pkItemId && artworks.value.some((x) => x.pkItemId === cr.pkItemId))
+const optionsReq = latestOnly()
+async function openCreate() {
+  Object.assign(cr, { visible: true, saving: false, fgItemId: null, pkItemId: null, changeNote: '', changeId: null, options: null, required: false })
+  // 可选的变更读完之前不能保存，否则开关打开时改版一定报错
+  const current = optionsReq()
+  const o = await http.get('/changes/artwork-options')
+  if (!current()) return
+  cr.options = o.changes
+  cr.required = o.required
 }
 async function submitCreate() {
   if (!cr.fgItemId || !cr.pkItemId || !cr.changeNote.trim()) return ElMessage.warning('请选择成品和包材，并写明设计稿内容')
+  if (cr.required && isRevision.value && !cr.changeId) return ElMessage.warning('这个包材已有设计稿，改版请选择关联的变更')
   cr.saving = true
   try {
-    const x = await http.post('/artworks', { fgItemId: cr.fgItemId, pkItemId: cr.pkItemId, changeNote: cr.changeNote })
+    const x = await http.post('/artworks', { fgItemId: cr.fgItemId, pkItemId: cr.pkItemId, changeNote: cr.changeNote, changeId: cr.changeId })
     ElMessage.success(`设计稿 ${x.artworkNo} 已保存，请上传文件`)
     cr.visible = false
     load()
