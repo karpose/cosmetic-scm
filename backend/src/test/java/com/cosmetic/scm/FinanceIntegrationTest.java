@@ -148,6 +148,12 @@ class FinanceIntegrationTest {
         return st.get("statementNo").asText();
     }
 
+    private ResultActions ack(String statementNo, Map<String, Object> request) throws Exception {
+        return mvc.perform(post("/api/integration/finance/vouchers/" + statementNo + "/ack")
+                .header("X-Api-Key", API_KEY)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(request)));
+    }
+
     @Test
     void integrationEndpointsRequireApiKeyAndInternalExportRequiresFinanceRole() throws Exception {
         mvc.perform(get("/api/integration/finance/vouchers")).andExpect(status().isUnauthorized());
@@ -191,22 +197,35 @@ class FinanceIntegrationTest {
         assertThat(target.get("invoices").size()).isEqualTo(1);
         assertThat(target.get("lines").size()).isEqualTo(1);
 
-        // 2. 外部系统回执失败后仍留在 pendingOnly 列表，成功回执后退出待同步
-        mvc.perform(post("/api/integration/finance/vouchers/" + stNo + "/ack")
-                        .header("X-Api-Key", API_KEY)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(Map.of("success", false, "note", "ERP 科目未映射"))))
+        // 2. 首次回执失败可以重试，成功后保留首次确认的凭证号、时间和备注。
+        ack(stNo, Map.of("success", false, "note", "ERP 科目未映射"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.financeSyncStatus").value("FAILED"))
                 .andExpect(jsonPath("$.financeSyncNote").value("ERP 科目未映射"));
+        assertThat(body(mvc.perform(get("/api/integration/finance/vouchers").header("X-Api-Key", API_KEY)
+                        .param("pendingOnly", "true")).andExpect(status().isOk())).findValuesAsText("statementNo")).contains(stNo);
 
-        mvc.perform(post("/api/integration/finance/vouchers/" + stNo + "/ack")
-                        .header("X-Api-Key", API_KEY)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(Map.of("success", true, "extVoucherNo", "AP-2026-0039", "note", "已生成应付凭证"))))
+        ack(stNo, Map.of("success", true, "extVoucherNo", "AP-2026-0039", "note", "已生成应付凭证"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.financeSyncStatus").value("SYNCED"))
                 .andExpect(jsonPath("$.extVoucherNo").value("AP-2026-0039"));
+        String fin = login("finance1");
+        String statementUrl = "/api/statements?statementNo=" + stNo;
+        String syncedAt = body(read(fin, statementUrl).andExpect(status().isOk())).get(0).path("financeSyncedAt").asText();
+        assertThat(syncedAt).isNotBlank();
+
+        ack(stNo, Map.of("success", true, "extVoucherNo", " AP-2026-0039 ", "note", "重复投递"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.financeSyncStatus").value("SYNCED"))
+                .andExpect(jsonPath("$.financeSyncedAt").value(syncedAt))
+                .andExpect(jsonPath("$.financeSyncNote").value("已生成应付凭证"));
+        ack(stNo, Map.of("success", false, "note", "迟到的失败回执"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.financeSyncStatus").value("SYNCED"))
+                .andExpect(jsonPath("$.extVoucherNo").value("AP-2026-0039"));
+        ack(stNo, Map.of("success", true, "extVoucherNo", "AP-2026-OTHER"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", containsString("已绑定外部凭证号")));
 
         JsonNode pendingAfterAck = body(mvc.perform(get("/api/integration/finance/vouchers")
                         .header("X-Api-Key", API_KEY)
@@ -215,10 +234,11 @@ class FinanceIntegrationTest {
         assertThat(pendingAfterAck.findValuesAsText("statementNo")).doesNotContain(stNo).contains(otherStNo);
 
         // 内部结算列表可见外部凭证号
-        read(login("finance1"), "/api/statements?statementNo=" + stNo)
-                .andExpect(status().isOk())
+        read(fin, statementUrl).andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].financeSyncStatus").value("SYNCED"))
-                .andExpect(jsonPath("$[0].extVoucherNo").value("AP-2026-0039"));
+                .andExpect(jsonPath("$[0].extVoucherNo").value("AP-2026-0039"))
+                .andExpect(jsonPath("$[0].financeSyncedAt").value(syncedAt))
+                .andExpect(jsonPath("$[0].financeSyncNote").value("已生成应付凭证"));
 
         // 3. 付款水单回调核销（含幂等重复推送与跨单防重）
         Map<String, Object> pay1 = Map.of(

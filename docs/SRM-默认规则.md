@@ -22,7 +22,7 @@
 - **审批人**：不能是制单人，要输入签批密码（`SettlementService.approve`）
 - **外部财务系统对接（V39 新增）**：
   - 凭证拉取/导出：外部财务系统可通过 `GET /api/integration/finance/vouchers`（`X-Api-Key` 认证，支持 `syncStatus`、`pendingOnly` 过滤）拉取已审批/已结清对账单（含往来单位税号、开户行、财务客商编码、分税率汇总、发票与批次明细）；内部财务也可在结算页通过 `GET /api/statements/finance-vouchers` 导出凭证 JSON。
-  - 凭证回执：`POST /api/integration/finance/vouchers/{statementNo}/ack` 回写外部凭证号与同步状态（`SYNCED` / `FAILED`）。
+  - 凭证回执：`POST /api/integration/finance/vouchers/{statementNo}/ack` 回写外部凭证号与同步状态（`SYNCED` / `FAILED`）。失败单仍可通过 `pendingOnly=true` 拉取重试。首次成功后保留原凭证号、时间和备注，同号重试或迟到的失败回执均返回当前已同步状态。成功回执带不同凭证号时返回 HTTP 409，需在财务系统核对。
   - 付款水单回调核销：`POST /api/integration/finance/payments` 按外部付款单号（`extPaymentNo`）幂等核销付款或红字退款，重复推送直接返回幂等结果而不重复扣减未付金额。
 - **发票退回与更正**：财务可在审批前签批退回并填写供应商可见的原因。原对账单和批次保留，退回的发票及原因留档。供应商或采购在原单重提后，财务须审核最新提交。采购和供应商的每日提醒包含待更正事项。
 - **谁能看价格**：采购、财务、管理员。其它岗位接口不返回单价，审计记录遮盖成“含金额”

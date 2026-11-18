@@ -43,6 +43,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -164,6 +165,9 @@ public class FinanceIntegrationService {
 
     public ApVoucherView ackVoucher(String statementNo, VoucherAckReq req) {
         String stNo = statementNo == null ? "" : statementNo.trim();
+        boolean ok = req.success() == null || req.success();
+        String extNo = trimOrNull(req.extVoucherNo());
+        String note = trimOrNull(req.note());
         try {
             ApVoucherView view = tx.execute(s -> {
                 SupplierStatement st = statements.lockByStatementNo(stNo)
@@ -171,11 +175,14 @@ public class FinanceIntegrationService {
                 if (!VOUCHER_STATUSES.contains(st.getStatus())) {
                     throw new BizException("对账单 " + st.getStatementNo() + " 当前为" + st.getStatus().getLabel() + "，仅已审批或已结清的对账单可回执财务凭证");
                 }
-                boolean ok = req.success() == null || req.success();
-                String extNo = trimOrNull(req.extVoucherNo());
-                String note = trimOrNull(req.note());
                 if (ok && extNo == null) {
                     throw new BizException("制证成功时请填写外部财务凭证号");
+                }
+                if (st.effectiveFinanceSyncStatus() == FinanceSyncStatus.SYNCED) {
+                    if (ok && !extNo.equals(st.getExtVoucherNo())) {
+                        throw new BizException(HttpStatus.CONFLICT, "对账单 " + stNo + " 已绑定外部凭证号 " + st.getExtVoucherNo() + "，请在财务系统核对");
+                    }
+                    return toVoucherViews(List.of(st)).get(0);
                 }
                 st.setFinanceSyncStatus(ok ? FinanceSyncStatus.SYNCED : FinanceSyncStatus.FAILED);
                 if (ok) {
@@ -188,8 +195,12 @@ public class FinanceIntegrationService {
                         ok ? "外部凭证 " + extNo : (note != null ? note : "同步失败"));
                 return toVoucherViews(List.of(st)).get(0);
             });
-            boolean ok = req.success() == null || req.success();
-            log("IN", "FINANCE", "凭证回执", stNo, ok, ok ? "外部凭证 " + view.extVoucherNo() : trimOrNull(req.note()));
+            boolean synced = view.financeSyncStatus() == FinanceSyncStatus.SYNCED;
+            String logMessage = ok ? "外部凭证 " + view.extVoucherNo() : note;
+            if (!ok && synced) {
+                logMessage = "已同步，忽略迟到的失败回执";
+            }
+            log("IN", "FINANCE", "凭证回执", stNo, synced, logMessage);
             return view;
         } catch (BizException e) {
             log("IN", "FINANCE", "凭证回执", stNo, false, e.getMessage());
