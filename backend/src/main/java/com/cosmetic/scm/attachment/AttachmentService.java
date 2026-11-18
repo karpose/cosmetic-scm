@@ -210,6 +210,12 @@ public class AttachmentService {
         if (src == null) {
             return;
         }
+        // 附件的存储键唯一，批次副本保留原内容并使用自己的存储键。
+        LocalDateTime now = time.now();
+        String sourceKey = src.getStorageKey();
+        String key = now.format(MONTH) + "/" + UUID.randomUUID() + sourceKey.substring(sourceKey.lastIndexOf('.'));
+        storage.write(key, read(src).bytes());
+
         Attachment copy = new Attachment();
         copy.setOwnerType(OwnerType.BATCH);
         copy.setOwnerId(batchId);
@@ -217,10 +223,10 @@ public class AttachmentService {
         copy.setContentType(src.getContentType());
         copy.setSizeBytes(src.getSizeBytes());
         copy.setSha256(src.getSha256());
-        copy.setStorageKey(src.getStorageKey());
+        copy.setStorageKey(key);
         copy.setNote(coaNo != null && !coaNo.isBlank() ? "随送货通知自动挂载（COA：" + coaNo + "）" : "随送货通知自动挂载");
         copy.setUploadedBy(src.getUploadedBy());
-        copy.setUploadedAt(time.now());
+        copy.setUploadedAt(now);
         attachments.save(copy);
     }
 

@@ -566,10 +566,14 @@ class SupplierPortalTest {
         long batchId = batches.findByBatchNo(batchNo).orElseThrow().getId();
 
         // 批次附件与质量检验面板均已自动带入
-        read(login("qa1"), "/api/attachments?ownerType=BATCH&ownerId=" + batchId).andExpect(status().isOk())
+        String qa = login("qa1");
+        long batchAttachmentId = body(read(qa, "/api/attachments?ownerType=BATCH&ownerId=" + batchId).andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].fileName").value("COA-LOT-01.pdf"));
-        read(login("qa1"), "/api/quality/batches/" + batchId + "/inspections").andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].fileName").value("COA-LOT-01.pdf"))).get(0).path("id").asLong();
+        assertThat(batchAttachmentId).isNotEqualTo(coaAttId);
+        read(qa, "/api/attachments/" + batchAttachmentId + "/download").andExpect(status().isOk()).andExpect(content().bytes(PDF));
+        read(sup1, "/api/portal/supplier/attachments/" + coaAttId + "/download").andExpect(status().isOk()).andExpect(content().bytes(PDF));
+        read(qa, "/api/quality/batches/" + batchId + "/inspections").andExpect(status().isOk())
                 .andExpect(jsonPath("$.defaultCoaNo").value("COA-2026-888"));
     }
 }

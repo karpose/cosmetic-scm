@@ -6,14 +6,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
+import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 附件文件存储：现在存在服务器本地目录（Docker 里是一个卷，备份容器会一起打包）。
  * 以后换对象存储，只需换掉这个类的实现，附件表和接口都不用动。
  */
 @Component
+@Slf4j
 public class FileStorage {
 
     private final Path root;
@@ -30,6 +35,20 @@ public class FileStorage {
             Files.write(p, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
         } catch (IOException e) {
             throw new UncheckedIOException("附件写入失败：" + key, e);
+        }
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    if (status == STATUS_ROLLED_BACK) {
+                        try {
+                            Files.deleteIfExists(p);
+                        } catch (IOException e) {
+                            log.warn("附件事务回滚后未能清除文件：{}", key, e);
+                        }
+                    }
+                }
+            });
         }
     }
 
