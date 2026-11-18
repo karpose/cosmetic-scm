@@ -323,18 +323,20 @@ public class PurchaseService {
             }
             String prefix = item.getItemType() == ItemType.PK ? "P" : "R";
             String batchNo = docNo.next(prefix, today);
+            String actualLot = r.extBatchNo().trim();
             Batch b = inventory.createBatch(batchNo, item, mfg, exp, BatchStatus.QUARANTINE, SourceType.PO, po.getPoNo(),
-                    po.getSupplierId(), r.extBatchNo().trim(), r.qty());
-            PoShipmentLine sl = shipment == null ? null : shipmentLineMap.get(r.poLineId());
+                    po.getSupplierId(), actualLot, r.qty());
             if (shipment != null) {
                 b.setPoShipmentId(shipment.getId());
-                if (sl != null && sl.getCoaNo() != null) {
-                    b.setCoaNo(sl.getCoaNo());
-                }
             }
             inventory.change(b, wh.getId(), r.qty(), TxnType.RECEIPT, po.getPoNo());
-            if (sl != null && sl.getCoaAttachmentId() != null) {
-                attachmentService.linkShipmentCoaToBatch(sl.getCoaAttachmentId(), b.getId(), sl.getCoaNo());
+            // COA 只适用于通知上申报的批号，批号有差异时仍按实物收货。
+            PoShipmentLine sl = shipmentLineMap.get(r.poLineId());
+            if (sl != null && actualLot.equals(sl.getExtBatchNo())) {
+                b.setCoaNo(sl.getCoaNo());
+                if (sl.getCoaAttachmentId() != null) {
+                    attachmentService.linkShipmentCoaToBatch(sl.getCoaAttachmentId(), b.getId(), sl.getCoaNo());
+                }
             }
             line.setReceivedQty(line.getReceivedQty().add(r.qty()));
             lines.save(line);

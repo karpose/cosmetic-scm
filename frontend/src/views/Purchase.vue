@@ -127,7 +127,10 @@
       <el-card v-for="l in receiveLines" :key="l.poLineId" shadow="never" style="margin-bottom:12px">
         <div style="margin-bottom:8px">
           <b>{{ l.itemName }}</b> <span class="muted small">{{ l.itemCode }} · 未收 {{ fmtQty(l.remaining) }} {{ l.unit }}{{ l.shelfMonths ? ` · 保质期 ${l.shelfMonths} 个月` : '' }}</span>
-          <el-tag v-if="l.coaAttachmentId || l.coaNo" size="small" type="success" disable-transitions style="margin-left:8px">已绑定 COA{{ l.coaNo ? `：${l.coaNo}` : '' }}（收货自动挂载）</el-tag>
+          <template v-if="l.coaAttachmentId || l.coaNo">
+            <el-tag v-if="l.extBatchNo.trim() === l.notifiedBatchNo" size="small" type="success" disable-transitions style="margin-left:8px">已绑定 COA{{ l.coaNo ? `：${l.coaNo}` : '' }}（收货自动挂载）</el-tag>
+            <p v-else class="warn small" style="margin:4px 0 0">通知批号为 {{ l.notifiedBatchNo }}，本次不会挂载原 COA。请补传实收批次的报告。</p>
+          </template>
         </div>
         <div class="form-grid">
           <el-form-item label="本次收货数量"><el-input-number :id="`rv-qty-${l.poLineId}`" v-model="l.qty" :min="0" :max="Number(l.remaining)" :precision="4" :controls="false" style="width:100%" /></el-form-item>
@@ -378,9 +381,12 @@ function applyShipment() {
   const s = selectedShipment.value
   for (const l of recv.lines) {
     const n = s?.lines.find((x) => x.poLineId === l.poLineId)
-    Object.assign(l, s
-      ? { qty: n ? Math.min(Number(n.qty), Number(l.remaining)) : 0, extBatchNo: n?.extBatchNo || '', mfgDate: n?.mfgDate || today(), expDate: n?.expDate || null, coaNo: n?.coaNo || null, coaAttachmentId: n?.coaAttachmentId || null }
-      : { qty: Number(l.remaining), extBatchNo: '', mfgDate: today(), expDate: null, coaNo: null, coaAttachmentId: null })
+    const notifiedBatchNo = n?.extBatchNo || ''
+    Object.assign(l, {
+      qty: s ? (n ? Math.min(Number(n.qty), Number(l.remaining)) : 0) : Number(l.remaining),
+      notifiedBatchNo, extBatchNo: notifiedBatchNo, mfgDate: n?.mfgDate || today(), expDate: n?.expDate || null,
+      coaNo: n?.coaNo || null, coaAttachmentId: n?.coaAttachmentId || null
+    })
   }
 }
 

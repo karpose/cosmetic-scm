@@ -290,6 +290,10 @@ class SupplierPortalTest {
         JsonNode notice = body(call(supplier, portal + "/shipments", shipment(shipLine(po, "6", "DECLARED-LOT")))
                 .andExpect(status().isOk())).path("shipments").get(0);
         long shipmentId = notice.path("id").asLong();
+        long shipmentLineId = notice.path("lines").get(0).path("id").asLong();
+        mvc.perform(multipart("/api/portal/supplier/shipment-lines/" + shipmentLineId + "/coa")
+                .file(new MockMultipartFile("file", "declared-coa.pdf", "application/pdf", PDF)).param("coaNo", "COA-DECLARED")
+                .header("Authorization", "Bearer " + supplier)).andExpect(status().isOk());
         long wh = warehouses.findAll().stream().filter(w -> "WH-MAIN".equals(w.getCode())).findFirst().orElseThrow().getId();
         long notifiedLine = po.path("lines").get(0).path("id").asLong();
         long otherLine = po.path("lines").get(1).path("id").asLong();
@@ -314,7 +318,14 @@ class SupplierPortalTest {
         assertThat(diff.path("batchChanged").asBoolean()).isTrue();
 
         long batchId = batches.findByBatchNo(batchNo).orElseThrow().getId();
-        call(login("qa1"), "/api/quality/batches/" + batchId + "/material-decision",
+        String qa = login("qa1");
+        read(qa, "/api/attachments?ownerType=BATCH&ownerId=" + batchId).andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+        read(qa, "/api/quality/batches/" + batchId + "/inspections").andExpect(status().isOk())
+                .andExpect(jsonPath("$.defaultCoaNo").doesNotExist());
+        read(supplier, "/api/portal/supplier/shipment-lines/" + shipmentLineId + "/attachments")
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].fileName").value("declared-coa.pdf"));
+        call(qa, "/api/quality/batches/" + batchId + "/material-decision",
                 Map.of("decision", "REJECTED", "reportNo", "INTERNAL-REPORT", "note", "内部检验说明", "password", DemoDataLoader.DEMO_PASSWORD))
                 .andExpect(status().isOk());
         JsonNode checked = supplierOrder(supplier, id).path("receipts").get(0);
@@ -561,7 +572,7 @@ class SupplierPortalTest {
         long wh = warehouses.findAll().stream().filter(w -> "WH-MAIN".equals(w.getCode())).findFirst().orElseThrow().getId();
         String batchNo = body(call(purchase, "/api/purchase-orders/" + poId + "/receipts", Map.of(
                 "shipmentId", shipmentId,
-                "lines", List.of(Map.of("poLineId", poLineId, "qty", 5, "extBatchNo", "COA-LOT-01", "warehouseId", wh))
+                "lines", List.of(Map.of("poLineId", poLineId, "qty", 5, "extBatchNo", "  COA-LOT-01  ", "warehouseId", wh))
         )).andExpect(status().isOk())).path("batchNos").get(0).asText();
         long batchId = batches.findByBatchNo(batchNo).orElseThrow().getId();
 
