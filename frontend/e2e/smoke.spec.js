@@ -1093,8 +1093,12 @@ test('询价比价到对账付款：询价、报价、开标、定标、收货�
   await expect(st.getByRole('link', { name: /^ASN-/ })).toHaveAttribute('href', /\/purchase\?receiptDispute=\d+/)
   await expect(st.locator('.total')).toContainText('62.5')
   await st.locator('#st-credit-days').fill('0')
-  await st.getByRole('button', { name: '生成并发给供应商' }).click()
+  const [createdStatement] = await Promise.all([
+    page.waitForResponse((res) => res.url().endsWith('/api/statements') && res.request().method() === 'POST'),
+    st.getByRole('button', { name: '生成并发给供应商' }).click()
+  ])
   await toast(page, '等供应商确认')
+  expect((await createdStatement.json()).creditDays).toBe(0)
 
   await login(page, 'sup1')
   await page.getByRole('tab', { name: /对账/ }).click()

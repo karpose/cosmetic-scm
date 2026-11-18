@@ -85,12 +85,12 @@
       <el-form label-position="top" @submit.prevent>
         <div class="form-grid">
           <el-form-item label="供应商">
-            <el-select id="st-supplier" v-model="cr.supplierId" filterable placeholder="选择供应商" style="width:100%" @change="onCreateSupplierChange">
+            <el-select id="st-supplier" v-model="cr.supplierId" filterable placeholder="选择供应商" style="width:100%" @change="loadPreview">
               <el-option v-for="p in rd.suppliers.value" :key="p.id" :value="p.id" :label="p.name" />
             </el-select>
           </el-form-item>
           <el-form-item label="对账截止日期（这天及以前入库的）"><el-date-picker id="st-period" v-model="cr.periodTo" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d > startOfToday" @change="loadPreview" /></el-form-item>
-          <el-form-item label="信用账期（天，用于计算应付到期日）"><el-input-number id="st-credit-days" v-model="cr.creditDays" :min="0" :max="365" :precision="0" :controls="false" style="width:100%" /></el-form-item>
+          <el-form-item label="信用账期（天，用于计算应付到期日）"><el-input-number id="st-credit-days" v-model="cr.creditDays" :min="0" :max="365" :precision="0" :controls="false" :placeholder="`默认 ${defaultCreditDays} 天`" style="width:100%" /></el-form-item>
         </div>
         <StatementReceiptDisputes :disputes="cr.preview?.receiptDisputes" :can-open="canBuy" />
         <el-alert v-if="cr.preview?.missingPrice.length" type="warning" :closable="false" show-icon :title="`${cr.preview.missingPrice.length} 个批次的采购单没有单价，不会进这张对账单。请先到采购入库录入单价：${missingText}`" />
@@ -324,7 +324,8 @@ onMounted(() => window.addEventListener('resize', onResize))
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
 const previewReq = latestOnly()
-const cr = reactive({ visible: false, saving: false, supplierId: null, periodTo: null, creditDays: 30, allowNegative: false, preview: null, adjustment: undefined, adjustmentNote: '' })
+const cr = reactive({ visible: false, saving: false, supplierId: null, periodTo: null, creditDays: undefined, allowNegative: false, preview: null, adjustment: undefined, adjustmentNote: '' })
+const defaultCreditDays = computed(() => rd.suppliers.value.find((p) => p.id === cr.supplierId)?.defaultCreditDays ?? 30)
 const missingText = computed(() => {
   const list = cr.preview?.missingPrice || []
   return list.slice(0, 5).map((m) => m.poNo + ' ' + m.itemName).join('、') + (list.length > 5 ? ` 等 ${list.length} 个` : '')
@@ -332,12 +333,7 @@ const missingText = computed(() => {
 const previewTotal = computed(() => Number(cr.preview?.goodsAmount || 0) + Number(cr.adjustment || 0))
 async function openCreate() {
   await rd.ready()
-  Object.assign(cr, { visible: true, saving: false, supplierId: null, periodTo: today(), creditDays: 30, allowNegative: false, preview: null, adjustment: undefined, adjustmentNote: '' })
-}
-function onCreateSupplierChange() {
-  const s = rd.suppliers.value.find((p) => p.id === cr.supplierId)
-  cr.creditDays = s?.defaultCreditDays != null ? Number(s.defaultCreditDays) : 30
-  loadPreview()
+  Object.assign(cr, { visible: true, saving: false, supplierId: null, periodTo: today(), creditDays: undefined, allowNegative: false, preview: null, adjustment: undefined, adjustmentNote: '' })
 }
 async function loadPreview() {
   const current = previewReq()
@@ -353,7 +349,7 @@ async function submitCreate() {
     const s = await http.post('/statements', {
       supplierId: cr.supplierId,
       periodTo: cr.periodTo,
-      creditDays: cr.creditDays ?? 30,
+      creditDays: cr.creditDays ?? null,
       allowNegative: cr.allowNegative,
       adjustment: cr.adjustment || 0,
       adjustmentNote: cr.adjustmentNote

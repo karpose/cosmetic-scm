@@ -66,7 +66,7 @@
     <el-dialog v-model="create.visible" title="新建采购单" width="640px">
       <el-form label-position="top" @submit.prevent>
         <el-form-item label="供应商">
-          <el-select id="po-supplier" v-model="create.supplierId" placeholder="选择供应商" filterable style="width:100%" @change="onCreateSupplierChange">
+          <el-select id="po-supplier" v-model="create.supplierId" placeholder="选择供应商" filterable style="width:100%">
             <el-option v-for="p in rd.suppliers.value" :key="p.id" :value="p.id" :disabled="!p.usable"
                        :label="p.name + (p.usable ? '' : (p.qualified ? '（资质已过期）' : '（未进合格名录）'))" />
           </el-select>
@@ -86,10 +86,10 @@
               <el-button text :disabled="create.lines.length === 1" @click="create.lines.splice(i, 1)">删除</el-button>
               <div class="price-row">
                 <el-input-number :id="`po-price-${i}`" aria-label="含税单价" v-model="l.unitPrice" :min="0" :precision="4" :controls="false" placeholder="含税单价（选填，对账按它算）" style="width:100%" />
-                <el-input-number :id="`po-tax-${i}`" aria-label="税率" v-model="l.taxRate" :min="0" :max="100" :precision="2" :controls="false" placeholder="税率 %" style="width:100%" />
+                <el-input-number :id="`po-tax-${i}`" aria-label="税率" v-model="l.taxRate" :min="0" :max="100" :precision="2" :controls="false" :placeholder="`默认 ${fmtQty(createDefaultTaxRate)}%`" style="width:100%" />
               </div>
             </div>
-            <el-button size="small" @click="create.lines.push({ itemId: null, qty: null, unitPrice: undefined, taxRate: defaultTaxRateFor(create.supplierId) })">添加一行</el-button>
+            <el-button size="small" @click="create.lines.push(newPurchaseLine())">添加一行</el-button>
           </div>
         </el-form-item>
       </el-form>
@@ -263,12 +263,8 @@ const defaultTaxRateFor = (supplierId) => {
   const s = rd.suppliers.value.find((p) => p.id === supplierId)
   return s?.defaultTaxRate != null ? Number(s.defaultTaxRate) : 13
 }
-function onCreateSupplierChange() {
-  const rate = defaultTaxRateFor(create.supplierId)
-  for (const l of create.lines) {
-    if (l.unitPrice == null) l.taxRate = rate
-  }
-}
+const createDefaultTaxRate = computed(() => defaultTaxRateFor(create.supplierId))
+const newPurchaseLine = () => ({ itemId: null, qty: null, unitPrice: undefined, taxRate: undefined })
 function openPrice(po) {
   const fallback = defaultTaxRateFor(po.supplierId)
   Object.assign(price, { visible: true, saving: false, po, reason: '', lines: po.lines.map((l) => ({
@@ -344,11 +340,14 @@ async function load() {
 }
 
 function openCreate() {
-  Object.assign(create, { visible: true, supplierId: null, expectedDate: null, lines: [{ itemId: null, qty: null, unitPrice: undefined, taxRate: 13 }] })
+  Object.assign(create, { visible: true, supplierId: null, expectedDate: null, lines: [newPurchaseLine()] })
 }
 
 async function submitCreate() {
-  const lines = create.lines.filter((l) => l.itemId || l.qty).map((l) => ({ itemId: l.itemId, qty: l.qty, unitPrice: l.unitPrice > 0 ? l.unitPrice : null, taxRate: l.unitPrice > 0 ? (l.taxRate ?? 0) : null }))
+  const lines = create.lines.filter((l) => l.itemId || l.qty).map((l) => ({
+    itemId: l.itemId, qty: l.qty, unitPrice: l.unitPrice > 0 ? l.unitPrice : null,
+    taxRate: l.unitPrice > 0 ? (l.taxRate ?? createDefaultTaxRate.value) : null
+  }))
   if (!create.supplierId) return ElMessage.warning('请选择供应商')
   if (!lines.length || lines.some((l) => !l.itemId || !(l.qty > 0))) return ElMessage.warning('请把每一行的物料和数量填完整')
   create.saving = true
