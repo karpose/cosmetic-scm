@@ -79,7 +79,7 @@
       <el-form label-position="top" @submit.prevent>
         <div class="form-grid">
           <el-form-item label="供应商">
-            <el-select id="st-supplier" v-model="cr.supplierId" filterable placeholder="选择供应商" style="width:100%" @change="loadPreview">
+            <el-select id="st-supplier" v-model="cr.supplierId" filterable placeholder="选择供应商" style="width:100%" @change="onCreateSupplierChange">
               <el-option v-for="p in rd.suppliers.value" :key="p.id" :value="p.id" :label="p.name" />
             </el-select>
           </el-form-item>
@@ -321,6 +321,11 @@ const previewTotal = computed(() => Number(cr.preview?.goodsAmount || 0) + Numbe
 async function openCreate() {
   await rd.ready()
   Object.assign(cr, { visible: true, saving: false, supplierId: null, periodTo: today(), creditDays: 30, allowNegative: false, preview: null, adjustment: undefined, adjustmentNote: '' })
+}
+function onCreateSupplierChange() {
+  const s = rd.suppliers.value.find((p) => p.id === cr.supplierId)
+  cr.creditDays = s?.defaultCreditDays != null ? Number(s.defaultCreditDays) : 30
+  loadPreview()
 }
 async function loadPreview() {
   const current = previewReq()

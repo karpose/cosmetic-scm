@@ -257,7 +257,8 @@ public class SettlementService {
         }
         int creditDays;
         try {
-            creditDays = SettlementRule.normalizeCreditDays(req.creditDays());
+            Integer rawCreditDays = req.creditDays() != null ? req.creditDays() : s.getDefaultCreditDays();
+            creditDays = SettlementRule.normalizeCreditDays(rawCreditDays);
         } catch (IllegalArgumentException ex) {
             throw new BizException(ex.getMessage());
         }

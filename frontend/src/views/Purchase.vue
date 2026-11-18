@@ -66,7 +66,7 @@
     <el-dialog v-model="create.visible" title="新建采购单" width="640px">
       <el-form label-position="top" @submit.prevent>
         <el-form-item label="供应商">
-          <el-select id="po-supplier" v-model="create.supplierId" placeholder="选择供应商" filterable style="width:100%">
+          <el-select id="po-supplier" v-model="create.supplierId" placeholder="选择供应商" filterable style="width:100%" @change="onCreateSupplierChange">
             <el-option v-for="p in rd.suppliers.value" :key="p.id" :value="p.id" :disabled="!p.usable"
                        :label="p.name + (p.usable ? '' : (p.qualified ? '（资质已过期）' : '（未进合格名录）'))" />
           </el-select>
@@ -89,7 +89,7 @@
                 <el-input-number :id="`po-tax-${i}`" aria-label="税率" v-model="l.taxRate" :min="0" :max="100" :precision="2" :controls="false" placeholder="税率 %" style="width:100%" />
               </div>
             </div>
-            <el-button size="small" @click="create.lines.push({ itemId: null, qty: null, unitPrice: undefined, taxRate: 13 })">添加一行</el-button>
+            <el-button size="small" @click="create.lines.push({ itemId: null, qty: null, unitPrice: undefined, taxRate: defaultTaxRateFor(create.supplierId) })">添加一行</el-button>
           </div>
         </el-form-item>
       </el-form>
@@ -253,9 +253,20 @@ const receiveLines = computed(() => {
   return shipment ? recv.lines.filter((l) => shipment.lines.some((n) => n.poLineId === l.poLineId)) : recv.lines
 })
 const price = reactive({ visible: false, saving: false, po: null, lines: [], reason: '' })
+const defaultTaxRateFor = (supplierId) => {
+  const s = rd.suppliers.value.find((p) => p.id === supplierId)
+  return s?.defaultTaxRate != null ? Number(s.defaultTaxRate) : 13
+}
+function onCreateSupplierChange() {
+  const rate = defaultTaxRateFor(create.supplierId)
+  for (const l of create.lines) {
+    if (l.unitPrice == null) l.taxRate = rate
+  }
+}
 function openPrice(po) {
+  const fallback = defaultTaxRateFor(po.supplierId)
   Object.assign(price, { visible: true, saving: false, po, reason: '', lines: po.lines.map((l) => ({
-    poLineId: l.id, itemName: l.itemName, unit: l.unit, unitPrice: l.unitPrice ?? undefined, taxRate: l.taxRate ?? 13
+    poLineId: l.id, itemName: l.itemName, unit: l.unit, unitPrice: l.unitPrice ?? undefined, taxRate: l.taxRate ?? fallback
   })) })
 }
 async function submitPrice() {

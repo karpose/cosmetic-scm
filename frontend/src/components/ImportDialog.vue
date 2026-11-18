@@ -203,7 +203,13 @@ const SPECS = {
       { header: '联系人', key: 'contact', conv: text, example: '张经理 139****0000' },
       { header: '地址', key: 'address', conv: text, example: '' },
       { header: '合格名录', key: 'qualified', conv: flag('合格名录', true), show: yn, example: '是' },
-      { header: '关键供应商', key: 'criticalSupplier', conv: flag('关键供应商', false), show: yn, example: '否' }
+      { header: '关键供应商', key: 'criticalSupplier', conv: flag('关键供应商', false), show: yn, example: '否' },
+      { header: '税号', key: 'taxId', conv: text, example: '' },
+      { header: '开户银行', key: 'bankName', conv: text, example: '' },
+      { header: '银行账号', key: 'bankAccount', conv: text, example: '' },
+      { header: '默认账期（天）', key: 'defaultCreditDays', conv: int('默认账期'), example: '30' },
+      { header: '默认税率（%）', key: 'defaultTaxRate', conv: num('默认税率'), example: '13' },
+      { header: '财务客商编码', key: 'financeCode', conv: text, example: '' }
     ]
   }
 }

@@ -210,7 +210,8 @@ public class PurchaseService {
             line.setQty(l.qty());
             line.setReceivedQty(BigDecimal.ZERO);
             line.setUnitPrice(l.unitPrice());
-            line.setTaxRate(l.unitPrice() == null ? null : l.taxRate());
+            BigDecimal rate = l.taxRate() != null ? l.taxRate() : supplier.getDefaultTaxRate();
+            line.setTaxRate(l.unitPrice() == null ? null : rate);
             lines.save(line);
         }
         audit.log("新建采购单", po.getPoNo(), supplier.getName() + "，" + req.lines().size() + " 行");

@@ -871,4 +871,80 @@ class SourcingSettlementTest {
         read(login("qa1"), "/api/purchase-orders").andExpect(status().isOk());
         call(login("qa1"), "/api/purchase-orders/" + id + "/prices", Map.of("lines", List.of(Map.of("poLineId", line, "unitPrice", 1, "taxRate", 13)))).andExpect(status().isForbidden());
     }
+
+    @Test
+    void partnerFinanceProfileFlowsIntoPoStatementAndPortal() throws Exception {
+        String admin = login("admin", "Admin@123456");
+        String buyer = login("purchase1");
+        JsonNode created = body(call(admin, "/api/partners", Map.of(
+                "code", "SUP-FIN-37",
+                "name", "财务档案测试供应商",
+                "kind", "SUPPLIER",
+                "qualified", true,
+                "taxId", "91310000MA1FL0001X",
+                "bankName", "招商银行上海分行",
+                "bankAccount", "6225880100001234",
+                "defaultCreditDays", 45,
+                "defaultTaxRate", new BigDecimal("9.00"),
+                "financeCode", "ERP-SUP-037"
+        )).andExpect(status().isOk()));
+        long supplierId = created.get("id").asLong();
+        assertThat(created.get("taxId").asText()).isEqualTo("91310000MA1FL0001X");
+        assertThat(created.get("defaultCreditDays").asInt()).isEqualTo(45);
+        assertThat(created.get("defaultTaxRate").decimalValue()).isEqualByComparingTo("9.00");
+
+        // 更新后审计日志记录字段差异
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/partners/" + supplierId)
+                .header("Authorization", "Bearer " + admin)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(Map.of(
+                        "code", "SUP-FIN-37",
+                        "name", "财务档案测试供应商",
+                        "kind", "SUPPLIER",
+                        "qualified", true,
+                        "taxId", "91310000MA1FL0001X",
+                        "bankName", "招商银行上海分行",
+                        "bankAccount", "6225880100009999",
+                        "defaultCreditDays", 60,
+                        "defaultTaxRate", new BigDecimal("6.00"),
+                        "financeCode", "ERP-SUP-037"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.defaultCreditDays").value(60))
+                .andExpect(jsonPath("$.defaultTaxRate").value(6.0));
+        assertThat(text(read(admin, "/api/audit?q=SUP-FIN-37")))
+                .contains("银行账号 6225880100001234 → 6225880100009999")
+                .contains("默认账期（天） 45 → 60")
+                .contains("默认税率（%） 9 → 6");
+
+        // 门户查看本单位资料能看到财务档案
+        userService.newUser("fin_37", "fin_37", PWD, EnumSet.of(Role.SUPPLIER_PORTAL), supplierId, false);
+        read(login("fin_37"), "/api/portal/supplier/profile").andExpect(status().isOk())
+                .andExpect(jsonPath("$.taxId").value("91310000MA1FL0001X"))
+                .andExpect(jsonPath("$.bankName").value("招商银行上海分行"))
+                .andExpect(jsonPath("$.bankAccount").value("6225880100009999"))
+                .andExpect(jsonPath("$.defaultCreditDays").value(60))
+                .andExpect(jsonPath("$.defaultTaxRate").value(6.0));
+
+        // 采购单不传税率时自动带入供应商默认税率 6%
+        JsonNode po = body(call(buyer, "/api/purchase-orders", Map.of(
+                "supplierId", supplierId,
+                "lines", List.of(Map.of("itemId", item("RM-GLY-002"), "qty", 2, "unitPrice", 53))
+        )).andExpect(status().isOk()));
+        assertThat(po.get("lines").get(0).get("taxRate").decimalValue()).isEqualByComparingTo("6.00");
+
+        // 收货放行后生成对账单：不传 creditDays 时自动带入默认账期 60 天
+        long wh = warehouses.findAll().stream().filter(w -> "WH-MAIN".equals(w.getCode())).findFirst().orElseThrow().getId();
+        JsonNode recv = body(call(buyer, "/api/purchase-orders/" + po.get("id").asLong() + "/receipts", Map.of(
+                "lines", List.of(Map.of("poLineId", po.get("lines").get(0).get("id").asLong(), "qty", 2, "extBatchNo", "EXT-FIN-37", "warehouseId", wh))
+        )).andExpect(status().isOk()));
+        setStatus(batches.findByBatchNo(recv.get("batchNos").get(0).asText()).orElseThrow(), BatchStatus.RELEASED);
+
+        JsonNode st = body(call(buyer, "/api/statements", Map.of(
+                "supplierId", supplierId,
+                "periodTo", d(0).toString()
+        )).andExpect(status().isOk()));
+        assertThat(st.get("creditDays").asInt()).isEqualTo(60);
+        assertThat(st.get("dueDate").asText()).isEqualTo(d(60).toString());
+        assertThat(st.get("taxAmount").decimalValue()).isEqualByComparingTo("6.00");
+    }
 }

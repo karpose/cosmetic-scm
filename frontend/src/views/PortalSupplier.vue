@@ -234,6 +234,10 @@
           <el-descriptions-item label="下次审核"><span class="mono">{{ profile.nextAuditDate || '-' }}</span></el-descriptions-item>
           <el-descriptions-item label="近 12 个月来料"><span class="mono">{{ profile.received }}</span> 批，拒收 <span class="mono">{{ profile.rejected }}</span> 批</el-descriptions-item>
           <el-descriptions-item label="近 12 个月交货"><template v-if="profile.dueTotal">到期 <span class="mono">{{ profile.dueTotal }}</span> 单，按时 <span class="mono">{{ profile.onTime }}</span> 单</template><template v-else>-</template></el-descriptions-item>
+          <el-descriptions-item label="税号 / 信用代码">{{ profile.taxId || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="默认账期 / 税率">{{ profile.defaultCreditDays != null ? `${profile.defaultCreditDays} 天` : '30 天（默认）' }} / {{ profile.defaultTaxRate != null ? `${fmtQty(profile.defaultTaxRate)}%` : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="开户银行">{{ profile.bankName || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="银行账号"><span class="mono">{{ profile.bankAccount || '-' }}</span></el-descriptions-item>
         </el-descriptions>
         <p class="muted small">资质信息由品牌方维护。有新证时请上传，品牌方核对后更新。交货按贵司第一次回复的交期计算。</p>
         <AttachmentList owner-type="PARTNER" :owner-id="0" list-path="/portal/supplier/profile/attachments" download-prefix="/portal/supplier/attachments" can-upload title="资质文件" empty-text="还没有上传资质文件" notice="这里只列贵司上传的文件，上传后品牌方能看到。" />

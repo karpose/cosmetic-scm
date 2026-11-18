@@ -111,7 +111,8 @@ public class SupplierPortalService {
     /** 门户看到的本单位情况。评分是品牌方内部的，不给供应商看。 */
     public record ProfileView(String code, String name, String licenseNo, LocalDate licenseExpiry, Long licenseDaysLeft,
                               String licenseScope, boolean qualified, LocalDate lastAuditDate, String lastAuditResult,
-                              LocalDate nextAuditDate, long received, long rejected, long dueTotal, long onTime) {
+                              LocalDate nextAuditDate, long received, long rejected, long dueTotal, long onTime,
+                              String taxId, String bankName, String bankAccount, Integer defaultCreditDays, BigDecimal defaultTaxRate) {
     }
 
     @Transactional(readOnly = true)
@@ -127,7 +128,8 @@ public class SupplierPortalService {
         Long days = p.getLicenseExpiry() == null ? null : ChronoUnit.DAYS.between(time.today(), p.getLicenseExpiry());
         return new ProfileView(p.getCode(), p.getName(), p.getLicenseNo(), p.getLicenseExpiry(), days, p.getLicenseScope(),
                 p.isQualified(), r.lastAuditDate(), r.lastResultLabel(), r.nextAuditDate(), r.received(), r.rejected(),
-                r.dueTotal(), r.onTime());
+                r.dueTotal(), r.onTime(),
+                p.getTaxId(), p.getBankName(), p.getBankAccount(), p.getDefaultCreditDays(), p.getDefaultTaxRate());
     }
 
     /** 回复交期：第一次算确认订单，之后修改要写原因。准时率一直按第一次的交期算。 */

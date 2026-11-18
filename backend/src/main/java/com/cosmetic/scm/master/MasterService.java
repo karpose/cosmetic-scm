@@ -224,6 +224,12 @@ public class MasterService {
         p.setAddress(blankToNull(req.address()));
         p.setQualified(req.qualified());
         p.setCriticalSupplier(req.kind() == PartnerKind.SUPPLIER && req.criticalSupplier());
+        p.setTaxId(blankToNull(req.taxId()));
+        p.setBankName(blankToNull(req.bankName()));
+        p.setBankAccount(blankToNull(req.bankAccount()));
+        p.setDefaultCreditDays(req.defaultCreditDays());
+        p.setDefaultTaxRate(req.defaultTaxRate());
+        p.setFinanceCode(blankToNull(req.financeCode()));
     }
 
     public PartnerView toView(Partner p, LocalDate today) {
@@ -236,7 +242,9 @@ public class MasterService {
         return new PartnerView(p.getId(), p.getCode(), p.getName(), p.getKind(), p.getKind().getLabel(),
                 p.getLicenseNo(), p.getLicenseExpiry(), p.getLicenseScope(), state, daysLeft, p.usable(today),
                 p.getBatchPrefix(), p.getChannel(), p.getMinShelfPct(), p.getContact(), p.getAddress(),
-                p.isQualified(), p.isCriticalSupplier());
+                p.isQualified(), p.isCriticalSupplier(),
+                p.getTaxId(), p.getBankName(), p.getBankAccount(),
+                p.getDefaultCreditDays(), p.getDefaultTaxRate(), p.getFinanceCode());
     }
 
     private static Map<String, Object> partnerFields(Partner p) {
@@ -253,6 +261,12 @@ public class MasterService {
         m.put("地址", p.getAddress());
         m.put("合格名录", p.isQualified());
         m.put("关键供应商", p.isCriticalSupplier());
+        m.put("税号", p.getTaxId());
+        m.put("开户银行", p.getBankName());
+        m.put("银行账号", p.getBankAccount());
+        m.put("默认账期（天）", p.getDefaultCreditDays());
+        m.put("默认税率（%）", p.getDefaultTaxRate());
+        m.put("财务客商编码", p.getFinanceCode());
         return m;
     }
 
