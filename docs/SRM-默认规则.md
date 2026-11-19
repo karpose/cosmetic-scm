@@ -72,3 +72,9 @@
 - **客户应收作废与销项发票台账**：草稿/已开票状态的客户应收单支持作废重算（`POST /api/ar-statements/{id}/cancel`），自动释放关联出库行与退货行；`GET /api/ar-statements/invoice-ledger` 与 `ar-invoice-ledger` Excel 导出按开票月份汇总销项含税/不含税/销项税额。
 - **客户授信使用率概览**：`GET /api/ar-statements/credit-summary` 与 `customer-credit` Excel 导出汇总各客户授信额度、未结应收、逾期应收、可用余额及使用率%。
 - **生产批次实际成本核算**：`GET /api/analytics/batch-costs` 与 `batch-costs` Excel 导出（严格按价格权限隔离）按完工生产单汇总实际领料成本与委外加工费，核算实际单位成本及与标准成本的偏差率。
+
+## 毛利分析、现金流预测、库存损益估值与对账单打印（V45 新增）
+- **成品与客户毛利分析**：`GET /api/analytics/margins` 与 `margins` Excel 导出按成品与客户双维度汇总含税销售额、销售成本（优先采用完工批次实际单位成本，缺省回落标准成本）、毛利额与毛利率%，仅限价格权限角色访问。
+- **AP / AR 现金流预测**：`GET /api/analytics/cashflow-forecast` 与 `cashflow-forecast` Excel 导出按已逾期、未来 7 天、8–30 天、31–60 天与 60 天以上五个区间汇总预计回款（含红字供应商退款）、预计付款与预计净现金流。
+- **库存盘点与报废损益估值**：`GET /api/analytics/inventory-variance` 与 `inventory-variance` Excel 导出按物料标准成本折算盘盈、盘亏与报废金额损益，辅助财务月结入账。
+- **往来对账单打印 / PDF 视图**：新增 `/statement-print?side=AP|AR&no=...` 正式打印页（含税号、账期到期日、分税率拆分、明细行与双方签章栏），在结算页应付/应收详情弹窗中可一键打开打印或另存 PDF。
