@@ -66,3 +66,9 @@
 - **客户信用额度风控**：在往来单位维护客户 `creditLimit`（留空表示不限额）；销售出库及经销商订单审核转出库时实时校验“当前未结应收 + 本次出库金额 ≤ 授信额度”，超额自动拦截并提示欠款明细。
 - **补货建议（MRP）联动协议价**：`/api/planning/materials` 按 BOM 展开净采购需求时自动匹配当日有效最低协议价供应商（仅价格权限角色返回协议单价与税率），一键生成采购单时自动带入协议价。
 - **每日提醒扩展**：`TodoRouting` 已将客户回款到期/逾期（`AR_COLLECT` → 销售/财务）和供应商协议价到期（`PRICE_EXPIRING` → 采购/财务）纳入岗位每日提醒。
+
+## 客户退货冲减、销项台账、授信概览与批次实际成本（V44 新增）
+- **客户退货自动冲减应收（V44）**：`customer_statement_line` 关联 `sales_return_id` / `sales_return_line_id`；生成客户应收对账单时自动带入截止日前未冲减的客户退货行生成负数冲减行，避免重复冲减。
+- **客户应收作废与销项发票台账**：草稿/已开票状态的客户应收单支持作废重算（`POST /api/ar-statements/{id}/cancel`），自动释放关联出库行与退货行；`GET /api/ar-statements/invoice-ledger` 与 `ar-invoice-ledger` Excel 导出按开票月份汇总销项含税/不含税/销项税额。
+- **客户授信使用率概览**：`GET /api/ar-statements/credit-summary` 与 `customer-credit` Excel 导出汇总各客户授信额度、未结应收、逾期应收、可用余额及使用率%。
+- **生产批次实际成本核算**：`GET /api/analytics/batch-costs` 与 `batch-costs` Excel 导出（严格按价格权限隔离）按完工生产单汇总实际领料成本与委外加工费，核算实际单位成本及与标准成本的偏差率。
