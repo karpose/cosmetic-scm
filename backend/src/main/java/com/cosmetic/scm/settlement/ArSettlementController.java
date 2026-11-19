@@ -1,13 +1,17 @@
 package com.cosmetic.scm.settlement;
 
+import java.time.LocalDate;
 import java.util.List;
 
 import com.cosmetic.scm.domain.FinanceSyncStatus;
 import com.cosmetic.scm.settlement.ArSettlementService.ArApproveReq;
+import com.cosmetic.scm.settlement.ArSettlementService.ArCancelReq;
 import com.cosmetic.scm.settlement.ArSettlementService.ArCreateReq;
+import com.cosmetic.scm.settlement.ArSettlementService.ArInvoiceLedgerView;
 import com.cosmetic.scm.settlement.ArSettlementService.ArInvoiceReq;
 import com.cosmetic.scm.settlement.ArSettlementService.ArReceiptReq;
 import com.cosmetic.scm.settlement.ArSettlementService.ArStatementView;
+import com.cosmetic.scm.settlement.ArSettlementService.CustomerCreditRow;
 
 import jakarta.validation.Valid;
 
@@ -46,6 +50,12 @@ public class ArSettlementController {
         return ar.create(req);
     }
 
+    @PostMapping("/{id}/cancel")
+    @PreAuthorize(FINANCE)
+    public ArStatementView cancel(@PathVariable Long id, @Valid @RequestBody ArCancelReq req) {
+        return ar.cancel(id, req);
+    }
+
     @PostMapping("/{id}/invoice")
     @PreAuthorize(FINANCE)
     public ArStatementView invoice(@PathVariable Long id, @Valid @RequestBody ArInvoiceReq req) {
@@ -62,6 +72,20 @@ public class ArSettlementController {
     @PreAuthorize(FINANCE)
     public ArStatementView receive(@PathVariable Long id, @Valid @RequestBody ArReceiptReq req) {
         return ar.receive(id, req, null);
+    }
+
+    @GetMapping("/invoice-ledger")
+    @PreAuthorize(READ)
+    public ArInvoiceLedgerView invoiceLedger(@RequestParam(required = false) LocalDate from,
+                                             @RequestParam(required = false) LocalDate to,
+                                             @RequestParam(required = false) Long customerId) {
+        return ar.invoiceLedger(from, to, customerId);
+    }
+
+    @GetMapping("/credit-summary")
+    @PreAuthorize(READ)
+    public List<CustomerCreditRow> creditSummary() {
+        return ar.creditSummary();
     }
 
     @GetMapping("/finance-vouchers")

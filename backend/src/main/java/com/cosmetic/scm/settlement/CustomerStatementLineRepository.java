@@ -16,4 +16,10 @@ public interface CustomerStatementLineRepository extends JpaRepository<CustomerS
             where s.id = l.statementId and s.status <> 'CANCELLED' and l.soLineId in :soLineIds
             """)
     List<Long> billedSoLineIds(@Param("soLineIds") Collection<Long> soLineIds);
+
+    @Query("""
+            select l.salesReturnLineId from CustomerStatementLine l, CustomerStatement s
+            where s.id = l.statementId and s.status <> 'CANCELLED' and l.salesReturnLineId in :returnLineIds
+            """)
+    List<Long> billedReturnLineIds(@Param("returnLineIds") Collection<Long> returnLineIds);
 }

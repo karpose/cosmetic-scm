@@ -5,6 +5,8 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -26,10 +28,15 @@ import com.cosmetic.scm.master.Item;
 import com.cosmetic.scm.master.MasterLookup;
 import com.cosmetic.scm.master.Partner;
 import com.cosmetic.scm.master.PartnerRepository;
+import com.cosmetic.scm.sales.CustomerPriceService;
 import com.cosmetic.scm.sales.SalesOrder;
 import com.cosmetic.scm.sales.SalesOrderRepository;
 import com.cosmetic.scm.sales.SoLine;
 import com.cosmetic.scm.sales.SoLineRepository;
+import com.cosmetic.scm.salesreturn.SalesReturn;
+import com.cosmetic.scm.salesreturn.SalesReturnLine;
+import com.cosmetic.scm.salesreturn.SalesReturnLineRepository;
+import com.cosmetic.scm.salesreturn.SalesReturnRepository;
 import com.cosmetic.scm.security.AppUser;
 import com.cosmetic.scm.security.CurrentUser;
 import com.cosmetic.scm.security.SignatureService;
@@ -48,7 +55,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** 客户应收对账与回款核销服务（AR）：销售出库对账、开票、审批、回款核销与外部财务应收凭证/回款回调。 */
+/** 客户应收对账与回款核销服务（AR）：销售出库对账、退货自动冲减、作废重算、销项台账、授信使用率与外部财务应收凭证/回款回调。 */
 @Service
 public class ArSettlementService {
 
@@ -59,6 +66,9 @@ public class ArSettlementService {
     private final CustomerReceiptRepository receipts;
     private final SalesOrderRepository salesOrders;
     private final SoLineRepository soLines;
+    private final SalesReturnRepository salesReturns;
+    private final SalesReturnLineRepository salesReturnLines;
+    private final CustomerPriceService customerPrices;
     private final PartnerRepository partners;
     private final MasterLookup lookup;
     private final SignatureService signature;
@@ -74,6 +84,9 @@ public class ArSettlementService {
                                CustomerReceiptRepository receipts,
                                SalesOrderRepository salesOrders,
                                SoLineRepository soLines,
+                               SalesReturnRepository salesReturns,
+                               SalesReturnLineRepository salesReturnLines,
+                               CustomerPriceService customerPrices,
                                PartnerRepository partners,
                                MasterLookup lookup,
                                SignatureService signature,
@@ -88,6 +101,9 @@ public class ArSettlementService {
         this.receipts = receipts;
         this.salesOrders = salesOrders;
         this.soLines = soLines;
+        this.salesReturns = salesReturns;
+        this.salesReturnLines = salesReturnLines;
+        this.customerPrices = customerPrices;
         this.partners = partners;
         this.lookup = lookup;
         this.signature = signature;
@@ -115,6 +131,9 @@ public class ArSettlementService {
     public record ArApproveReq(@NotBlank(message = "请输入签批密码") String password) {
     }
 
+    public record ArCancelReq(@NotBlank(message = "请填写作废原因") @Size(max = 300) String reason) {
+    }
+
     public record ArReceiptReq(@NotNull(message = "请选择回款日期") LocalDate receiptDate,
                                @NotNull(message = "请填写回款金额") @Positive(message = "金额要大于 0")
                                @Digits(integer = 14, fraction = 2) BigDecimal amount,
@@ -137,7 +156,8 @@ public class ArSettlementService {
     }
 
     public record ArLineView(String soNo, LocalDate orderDate, String itemCode, String itemName, String unit,
-                             BigDecimal qty, BigDecimal unitPrice, BigDecimal taxRate, BigDecimal amount, BigDecimal taxAmount) {
+                             BigDecimal qty, BigDecimal unitPrice, BigDecimal taxRate, BigDecimal amount, BigDecimal taxAmount,
+                             String returnNo) {
     }
 
     public record ArReceiptView(LocalDate receiptDate, BigDecimal amount, String referenceNo, String extReceiptNo,
@@ -154,6 +174,22 @@ public class ArSettlementService {
                                   String extVoucherNo, LocalDateTime financeSyncedAt, String financeSyncNote,
                                   String createdBy, LocalDateTime createdAt,
                                   List<ArLineView> lines, List<TaxBreakdown> taxBreakdown, List<ArReceiptView> receipts) {
+    }
+
+    public record ArInvoiceLedgerRow(String invoiceMonth, LocalDate invoiceDate, String invoiceNo,
+                                     String customerCode, String customerName, String customerTaxId, String financeCode,
+                                     String statementNo, String statementStatusLabel,
+                                     BigDecimal netAmount, BigDecimal taxAmount, BigDecimal amount, String approvedBy) {
+    }
+
+    public record ArInvoiceLedgerView(int count, BigDecimal totalAmount, BigDecimal totalNetAmount, BigDecimal totalTaxAmount,
+                                      List<ArInvoiceLedgerRow> rows) {
+    }
+
+    public record CustomerCreditRow(Long customerId, String customerCode, String customerName, String channel,
+                                    Integer defaultCreditDays, BigDecimal creditLimit, int openCount,
+                                    BigDecimal openAr, BigDecimal overdueAr, BigDecimal availableCredit,
+                                    BigDecimal utilizationPct, boolean overLimit) {
     }
 
     @Transactional(readOnly = true)
@@ -204,14 +240,21 @@ public class ArSettlementService {
                 .filter(o -> customer.getId().equals(o.getCustomerId())
                         && o.getOrderDate() != null && !o.getOrderDate().isAfter(req.periodTo()))
                 .toList();
-        if (sos.isEmpty()) {
-            throw new BizException("该客户在截止日期前没有已出库的销售订单");
-        }
-        List<SoLine> allLines = soLines.findBySoIdIn(sos.stream().map(SalesOrder::getId).toList());
+        List<SoLine> allLines = sos.isEmpty() ? List.of()
+                : soLines.findBySoIdIn(sos.stream().map(SalesOrder::getId).toList());
         Set<Long> billed = allLines.isEmpty() ? Set.of()
                 : Set.copyOf(statementLines.billedSoLineIds(allLines.stream().map(SoLine::getId).toList()));
         BigDecimal defaultRate = customer.getDefaultTaxRate() != null ? customer.getDefaultTaxRate() : new BigDecimal("13.00");
         Map<Long, BigDecimal> overridePrices = req.itemUnitPrices() == null ? Map.of() : req.itemUnitPrices();
+
+        Map<Long, BigDecimal> lastPriceByItem = new HashMap<>();
+        Map<Long, BigDecimal> lastRateByItem = new HashMap<>();
+        for (SoLine l : allLines) {
+            if (l.getUnitPrice() != null && l.getUnitPrice().signum() > 0) {
+                lastPriceByItem.putIfAbsent(l.getItemId(), l.getUnitPrice());
+                lastRateByItem.putIfAbsent(l.getItemId(), l.getTaxRate() != null ? l.getTaxRate() : defaultRate);
+            }
+        }
 
         List<CustomerStatementLine> toSave = new ArrayList<>();
         BigDecimal goods = BigDecimal.ZERO;
@@ -240,6 +283,54 @@ public class ArSettlementService {
             goods = goods.add(amount);
             tax = tax.add(taxAmt);
         }
+
+        // 客户销售退货自动冲减（负数行，避免重复冲减）
+        List<SalesReturn> rets = salesReturns.findAll().stream()
+                .filter(r -> customer.getId().equals(r.getCustomerId())
+                        && r.getReturnDate() != null && !r.getReturnDate().isAfter(req.periodTo()))
+                .toList();
+        if (!rets.isEmpty()) {
+            Map<Long, SalesReturn> retMap = rets.stream().collect(Collectors.toMap(SalesReturn::getId, r -> r));
+            List<SalesReturnLine> retLines = salesReturnLines.findByReturnIdIn(retMap.keySet());
+            Set<Long> billedRets = retLines.isEmpty() ? Set.of()
+                    : Set.copyOf(statementLines.billedReturnLineIds(retLines.stream().map(SalesReturnLine::getId).toList()));
+            for (SalesReturnLine rl : retLines) {
+                if (billedRets.contains(rl.getId())) {
+                    continue;
+                }
+                BigDecimal price = overridePrices.get(rl.getItemId());
+                if (price == null || price.signum() <= 0) {
+                    price = lastPriceByItem.get(rl.getItemId());
+                }
+                BigDecimal rate = lastRateByItem.getOrDefault(rl.getItemId(), defaultRate);
+                if (price == null || price.signum() <= 0) {
+                    var cp = customerPrices.effectivePrice(customer.getId(), rl.getItemId(),
+                            retMap.get(rl.getReturnId()).getReturnDate()).orElse(null);
+                    if (cp != null) {
+                        price = cp.getUnitPrice();
+                        rate = cp.getTaxRate() != null ? cp.getTaxRate() : defaultRate;
+                    }
+                }
+                if (price == null || price.signum() <= 0) {
+                    continue;
+                }
+                BigDecimal amount = rl.getQty().multiply(price).setScale(2, RoundingMode.HALF_UP).negate();
+                BigDecimal taxAmt = SettlementRule.taxIn(amount, rate);
+                CustomerStatementLine sl = new CustomerStatementLine();
+                sl.setSalesReturnId(rl.getReturnId());
+                sl.setSalesReturnLineId(rl.getId());
+                sl.setItemId(rl.getItemId());
+                sl.setQty(rl.getQty().negate());
+                sl.setUnitPrice(price);
+                sl.setTaxRate(rate);
+                sl.setAmount(amount);
+                sl.setTaxAmount(taxAmt);
+                toSave.add(sl);
+                goods = goods.add(amount);
+                tax = tax.add(taxAmt);
+            }
+        }
+
         if (toSave.isEmpty()) {
             throw new BizException("没有可结算的销售出库行（请确认出库行已维护销售单价或在生成时指定单价）");
         }
@@ -269,6 +360,18 @@ public class ArSettlementService {
             statementLines.save(sl);
         }
         audit.logMoney("生成客户应收对账单", st.getStatementNo(), customer.getName() + ", 合计 " + total.toPlainString());
+        return views(List.of(st)).get(0);
+    }
+
+    @Transactional
+    public ArStatementView cancel(Long id, ArCancelReq req) {
+        CustomerStatement st = locked(id);
+        if (!"DRAFT".equals(st.getStatus()) && !"INVOICED".equals(st.getStatus())) {
+            throw new BizException("应收对账单 " + st.getStatementNo() + " 当前为" + st.statusLabel() + "，不能作废");
+        }
+        st.setStatus("CANCELLED");
+        statements.save(st);
+        audit.logMoney("作废客户应收对账单", st.getStatementNo(), req.reason().trim());
         return views(List.of(st)).get(0);
     }
 
@@ -336,6 +439,73 @@ public class ArSettlementService {
         statements.save(st);
         audit.logMoney("登记客户回款", st.getStatementNo(), req.amount().toPlainString());
         return views(List.of(st)).get(0);
+    }
+
+    @Transactional(readOnly = true)
+    public ArInvoiceLedgerView invoiceLedger(LocalDate from, LocalDate to, Long customerId) {
+        List<CustomerStatement> list = statements.findAllByOrderByIdDesc().stream()
+                .filter(s -> !"CANCELLED".equals(s.getStatus()) && s.getInvoiceNo() != null && s.getInvoiceDate() != null)
+                .filter(s -> customerId == null || customerId.equals(s.getCustomerId()))
+                .filter(s -> from == null || !s.getInvoiceDate().isBefore(from))
+                .filter(s -> to == null || !s.getInvoiceDate().isAfter(to))
+                .toList();
+        List<ArInvoiceLedgerRow> rows = new ArrayList<>();
+        BigDecimal totalAmt = BigDecimal.ZERO;
+        BigDecimal totalTax = BigDecimal.ZERO;
+        for (CustomerStatement s : list) {
+            Partner c = lookup.partner(s.getCustomerId());
+            BigDecimal amt = s.getTotalAmount();
+            BigDecimal taxAmt = s.getTaxAmount();
+            BigDecimal net = amt.subtract(taxAmt);
+            rows.add(new ArInvoiceLedgerRow(
+                    s.getInvoiceDate().toString().substring(0, 7), s.getInvoiceDate(), s.getInvoiceNo(),
+                    c.getCode(), c.getName(), c.getTaxId(), c.getFinanceCode(),
+                    s.getStatementNo(), s.statusLabel(), net, taxAmt, amt, s.getApprovedBy()));
+            totalAmt = totalAmt.add(amt);
+            totalTax = totalTax.add(taxAmt);
+        }
+        return new ArInvoiceLedgerView(rows.size(), totalAmt, totalAmt.subtract(totalTax), totalTax, rows);
+    }
+
+    @Transactional(readOnly = true)
+    public List<CustomerCreditRow> creditSummary() {
+        LocalDate today = time.today();
+        Map<Long, BigDecimal> openMap = new HashMap<>();
+        Map<Long, BigDecimal> overdueMap = new HashMap<>();
+        Map<Long, Integer> countMap = new HashMap<>();
+        for (CustomerStatement s : statements.findAllByOrderByIdDesc()) {
+            if ("PAID".equals(s.getStatus()) || "CANCELLED".equals(s.getStatus())) {
+                continue;
+            }
+            BigDecimal open = s.outstandingAmount();
+            if (open.signum() <= 0) {
+                continue;
+            }
+            openMap.merge(s.getCustomerId(), open, BigDecimal::add);
+            countMap.merge(s.getCustomerId(), 1, Integer::sum);
+            if ("APPROVED".equals(s.getStatus()) && SettlementRule.overdueDays(s.getDueDate(), today, false) > 0) {
+                overdueMap.merge(s.getCustomerId(), open, BigDecimal::add);
+            }
+        }
+        List<CustomerCreditRow> rows = new ArrayList<>();
+        for (Partner c : lookup.partnerMap().values()) {
+            if (c.getKind() != PartnerKind.CUSTOMER) {
+                continue;
+            }
+            BigDecimal limit = c.getCreditLimit();
+            BigDecimal open = openMap.getOrDefault(c.getId(), BigDecimal.ZERO);
+            BigDecimal overdue = overdueMap.getOrDefault(c.getId(), BigDecimal.ZERO);
+            int cnt = countMap.getOrDefault(c.getId(), 0);
+            BigDecimal avail = limit == null ? null : limit.subtract(open);
+            BigDecimal util = (limit == null || limit.signum() <= 0) ? null
+                    : open.multiply(BigDecimal.valueOf(100)).divide(limit, 1, RoundingMode.HALF_UP);
+            boolean over = limit != null && open.compareTo(limit) > 0;
+            rows.add(new CustomerCreditRow(c.getId(), c.getCode(), c.getName(), c.getChannel(),
+                    c.getDefaultCreditDays(), limit, cnt, open, overdue, avail, util, over));
+        }
+        rows.sort(Comparator.comparing(CustomerCreditRow::openAr, Comparator.reverseOrder())
+                .thenComparing(CustomerCreditRow::customerCode));
+        return rows;
     }
 
     @Transactional(readOnly = true)
@@ -416,8 +586,12 @@ public class ArSettlementService {
         List<Long> ids = list.stream().map(CustomerStatement::getId).toList();
         List<CustomerStatementLine> allLines = statementLines.findByStatementIdInOrderById(ids);
         Map<Long, List<CustomerStatementLine>> bySt = allLines.stream().collect(Collectors.groupingBy(CustomerStatementLine::getStatementId));
-        Map<Long, SalesOrder> soMap = salesOrders.findAllById(allLines.stream().map(CustomerStatementLine::getSoId).distinct().toList())
+        List<Long> soIds = allLines.stream().map(CustomerStatementLine::getSoId).filter(java.util.Objects::nonNull).distinct().toList();
+        Map<Long, SalesOrder> soMap = soIds.isEmpty() ? Map.of() : salesOrders.findAllById(soIds)
                 .stream().collect(Collectors.toMap(SalesOrder::getId, o -> o));
+        List<Long> retIds = allLines.stream().map(CustomerStatementLine::getSalesReturnId).filter(java.util.Objects::nonNull).distinct().toList();
+        Map<Long, SalesReturn> retMap = retIds.isEmpty() ? Map.of() : salesReturns.findAllById(retIds)
+                .stream().collect(Collectors.toMap(SalesReturn::getId, r -> r));
         Map<Long, Item> items = lookup.itemMap();
         Map<Long, List<ArReceiptView>> recMap = receipts.findByStatementIdInOrderById(ids).stream()
                 .collect(Collectors.groupingBy(CustomerReceipt::getStatementId,
@@ -432,11 +606,13 @@ public class ArSettlementService {
             long overdueDays = SettlementRule.overdueDays(s.getDueDate(), today, done);
             FinanceSyncStatus sync = s.effectiveFinanceSyncStatus();
             List<ArLineView> lineViews = sLines.stream().map(l -> {
-                SalesOrder so = soMap.get(l.getSoId());
+                SalesOrder so = l.getSoId() == null ? null : soMap.get(l.getSoId());
+                SalesReturn sr = l.getSalesReturnId() == null ? null : retMap.get(l.getSalesReturnId());
                 Item i = items.get(l.getItemId());
-                return new ArLineView(so == null ? "-" : so.getSoNo(), so == null ? null : so.getOrderDate(),
+                return new ArLineView(so == null ? "-" : so.getSoNo(),
+                        so != null ? so.getOrderDate() : (sr == null ? null : sr.getReturnDate()),
                         i.getCode(), i.getName(), i.getUnit(), l.getQty(), l.getUnitPrice(), l.getTaxRate(),
-                        l.getAmount(), l.getTaxAmount());
+                        l.getAmount(), l.getTaxAmount(), sr == null ? null : sr.getReturnNo());
             }).toList();
             return new ArStatementView(s.getId(), s.getStatementNo(), s.getCustomerId(), c.getCode(), c.getName(),
                     c.getTaxId(), c.getFinanceCode(), s.getPeriodTo(), s.getCreditDays(), s.getDueDate(),

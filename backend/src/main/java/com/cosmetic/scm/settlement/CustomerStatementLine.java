@@ -29,6 +29,10 @@ public class CustomerStatementLine {
 
     private Long soLineId;
 
+    private Long salesReturnId;
+
+    private Long salesReturnLineId;
+
     private Long itemId;
 
     private BigDecimal qty;
