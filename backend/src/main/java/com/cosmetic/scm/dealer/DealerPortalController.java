@@ -9,6 +9,9 @@ import com.cosmetic.scm.dealer.DealerService.CatalogItem;
 import com.cosmetic.scm.dealer.DealerService.OrderReq;
 import com.cosmetic.scm.dealer.DealerService.OrderView;
 import com.cosmetic.scm.dealer.DealerService.RecallNoticeView;
+import com.cosmetic.scm.security.CurrentUser;
+import com.cosmetic.scm.settlement.ArSettlementService;
+import com.cosmetic.scm.settlement.ArSettlementService.ArStatementView;
 
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,6 +27,8 @@ import org.springframework.web.bind.annotation.RestController;
 public class DealerPortalController {
 
     private final DealerService dealer;
+    private final ArSettlementService arSettlement;
+    private final CurrentUser currentUser;
 
     @GetMapping("/catalog")
     public List<CatalogItem> catalog() {
@@ -53,5 +58,10 @@ public class DealerPortalController {
     @PostMapping("/recalls/{noticeId}/ack")
     public List<RecallNoticeView> acknowledge(@PathVariable Long noticeId) {
         return dealer.acknowledgeRecall(noticeId);
+    }
+
+    @GetMapping("/ar-statements")
+    public List<ArStatementView> arStatements() {
+        return arSettlement.listForCustomer(currentUser.portalPartnerId());
     }
 }

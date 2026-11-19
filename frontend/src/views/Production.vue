@@ -44,12 +44,14 @@
           <template #default="{ row }">
             <BatchNo :no="row.outBatchNo" />
             <span v-if="row.yieldPct" class="muted small"> 收率 {{ row.yieldPct }}%</span>
+            <div v-if="row.moType === 'OEM' && row.processingUnitFee != null" class="muted small mono">加工费 ¥{{ fmtQty(row.processingUnitFee) }}（{{ fmtQty(row.processingTaxRate ?? 0) }}%）</div>
           </template>
         </el-table-column>
-        <el-table-column label="" width="240" fixed="right">
+        <el-table-column label="" width="280" fixed="right">
           <template #default="{ row }">
             <div class="toolbar">
               <el-button size="small" @click="openDetail(row)">明细</el-button>
+              <el-button v-if="row.moType === 'OEM' && row.status !== 'CANCELLED' && canSetFee" size="small" text @click="openFee(row)">加工费</el-button>
               <el-button v-if="row.status === 'PLANNED' && canOperate" size="small" @click="openDetail(row, 'issue')">发料</el-button>
               <el-button v-if="row.status === 'ISSUED' && canOperate" size="small" type="primary" @click="openComplete(row)">完工入库</el-button>
               <el-button v-if="(row.status === 'PLANNED' || row.status === 'ISSUED') && canCancel" size="small" text @click="cancelOrder(row)">取消</el-button>
@@ -189,6 +191,19 @@
       <template #footer>
         <el-button @click="done.visible = false">取消</el-button>
         <el-button type="primary" :loading="done.saving" @click="submitComplete">确认入库</el-button>
+      </template>
+    </el-dialog>
+    <!-- 委外加工费 -->
+    <el-dialog v-model="fee.visible" :title="`委外加工费：${fee.mo?.moNo || ''}`" width="440px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <p class="muted small" style="margin-top:0">按实际产出数量 × 含税单位加工费参与委外对账结算。</p>
+        <el-form-item label="含税单位加工费（元）"><el-input-number v-model="fee.unitFee" :min="0" :precision="4" :controls="false" style="width:100%" /></el-form-item>
+        <el-form-item label="税率 %"><el-input-number v-model="fee.taxRate" :min="0" :max="100" :precision="2" :controls="false" style="width:100%" /></el-form-item>
+        <el-form-item label="修改原因（改已有加工费时必填）"><el-input v-model="fee.reason" maxlength="300" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="fee.visible = false">取消</el-button>
+        <el-button type="primary" :loading="fee.saving" @click="submitFee">保存加工费</el-button>
       </template>
     </el-dialog>
   </div>
@@ -366,6 +381,29 @@ async function submitComplete() {
   } finally {
     done.saving = false
   }
+}
+
+const canSetFee = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE'))
+const fee = reactive({ visible: false, saving: false, mo: null, unitFee: undefined, taxRate: 13, reason: '' })
+function openFee(row) {
+  Object.assign(fee, {
+    visible: true, saving: false, mo: row,
+    unitFee: row.processingUnitFee != null ? Number(row.processingUnitFee) : undefined,
+    taxRate: row.processingTaxRate != null ? Number(row.processingTaxRate) : 13,
+    reason: ''
+  })
+}
+async function submitFee() {
+  if (!(fee.unitFee > 0)) return ElMessage.warning('请填写大于 0 的单位加工费')
+  fee.saving = true
+  try {
+    await http.post(`/mfg-orders/${fee.mo.id}/processing-fee`, {
+      processingUnitFee: fee.unitFee, processingTaxRate: fee.taxRate, reason: fee.reason
+    })
+    ElMessage.success('委外加工费已保存')
+    fee.visible = false
+    load()
+  } finally { fee.saving = false }
 }
 
 onMounted(() => Promise.all([load(), rd.load()]))

@@ -84,6 +84,7 @@ public class SettlementService {
     private final BatchRepository batches;
     private final PurchaseOrderRepository orders;
     private final PoLineRepository poLines;
+    private final com.cosmetic.scm.production.MfgOrderRepository mfgOrders;
     private final PoShipmentRepository shipments;
     private final PartnerRepository partners;
     private final MasterLookup lookup;
@@ -115,7 +116,11 @@ public class SettlementService {
                                  @DecimalMin(value = "0", message = "税率不能为负") @DecimalMax(value = "100", message = "税率不能超过 100")
                                  @Digits(integer = 3, fraction = 2, message = "税率最多 2 位小数") BigDecimal taxRate,
                                  @NotNull(message = "请填写发票金额") @Digits(integer = 14, fraction = 2, message = "发票金额最多 2 位小数") BigDecimal amount,
-                                 @Size(max = 300) String note) {
+                                 @Size(max = 300) String note,
+                                 @Size(max = 40) String sellerTaxId) {
+        public InvoiceItemReq(String invoiceNo, String invoiceType, LocalDate invoiceDate, BigDecimal taxRate, BigDecimal amount, String note) {
+            this(invoiceNo, invoiceType, invoiceDate, taxRate, amount, note, null);
+        }
     }
 
     public record BatchInvoiceReq(@NotEmpty(message = "请至少填写一张发票") @Valid List<InvoiceItemReq> invoices) {
@@ -138,6 +143,11 @@ public class SettlementService {
     public record PayReq(@NotNull(message = "请选择日期") LocalDate payDate,
                          @NotNull(message = "请填写金额") @Positive(message = "金额要大于 0") @Digits(integer = 14, fraction = 2, message = "金额最多 2 位小数") BigDecimal amount,
                          @Size(max = 60) String referenceNo) {
+    }
+
+    public record FinanceSyncReq(@NotNull(message = "请选择财务同步状态") com.cosmetic.scm.domain.FinanceSyncStatus syncStatus,
+                                 @Size(max = 60) String extVoucherNo,
+                                 @Size(max = 300) String note) {
     }
 
     /** returnNo 不为空的是冲减行：结算后才退的货，数量和金额是负数。 */
@@ -168,7 +178,22 @@ public class SettlementService {
                               String extPaymentNo, String createdBy, LocalDateTime createdAt) {
     }
 
-    public record StatementView(Long id, String statementNo, Long supplierId, String supplierName, LocalDate periodTo,
+    public record InvoiceLedgerRow(Long id, String invoiceNo, String invoiceType, String invoiceTypeLabel, LocalDate invoiceDate,
+                                   String invoiceMonth, BigDecimal taxRate, BigDecimal amount, BigDecimal netAmount, BigDecimal taxAmount,
+                                   String note, String statementNo, StatementStatus statementStatus, String statementStatusLabel,
+                                   Long supplierId, String supplierCode, String supplierName, String supplierTaxId, String financeCode,
+                                   String createdBy, LocalDateTime createdAt) {
+    }
+
+    public record InvoiceMonthSummary(String month, int invoiceCount, BigDecimal amount, BigDecimal netAmount, BigDecimal taxAmount) {
+    }
+
+    public record InvoiceLedgerView(List<InvoiceLedgerRow> rows, List<InvoiceMonthSummary> byMonth, List<TaxBreakdown> byTaxRate,
+                                    BigDecimal totalAmount, BigDecimal totalNetAmount, BigDecimal totalTaxAmount, int count) {
+    }
+
+    public record StatementView(Long id, String statementNo, String statementType, String statementTypeLabel,
+                                Long supplierId, String supplierName, String supplierTaxId, LocalDate periodTo,
                                 int creditDays, LocalDate dueDate, boolean overdue, long overdueDays,
                                 StatementStatus status, String statusLabel, BigDecimal goodsAmount, BigDecimal taxAmount,
                                 BigDecimal adjustment, String adjustmentNote, BigDecimal totalAmount, String disputeNote,
@@ -184,7 +209,7 @@ public class SettlementService {
     }
 
     /** ret 不为空的是冲减行。settled 是这一行顺带算过的退货，要标记，下次不再算。 */
-    private record Priced(Batch batch, Long poLineId, String poNo, BigDecimal qty, BigDecimal unitPrice, BigDecimal taxRate, BigDecimal amount, BigDecimal tax,
+    private record Priced(Batch batch, Long poLineId, Long mfgOrderId, String poNo, BigDecimal qty, BigDecimal unitPrice, BigDecimal taxRate, BigDecimal amount, BigDecimal tax,
                           SupplierReturn ret, List<SupplierReturn> settled) {
     }
 
@@ -197,8 +222,18 @@ public class SettlementService {
 
     @Transactional(readOnly = true)
     public List<StatementView> list(String statementNo, FollowUp followUp) {
+        return list(statementNo, followUp, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<StatementView> list(String statementNo, FollowUp followUp, com.cosmetic.scm.domain.FinanceSyncStatus financeSyncStatus) {
         if (statementNo != null && !statementNo.isBlank()) {
             return views(statements.findByStatementNo(statementNo.trim()).stream().toList());
+        }
+        if (financeSyncStatus != null) {
+            List<SupplierStatement> syncedList = statements.findByStatusInAndFinanceSyncStatusInOrderById(
+                    List.of(StatementStatus.APPROVED, StatementStatus.PAID), List.of(financeSyncStatus));
+            return views(syncedList);
         }
         if (followUp == null) {
             return views(statements.findTop300ByOrderByIdDesc());
@@ -227,6 +262,67 @@ public class SettlementService {
         return views(statements.findAllByOrderByIdDesc());
     }
 
+    /** 进项发票台账：汇总所有有效（未退回且所属对账单未作废）的蓝字/红字发票，支持按日期、供应商、票种筛选及按月/税率汇总。 */
+    @Transactional(readOnly = true)
+    public InvoiceLedgerView invoiceLedger(LocalDate from, LocalDate to, Long supplierId, String invoiceType) {
+        String typeFilter = invoiceType == null || invoiceType.isBlank() ? null : invoiceType.trim().toUpperCase();
+        List<SupplierStatementInvoice> all = statementInvoices.findByInvoiceReturnIdIsNullOrderByInvoiceDateDescIdDesc();
+        if (all.isEmpty()) {
+            return new InvoiceLedgerView(List.of(), List.of(), List.of(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, 0);
+        }
+        Map<Long, SupplierStatement> stMap = new HashMap<>();
+        statements.findAllById(all.stream().map(SupplierStatementInvoice::getStatementId).distinct().toList())
+                .forEach(s -> stMap.put(s.getId(), s));
+        Map<Long, Partner> pm = lookup.partnerMap();
+        List<InvoiceLedgerRow> rows = new ArrayList<>();
+        List<TaxLineInput> taxInputs = new ArrayList<>();
+        Map<String, List<InvoiceLedgerRow>> byMonthMap = new LinkedHashMap<>();
+        for (SupplierStatementInvoice inv : all) {
+            SupplierStatement st = stMap.get(inv.getStatementId());
+            if (st == null || st.getStatus() == StatementStatus.CANCELLED) {
+                continue;
+            }
+            if (from != null && inv.getInvoiceDate() != null && inv.getInvoiceDate().isBefore(from)) {
+                continue;
+            }
+            if (to != null && inv.getInvoiceDate() != null && inv.getInvoiceDate().isAfter(to)) {
+                continue;
+            }
+            if (supplierId != null && !supplierId.equals(inv.getSupplierId())) {
+                continue;
+            }
+            String type = "RED".equalsIgnoreCase(inv.getInvoiceType()) ? "RED" : "BLUE";
+            if (typeFilter != null && !typeFilter.equals(type)) {
+                continue;
+            }
+            Partner p = pm.get(inv.getSupplierId());
+            BigDecimal amt = inv.getAmount() == null ? BigDecimal.ZERO : inv.getAmount();
+            BigDecimal tax = inv.getTaxAmount() == null ? BigDecimal.ZERO : inv.getTaxAmount();
+            BigDecimal net = amt.subtract(tax);
+            String month = inv.getInvoiceDate() == null ? "-" : inv.getInvoiceDate().toString().substring(0, 7);
+            InvoiceLedgerRow r = new InvoiceLedgerRow(
+                    inv.getId(), inv.getInvoiceNo(), type, "RED".equals(type) ? "红字发票" : "蓝字发票",
+                    inv.getInvoiceDate(), month, inv.getTaxRate(), amt, net, tax, inv.getNote(),
+                    st.getStatementNo(), st.getStatus(), st.statusLabel(),
+                    inv.getSupplierId(), p == null ? null : p.getCode(), p == null ? "-" : p.getName(),
+                    p == null ? null : p.getTaxId(), p == null ? null : p.getFinanceCode(),
+                    inv.getCreatedBy(), inv.getCreatedAt());
+            rows.add(r);
+            taxInputs.add(new TaxLineInput(inv.getTaxRate(), amt, tax));
+            byMonthMap.computeIfAbsent(month, ignored -> new ArrayList<>()).add(r);
+        }
+        List<InvoiceMonthSummary> byMonth = byMonthMap.entrySet().stream()
+                .map(e -> {
+                    BigDecimal mAmt = e.getValue().stream().map(InvoiceLedgerRow::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
+                    BigDecimal mTax = e.getValue().stream().map(InvoiceLedgerRow::taxAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+                    return new InvoiceMonthSummary(e.getKey(), e.getValue().size(), mAmt, mAmt.subtract(mTax), mTax);
+                }).toList();
+        BigDecimal totalAmt = rows.stream().map(InvoiceLedgerRow::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalTax = rows.stream().map(InvoiceLedgerRow::taxAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        return new InvoiceLedgerView(rows, byMonth, SettlementRule.breakdownByTaxRate(taxInputs),
+                totalAmt, totalAmt.subtract(totalTax), totalTax, rows.size());
+    }
+
     @Transactional(readOnly = true)
     public PreviewView preview(Long supplierId, LocalDate periodTo) {
         Unbilled u = unbilled(supplierId, periodTo);
@@ -249,9 +345,9 @@ public class SettlementService {
      */
     @Transactional
     public StatementView create(CreateReq req) {
-        Partner s = partners.lockById(req.supplierId()).orElseThrow(() -> BizException.notFound("供应商"));
-        if (s.getKind() != PartnerKind.SUPPLIER) {
-            throw new BizException(s.getName() + " 不是物料供应商");
+        Partner s = partners.lockById(req.supplierId()).orElseThrow(() -> BizException.notFound("往来单位"));
+        if (s.getKind() != PartnerKind.SUPPLIER && s.getKind() != PartnerKind.OEM) {
+            throw new BizException(s.getName() + " 不是物料供应商或受托生产企业");
         }
         LocalDate today = time.today();
         if (req.periodTo().isAfter(today)) {
@@ -284,6 +380,7 @@ public class SettlementService {
         }
         SupplierStatement st = new SupplierStatement();
         st.setStatementNo(docNo.next("ST", today));
+        st.setStatementType(s.getKind() == PartnerKind.OEM ? "OUTSOURCING" : "PURCHASE");
         st.setSupplierId(s.getId());
         st.setPeriodTo(req.periodTo());
         st.setCreditDays(creditDays);
@@ -303,6 +400,7 @@ public class SettlementService {
             l.setStatementId(st.getId());
             l.setBatchId(p.batch().getId());
             l.setPoLineId(p.poLineId());
+            l.setMfgOrderId(p.mfgOrderId());
             l.setQty(p.qty());
             l.setUnitPrice(p.unitPrice());
             l.setTaxRate(p.taxRate());
@@ -477,6 +575,51 @@ public class SettlementService {
         return views(List.of(st)).get(0);
     }
 
+    /** 财务手工维护外部凭证号或重置同步状态（以便外部财务系统重新拉取）。 */
+    @Transactional
+    public StatementView updateFinanceSync(Long id, FinanceSyncReq req) {
+        SupplierStatement st = locked(id);
+        if (st.getStatus() != StatementStatus.APPROVED && st.getStatus() != StatementStatus.PAID) {
+            throw new BizException("对账单 " + st.getStatementNo() + " 当前为" + st.getStatus().getLabel() + "，仅已审批或已结清的对账单可维护财务凭证状态");
+        }
+        String extNo = req.extVoucherNo() == null || req.extVoucherNo().isBlank() ? null : req.extVoucherNo().trim();
+        String note = req.note() == null || req.note().isBlank() ? null : req.note().trim();
+        if (req.syncStatus() == com.cosmetic.scm.domain.FinanceSyncStatus.SYNCED && extNo == null) {
+            throw new BizException("标记已制证时请填写外部财务凭证号");
+        }
+        st.setFinanceSyncStatus(req.syncStatus());
+        if (req.syncStatus() == com.cosmetic.scm.domain.FinanceSyncStatus.PENDING) {
+            st.setExtVoucherNo(extNo);
+            st.setFinanceSyncedAt(null);
+        } else {
+            if (extNo != null) {
+                st.setExtVoucherNo(extNo);
+            }
+            st.setFinanceSyncedAt(time.now());
+        }
+        st.setFinanceSyncNote(note);
+        statements.save(st);
+        String detail = req.syncStatus().getLabel() + (extNo != null ? " · 凭证 " + extNo : "") + (note != null ? " · " + note : "");
+        audit.logMoney("维护财务凭证状态", st.getStatementNo(), name(st) + ", " + detail);
+        return views(List.of(st)).get(0);
+    }
+
+    /** 委外加工费对账单内部代确认（受托厂线下核对后由采购/管理员确认，进入登记发票阶段）。 */
+    @Transactional
+    public StatementView internalConfirm(Long id) {
+        SupplierStatement st = locked(id);
+        require(st, StatementStatus.SENT, "确认");
+        if (!"OUTSOURCING".equals(st.effectiveStatementType())) {
+            throw new BizException("采购对账单请由供应商在门户确认");
+        }
+        st.setStatus(StatementStatus.CONFIRMED);
+        st.setConfirmedBy(currentUser.usernameOrSystem());
+        st.setConfirmedAt(time.now());
+        statements.save(st);
+        audit.logMoney("确认委外对账单", st.getStatementNo(), name(st) + ", 合计 " + st.getTotalAmount().toPlainString());
+        return views(List.of(st)).get(0);
+    }
+
     // ---------- 供应商门户 ----------
 
     @Transactional(readOnly = true)
@@ -538,7 +681,14 @@ public class SettlementService {
         } catch (IllegalArgumentException ex) {
             throw new BizException(ex.getMessage());
         }
+        Partner supplier = lookup.partner(st.getSupplierId());
+        String expectedTaxId = supplier.getTaxId() == null || supplier.getTaxId().isBlank() ? null : supplier.getTaxId().trim();
         for (InvoiceItemReq item : items) {
+            if (item.sellerTaxId() != null && !item.sellerTaxId().isBlank() && expectedTaxId != null
+                    && !expectedTaxId.equalsIgnoreCase(item.sellerTaxId().trim())) {
+                throw new BizException("发票 " + item.invoiceNo().trim() + " 销方税号（" + item.sellerTaxId().trim()
+                        + "）与供应商档案税号（" + expectedTaxId + "）不一致，请核对发票或更新往来单位财务档案");
+            }
             String no = item.invoiceNo().trim();
             List<String> owners = statements.findInvoiceOwners(st.getSupplierId(), st.getId(), StatementStatus.CANCELLED,
                     SettlementRule.invoiceKey(no), PageRequest.of(0, 1));
@@ -653,6 +803,10 @@ public class SettlementService {
      * 已结算的批次后来又退货的，按当时的单价和税率生成冲减行。
      */
     private Unbilled unbilled(Long supplierId, LocalDate periodTo) {
+        Partner partner = lookup.partner(supplierId);
+        if (partner.getKind() == PartnerKind.OEM) {
+            return unbilledOutsourcing(supplierId, periodTo);
+        }
         LocalDateTime before = periodTo.plusDays(1).atStartOfDay();
         List<Batch> list = batches.findByPartnerIdAndSourceTypeAndStatusAndCreatedAtLessThanOrderById(supplierId, SourceType.PO, BatchStatus.RELEASED, before);
         Set<Long> billed = list.isEmpty() ? Set.of() : Set.copyOf(statementLines.billedBatchIds(list.stream().map(Batch::getId).toList(), StatementStatus.CANCELLED));
@@ -685,7 +839,7 @@ public class SettlementService {
                 }
                 BigDecimal rate = taxOf(line);
                 BigDecimal amount = qty.multiply(line.getUnitPrice()).setScale(2, RoundingMode.HALF_UP);
-                priced.add(new Priced(b, line.getId(), po.getPoNo(), qty, line.getUnitPrice(), rate, amount, SettlementRule.taxIn(amount, rate), null, settled));
+                priced.add(new Priced(b, line.getId(), null, po.getPoNo(), qty, line.getUnitPrice(), rate, amount, SettlementRule.taxIn(amount, rate), null, settled));
             }
         }
         // 冲减：批次已经结算过，之后才退的货
@@ -700,9 +854,46 @@ public class SettlementService {
                 Batch b = bm.get(e.getKey());
                 for (SupplierReturn r : unsettled.get(e.getKey())) {
                     BigDecimal amount = r.getQty().multiply(l.getUnitPrice()).setScale(2, RoundingMode.HALF_UP).negate();
-                    priced.add(new Priced(b, l.getPoLineId(), b.getSourceNo(), r.getQty().negate(), l.getUnitPrice(), l.getTaxRate(), amount, SettlementRule.taxIn(amount, l.getTaxRate()), r, List.of(r)));
+                    priced.add(new Priced(b, l.getPoLineId(), null, b.getSourceNo(), r.getQty().negate(), l.getUnitPrice(), l.getTaxRate(), amount, SettlementRule.taxIn(amount, l.getTaxRate()), r, List.of(r)));
                 }
             }
+        }
+        return new Unbilled(priced, missing);
+    }
+
+    /** 委外加工费可结算单据：受托生产单已完工、产出成品批次已上市放行、尚未进入有效对账单。 */
+    private Unbilled unbilledOutsourcing(Long factoryId, LocalDate periodTo) {
+        LocalDateTime before = periodTo.plusDays(1).atStartOfDay();
+        List<com.cosmetic.scm.production.MfgOrder> mos = mfgOrders
+                .findByFactoryIdAndMoTypeAndStatusAndCompletedAtLessThanOrderById(
+                        factoryId, com.cosmetic.scm.domain.MoType.OEM, com.cosmetic.scm.domain.MoStatus.COMPLETED, before);
+        if (mos.isEmpty()) {
+            return new Unbilled(List.of(), List.of());
+        }
+        Set<Long> billedMos = Set.copyOf(statementLines.billedMfgOrderIds(
+                mos.stream().map(com.cosmetic.scm.production.MfgOrder::getId).toList(), StatementStatus.CANCELLED));
+        Map<Long, Batch> bm = new HashMap<>();
+        batches.findAllById(mos.stream().map(com.cosmetic.scm.production.MfgOrder::getOutBatchId)
+                .filter(Objects::nonNull).toList()).forEach(b -> bm.put(b.getId(), b));
+        Map<Long, Item> items = lookup.itemMap();
+        List<Priced> priced = new ArrayList<>();
+        List<MissingPrice> missing = new ArrayList<>();
+        for (com.cosmetic.scm.production.MfgOrder mo : mos) {
+            if (billedMos.contains(mo.getId()) || mo.getOutBatchId() == null || mo.getActualQty() == null || mo.getActualQty().signum() <= 0) {
+                continue;
+            }
+            Batch outBatch = bm.get(mo.getOutBatchId());
+            if (outBatch == null || outBatch.getStatus() != BatchStatus.RELEASED) {
+                continue;
+            }
+            if (mo.getProcessingUnitFee() == null) {
+                missing.add(new MissingPrice(outBatch.getBatchNo(), mo.getMoNo(), items.get(mo.getFgItemId()).getName()));
+                continue;
+            }
+            BigDecimal rate = mo.getProcessingTaxRate() == null ? BigDecimal.ZERO : mo.getProcessingTaxRate();
+            BigDecimal amount = mo.getActualQty().multiply(mo.getProcessingUnitFee()).setScale(2, RoundingMode.HALF_UP);
+            priced.add(new Priced(outBatch, null, mo.getId(), mo.getMoNo(), mo.getActualQty(),
+                    mo.getProcessingUnitFee(), rate, amount, SettlementRule.taxIn(amount, rate), null, List.of()));
         }
         return new Unbilled(priced, missing);
     }
@@ -751,7 +942,9 @@ public class SettlementService {
             boolean settledOrCancelled = s.getStatus() == StatementStatus.PAID || s.getStatus() == StatementStatus.CANCELLED;
             long overdueDays = SettlementRule.overdueDays(dueDate, today, settledOrCancelled);
             com.cosmetic.scm.domain.FinanceSyncStatus syncStatus = s.effectiveFinanceSyncStatus();
-            return new StatementView(s.getId(), s.getStatementNo(), s.getSupplierId(), lookup.partner(s.getSupplierId()).getName(), s.getPeriodTo(),
+            Partner sp = lookup.partner(s.getSupplierId());
+            return new StatementView(s.getId(), s.getStatementNo(), s.effectiveStatementType(), s.statementTypeLabel(),
+                    s.getSupplierId(), sp.getName(), sp.getTaxId(), s.getPeriodTo(),
                     s.getCreditDays(), dueDate, overdueDays > 0, overdueDays,
                     s.getStatus(), s.statusLabel(), s.getGoodsAmount(), s.getTaxAmount(), s.getAdjustment(), s.getAdjustmentNote(), s.getTotalAmount(), s.getDisputeNote(),
                     s.getCancelReason(), s.getConfirmedBy(), s.getConfirmedAt(), s.getInvoiceNo(), s.getInvoiceDate(), s.getInvoiceAmount(),

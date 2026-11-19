@@ -34,6 +34,9 @@ public class SupplierStatement {
 
     private String statementNo;
 
+    /** PURCHASE=采购来料货款对账，OUTSOURCING=委外加工费对账。 */
+    private String statementType = "PURCHASE";
+
     private Long supplierId;
 
     private LocalDate periodTo;
@@ -93,6 +96,14 @@ public class SupplierStatement {
 
     public FinanceSyncStatus effectiveFinanceSyncStatus() {
         return financeSyncStatus != null ? financeSyncStatus : FinanceSyncStatus.PENDING;
+    }
+
+    public String effectiveStatementType() {
+        return statementType != null && !statementType.isBlank() ? statementType : "PURCHASE";
+    }
+
+    public String statementTypeLabel() {
+        return "OUTSOURCING".equals(effectiveStatementType()) ? "委外加工费" : "采购货款";
     }
 
     /** V28 之前的单据没有单独存到期日。 */

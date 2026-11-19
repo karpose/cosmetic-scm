@@ -16,6 +16,7 @@
     <el-tabs v-model="tab" class="seg">
       <el-tab-pane label="订货" name="order" />
       <el-tab-pane :label="`我的订单（${orders.length}）`" name="orders" />
+      <el-tab-pane :label="`应收对账${unpaidArCount ? `（${unpaidArCount} 待结）` : ''}`" name="ar" />
       <el-tab-pane :label="`召回通知${pendingRecalls.length ? `（${pendingRecalls.length} 待确认）` : ''}`" name="recalls" />
     </el-tabs>
 
@@ -68,6 +69,27 @@
       </el-table>
     </el-card>
 
+    <!-- 应收对账 -->
+    <el-card v-else-if="tab === 'ar'" shadow="never" body-style="padding:0">
+      <el-table :data="arStatements" v-loading="loader.loading.value" empty-text="还没有应收对账单">
+        <el-table-column label="对账单号" width="170">
+          <template #default="{ row }">
+            <span class="mono">{{ row.statementNo }}</span>
+            <div class="muted small mono">截止 {{ row.periodTo }} · 账期 {{ row.creditDays }}天</div>
+            <div class="small mono" :class="{ late: row.overdue }">到期 {{ row.dueDate }} <el-tag v-if="row.overdue" size="small" type="danger" disable-transitions>逾期 {{ row.overdueDays }} 天</el-tag></div>
+          </template>
+        </el-table-column>
+        <el-table-column label="应收合计" width="115" align="right"><template #default="{ row }"><span class="mono">¥{{ fmtMoney(row.totalAmount) }}</span></template></el-table-column>
+        <el-table-column label="已付 / 待付" width="160" align="right">
+          <template #default="{ row }"><span class="mono">¥{{ fmtMoney(row.receivedAmount) }} / ¥{{ fmtMoney(row.unreceived) }}</span></template>
+        </el-table-column>
+        <el-table-column label="销项发票" min-width="150">
+          <template #default="{ row }"><span class="mono">{{ row.invoiceNo || '-' }}</span><div v-if="row.invoiceDate" class="muted small mono">{{ row.invoiceDate }}</div></template>
+        </el-table-column>
+        <el-table-column label="状态" width="110"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /></template></el-table-column>
+      </el-table>
+    </el-card>
+
     <!-- 召回通知 -->
     <div v-else class="recalls">
       <el-empty v-if="!recalls.length" description="没有召回通知" />
@@ -96,7 +118,7 @@ import http from '../api'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
-import { fmtQty, fmtTime, startOfBusinessDay } from '../utils/format'
+import { fmtMoney, fmtQty, fmtTime, startOfBusinessDay } from '../utils/format'
 import { useLoader } from '../utils/loader'
 
 const auth = useAuth()
@@ -104,6 +126,7 @@ const tab = ref('order')
 const narrow = window.innerWidth < 640
 const catalog = ref([])
 const orders = ref([])
+const arStatements = ref([])
 const recalls = ref([])
 const cart = reactive({})
 const requestedDate = ref(null)
@@ -112,15 +135,22 @@ const saving = ref(false)
 const startOfToday = startOfBusinessDay()
 
 const loader = useLoader(async () => {
-  const [c, o, r] = await Promise.all([http.get('/portal/dealer/catalog'), http.get('/portal/dealer/orders'), http.get('/portal/dealer/recalls')])
+  const [c, o, a, r] = await Promise.all([
+    http.get('/portal/dealer/catalog'),
+    http.get('/portal/dealer/orders'),
+    http.get('/portal/dealer/ar-statements'),
+    http.get('/portal/dealer/recalls')
+  ])
   catalog.value = c
   orders.value = o
+  arStatements.value = a
   recalls.value = r
   if (r.some((x) => !x.notifiedAt)) tab.value = 'recalls'
 })
 const load = () => loader.run()
 
 const pendingRecalls = computed(() => recalls.value.filter((r) => !r.notifiedAt))
+const unpaidArCount = computed(() => arStatements.value.filter((a) => a.status !== 'PAID' && a.status !== 'CANCELLED').length)
 const cartLines = computed(() => Object.entries(cart).filter(([, q]) => q > 0).map(([itemId, qty]) => ({ itemId: Number(itemId), qty })))
 const cartTotal = computed(() => cartLines.value.reduce((a, l) => a + l.qty, 0))
 

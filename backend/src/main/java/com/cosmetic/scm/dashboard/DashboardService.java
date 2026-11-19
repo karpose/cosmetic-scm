@@ -68,6 +68,7 @@ public class DashboardService {
     private final com.cosmetic.scm.plm.StabilityService stability;
     private final com.cosmetic.scm.plm.StabilityChangeService stabilityChanges;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
+    private final com.cosmetic.scm.sourcing.SupplierPriceService supplierPrices;
     private final com.cosmetic.scm.plm.NpdService npd;
     private final com.cosmetic.scm.plm.DocControlService docControl;
     private final com.cosmetic.scm.plm.ChangeService changeControl;
@@ -76,6 +77,7 @@ public class DashboardService {
     private final com.cosmetic.scm.supplierreturn.SupplierReturnRepository supplierReturns;
     private final SupplierReturnService supplierReturnService;
     private final com.cosmetic.scm.settlement.SupplierStatementRepository statementRepo;
+    private final com.cosmetic.scm.settlement.CustomerStatementRepository customerStatementRepo;
     private final BatchRepository batches;
     private final MfgOrderRepository mfgOrders;
     private final SalesOrderRepository salesOrders;
@@ -274,6 +276,14 @@ public class DashboardService {
         for (com.cosmetic.scm.quality.QualitySpecService.SpecView s : qualitySpecs.waitingSignature()) {
             todos.add(new Todo("SPEC_REVIEW", "质量标准待签批", "warn", s.itemName(), s.specNo(), "V" + s.versionNo() + "：" + s.changeNote(), "/specs"));
         }
+        if (com.cosmetic.scm.security.PriceAccess.allowed()) {
+            for (com.cosmetic.scm.sourcing.SupplierPriceService.PriceView p : supplierPrices.expiringSoon(15)) {
+                boolean expired = p.validTo().isBefore(today);
+                todos.add(new Todo("PRICE_EXPIRING", expired ? "供应商协议价已过期" : "供应商协议价即将到期",
+                        expired ? "bad" : "warn", p.supplierName() + " · " + p.itemName(),
+                        p.supplierCode() + "/" + p.itemCode(), "有效期至 " + p.validTo(), "/purchase"));
+            }
+        }
         // 稳定性：错过取样时间这个点就补不回来了，提前 7 天提醒
         for (com.cosmetic.scm.plm.StabilityService.DuePull p : stability.due(today.plusDays(7))) {
             boolean late = p.dueDate().isBefore(today);
@@ -327,6 +337,24 @@ public class DashboardService {
         for (SupplierStatement s : statementRepo.findByStatusAndInvoiceReviewVersionGreaterThanOrderById(StatementStatus.CONFIRMED, 0)) {
             todos.add(new Todo("STATEMENT_INVOICE_FIX", "对账发票待更正", "warn", lookup.partner(s.getSupplierId()).getName(), s.getStatementNo(),
                     "请跟进供应商重提发票，或由采购代登记", "/settlement?no=" + s.getStatementNo()));
+        }
+        for (com.cosmetic.scm.settlement.CustomerStatement ar : customerStatementRepo.findByStatusInOrderById(List.of("APPROVED"))) {
+            if (ar.outstandingAmount().signum() <= 0) {
+                continue;
+            }
+            String cname = lookup.partner(ar.getCustomerId()).getName();
+            LocalDate due = ar.getDueDate();
+            long lateDays = SettlementRule.overdueDays(due, today, false);
+            if (lateDays > 0) {
+                todos.add(new Todo("AR_COLLECT", "客户回款已逾期", "bad", cname, ar.getStatementNo(),
+                        "到期日 " + due + "，已逾期 " + lateDays + " 天", "/settlement?tab=ar"));
+            } else if (today.equals(due)) {
+                todos.add(new Todo("AR_COLLECT", "客户回款今日到期", "warn", cname, ar.getStatementNo(),
+                        "请核对并登记客户回款", "/settlement?tab=ar"));
+            } else if (due != null && !due.isAfter(today.plusDays(7))) {
+                todos.add(new Todo("AR_COLLECT", "客户回款即将到期", "info", cname, ar.getStatementNo(),
+                        "到期日 " + due, "/settlement?tab=ar"));
+            }
         }
         long channelFailed = integration.failedCount();
         if (channelFailed > 0) {

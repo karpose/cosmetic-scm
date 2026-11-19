@@ -27,4 +27,8 @@ public class SoLine {
     private Long itemId;
 
     private BigDecimal qty;
+
+    private BigDecimal unitPrice;
+
+    private BigDecimal taxRate;
 }

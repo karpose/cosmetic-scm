@@ -134,7 +134,7 @@ public class FinanceIntegrationService {
                               BigDecimal amount, BigDecimal taxAmount, String returnNo) {
     }
 
-    public record ApVoucherView(String statementNo, String voucherDirection, StatementStatus status, String statusLabel,
+    public record ApVoucherView(String statementNo, String statementType, String voucherDirection, StatementStatus status, String statusLabel,
                                 LocalDate periodTo, int creditDays, LocalDate dueDate,
                                 String approvedBy, LocalDateTime approvedAt,
                                 FinanceSyncStatus financeSyncStatus, String financeSyncLabel,
@@ -302,6 +302,7 @@ public class FinanceIntegrationService {
             }).toList();
             return new ApVoucherView(
                     s.getStatementNo(),
+                    s.effectiveStatementType(),
                     s.getTotalAmount().signum() < 0 ? "RED_CREDIT" : "PAYABLE",
                     s.getStatus(), s.statusLabel(),
                     s.getPeriodTo(), s.getCreditDays(), s.effectiveDueDate(),

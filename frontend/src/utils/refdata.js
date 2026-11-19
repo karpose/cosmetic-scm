@@ -29,6 +29,8 @@ export function useRefData() {
   const materials = computed(() => s.items.filter((i) => i.itemType !== 'FG' && i.active))
   const finished = computed(() => s.items.filter((i) => i.itemType === 'FG' && i.active))
   const suppliers = computed(() => s.partners.filter((p) => p.kind === 'SUPPLIER'))
+  const oems = computed(() => s.partners.filter((p) => p.kind === 'OEM'))
+  const settlementPartners = computed(() => s.partners.filter((p) => p.kind === 'SUPPLIER' || p.kind === 'OEM'))
   const factories = computed(() => s.partners.filter((p) => p.kind === 'OEM' || p.kind === 'OWN_FACTORY'))
   const customers = computed(() => s.partners.filter((p) => p.kind === 'CUSTOMER'))
   const ownWarehouses = computed(() => s.warehouses.filter((w) => w.kind === 'OWN'))
@@ -37,5 +39,5 @@ export function useRefData() {
   const returnWarehouses = computed(() => s.warehouses.filter((w) => w.kind === 'RETURN'))
   const item = (id) => s.items.find((i) => i.id === id)
 
-  return { s, load, ready, materials, finished, suppliers, factories, customers, ownWarehouses, stockWarehouses, returnWarehouses, item }
+  return { s, load, ready, materials, finished, suppliers, oems, settlementPartners, factories, customers, ownWarehouses, stockWarehouses, returnWarehouses, item }
 }

@@ -68,6 +68,7 @@ public class RfqService {
     private final RfqSupplierRepository invited;
     private final RfqQuoteRepository quotes;
     private final PurchaseService purchase;
+    private final SupplierPriceService supplierPrices;
     private final PurchaseOrderRepository orders;
     private final PoLineRepository poLines;
     private final MasterLookup lookup;
@@ -101,7 +102,11 @@ public class RfqService {
     public record AwardReq(@NotEmpty(message = "至少定标一行") @Valid List<AwardLineReq> lines,
                            @Size(max = 300) String reason,
                            @NotBlank(message = "请输入签批密码") String password,
-                           @Positive Integer roundNo) {
+                           @Positive Integer roundNo,
+                           Boolean saveToPriceList) {
+        public AwardReq(List<AwardLineReq> lines, String reason, String password, Integer roundNo) {
+            this(lines, reason, password, roundNo, Boolean.FALSE);
+        }
     }
 
     public record QuoteLineReq(@NotNull Long rfqLineId,
@@ -371,6 +376,12 @@ public class RfqService {
                 q.setAwarded(true);
                 q.setPoId(po.id());
                 quotes.save(q);
+                if (Boolean.TRUE.equals(req.saveToPriceList())) {
+                    RfqLine rl = lineMap.get(q.getRfqLineId());
+                    supplierPrices.create(new SupplierPriceService.PriceReq(
+                            e.getKey(), rl.getItemId(), q.getUnitPrice(), q.getTaxRate(),
+                            today, q.getValidUntil(), "询价定标沉淀：" + r.getRfqNo()));
+                }
             }
         }
         r.setStatus(RfqStatus.AWARDED);

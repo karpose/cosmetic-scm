@@ -155,6 +155,139 @@
           </el-table>
         </el-card>
       </div>
+
+      <!-- 供应商绩效考核台账 -->
+      <el-card shadow="never" body-style="padding:0 0 8px">
+        <template #header>
+          <div class="ch">
+            <b>供应商绩效考核台账</b>
+            <div class="toolbar">
+              <el-date-picker v-model="perf.from" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" clearable style="width:140px" @change="loadPerf" />
+              <el-date-picker v-model="perf.to" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" clearable style="width:140px" @change="loadPerf" />
+              <el-button size="small" @click="loadPerf">查询</el-button>
+              <ExportButton report="supplier-performance" />
+            </div>
+          </div>
+        </template>
+        <el-table :data="perf.rows" v-loading="perf.loading" size="small" empty-text="暂无供应商绩效数据">
+          <el-table-column label="供应商" min-width="160">
+            <template #default="{ row }">
+              {{ row.supplierName }}
+              <div class="muted small mono">{{ row.supplierCode }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="准入" width="80">
+            <template #default="{ row }"><el-tag size="small" :type="row.qualified ? 'success' : 'info'" disable-transitions>{{ row.qualified ? '合格' : '未批准' }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="来料批数" width="95" align="right">
+            <template #default="{ row }"><span class="mono">{{ row.releasedBatches }}/{{ row.totalBatches }}</span></template>
+          </el-table-column>
+          <el-table-column label="合格率" width="85" align="right">
+            <template #default="{ row }"><span class="mono">{{ row.passRatePct == null ? '—' : `${row.passRatePct}%` }}</span></template>
+          </el-table-column>
+          <el-table-column label="准时交货率" width="95" align="right">
+            <template #default="{ row }"><span class="mono">{{ row.onTimeRatePct == null ? '—' : `${row.onTimeRatePct}%` }}</span></template>
+          </el-table-column>
+          <el-table-column label="异议 / 退供" width="95" align="right">
+            <template #default="{ row }"><span class="mono">{{ row.receiptDisputeCount }} / {{ row.returnCount }}</span></template>
+          </el-table-column>
+          <el-table-column label="有效协议价" width="95" align="right">
+            <template #default="{ row }"><span class="mono">{{ row.activeContractCount }}</span></template>
+          </el-table-column>
+          <el-table-column label="综合得分" width="90" align="right">
+            <template #default="{ row }"><b class="mono">{{ row.score ?? '—' }}</b></template>
+          </el-table-column>
+          <el-table-column label="等级" width="75" align="center">
+            <template #default="{ row }">
+              <el-tag v-if="row.grade && row.grade !== '-'" size="small" :type="row.grade === 'A' ? 'success' : row.grade === 'B' ? 'primary' : row.grade === 'C' ? 'warning' : 'danger'" disable-transitions>{{ row.grade }}</el-tag>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+
+      <!-- 生产批次实际成本核算（仅价格权限角色可见） -->
+      <el-card v-if="canPrice" shadow="never" body-style="padding:0 0 8px">
+        <template #header>
+          <div class="ch">
+            <b>生产批次实际成本核算</b>
+            <div class="toolbar">
+              <el-button size="small" @click="loadBatchCosts">刷新</el-button>
+              <ExportButton report="batch-costs" />
+            </div>
+          </div>
+        </template>
+        <el-table :data="bc.rows" v-loading="bc.loading" size="small" empty-text="暂无已完工生产单成本数据">
+          <el-table-column label="生产单 / 批号" width="165">
+            <template #default="{ row }"><span class="mono">{{ row.moNo }}</span><div class="muted small mono">{{ row.outBatchNo }}</div></template>
+          </el-table-column>
+          <el-table-column label="成品 / 生产方" min-width="170">
+            <template #default="{ row }">{{ row.fgName }}<div class="muted small">{{ row.moTypeLabel }} · {{ row.factoryName }}</div></template>
+          </el-table-column>
+          <el-table-column label="实际产量" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.actualQty) }}</span></template></el-table-column>
+          <el-table-column label="领料成本" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.materialCost) }}</span></template></el-table-column>
+          <el-table-column label="委外加工费" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.processingCost) }}</span></template></el-table-column>
+          <el-table-column label="实际单位成本" width="115" align="right"><template #default="{ row }"><b class="mono">{{ fmtMoney(row.actualUnitCost) }}</b></template></el-table-column>
+          <el-table-column label="标准成本" width="100" align="right"><template #default="{ row }"><span class="mono">{{ row.stdUnitCost != null ? fmtMoney(row.stdUnitCost) : '—' }}</span></template></el-table-column>
+          <el-table-column label="偏差" width="90" align="right">
+            <template #default="{ row }">
+              <span v-if="row.variancePct != null" class="mono" :class="{ bad: Number(row.variancePct) > 5 }">{{ Number(row.variancePct) > 0 ? '+' : '' }}{{ row.variancePct }}%</span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+
+      <!-- 毛利分析与现金流预测（仅价格权限角色可见） -->
+      <div v-if="canPrice" class="grid2">
+        <el-card shadow="never" body-style="padding:0 0 8px">
+          <template #header>
+            <div class="ch">
+              <b>毛利分析（近 180 天）</b>
+              <div class="toolbar">
+                <el-radio-group v-model="mg.dim" size="small">
+                  <el-radio-button value="item">按成品</el-radio-button>
+                  <el-radio-button value="customer">按客户</el-radio-button>
+                </el-radio-group>
+                <ExportButton report="margins" />
+              </div>
+            </div>
+            <div v-if="mg.data" class="muted small" style="margin-top:6px">
+              销售额 <b class="mono">¥{{ fmtMoney(mg.data.totalRevenue) }}</b> · 成本 <b class="mono">¥{{ fmtMoney(mg.data.totalCogs) }}</b> · 毛利 <b class="mono">¥{{ fmtMoney(mg.data.totalGrossProfit) }}</b>（{{ mg.data.grossMarginPct ?? '—' }}%）
+            </div>
+          </template>
+          <el-table :data="mg.dim === 'item' ? (mg.data?.byItem || []) : (mg.data?.byCustomer || [])" v-loading="mg.loading" size="small" empty-text="暂无带价销售出库数据">
+            <el-table-column :label="mg.dim === 'item' ? '成品' : '客户'" min-width="140"><template #default="{ row }">{{ row.name }}<div class="muted small mono">{{ row.code }}</div></template></el-table-column>
+            <el-table-column label="销售额" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.revenue) }}</span></template></el-table-column>
+            <el-table-column label="毛利" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.grossProfit) }}</span></template></el-table-column>
+            <el-table-column label="毛利率" width="80" align="right"><template #default="{ row }"><b class="mono">{{ row.grossMarginPct != null ? `${row.grossMarginPct}%` : '—' }}</b></template></el-table-column>
+          </el-table>
+        </el-card>
+
+        <el-card shadow="never" body-style="padding:0 0 8px">
+          <template #header>
+            <div class="ch">
+              <b>现金流预测 & 库存损益</b>
+              <div class="toolbar">
+                <ExportButton report="cashflow-forecast" />
+                <ExportButton report="inventory-variance" label="导出损益" />
+              </div>
+            </div>
+            <div v-if="cf.data" class="muted small" style="margin-top:6px">
+              预计流入 <b class="mono">¥{{ fmtMoney(cf.data.totalInflow) }}</b> · 预计流出 <b class="mono">¥{{ fmtMoney(cf.data.totalOutflow) }}</b> · 净现金流 <b class="mono" :class="{ bad: Number(cf.data.netCashFlow) < 0 }">¥{{ fmtMoney(cf.data.netCashFlow) }}</b>
+            </div>
+            <div v-if="iv.data" class="muted small" style="margin-top:4px">
+              近 180 天库存损益：盘盈 ¥{{ fmtMoney(iv.data.gainValue) }} · 盘亏 ¥{{ fmtMoney(iv.data.lossValue) }} · 报废 ¥{{ fmtMoney(iv.data.scrapValue) }} · 净额 <b class="mono" :class="{ bad: Number(iv.data.netValue) < 0 }">¥{{ fmtMoney(iv.data.netValue) }}</b>
+            </div>
+          </template>
+          <el-table :data="cf.data?.buckets || []" v-loading="cf.loading" size="small">
+            <el-table-column prop="label" label="区间" width="100" />
+            <el-table-column label="预计回款" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.inflow) }}</span></template></el-table-column>
+            <el-table-column label="预计付款" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.outflow) }}</span></template></el-table-column>
+            <el-table-column label="净现金流" min-width="110" align="right"><template #default="{ row }"><b class="mono" :class="{ bad: Number(row.netCashFlow) < 0 }">{{ fmtMoney(row.netCashFlow) }}</b></template></el-table-column>
+          </el-table>
+        </el-card>
+      </div>
     </template>
 
     <div v-show="tip.show" class="tip glass" :style="{ left: `${tip.x}px`, top: `${tip.y}px` }">{{ tip.text }}</div>
@@ -166,8 +299,10 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { CircleCheckFilled, WarningFilled } from '@element-plus/icons-vue'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
+import ExportButton from '../components/ExportButton.vue'
 import LoadError from '../components/LoadError.vue'
 import ShelfBar from '../components/ShelfBar.vue'
+import { useAuth } from '../stores/auth'
 import { fmtMoney, fmtQty, fmtTime } from '../utils/format'
 import { useLoader } from '../utils/loader'
 
@@ -232,7 +367,46 @@ function tipMove(e) {
 }
 const tipOff = () => { tip.show = false }
 
-onMounted(load)
+const perf = reactive({ loading: false, from: null, to: null, rows: [] })
+async function loadPerf() {
+  perf.loading = true
+  try {
+    perf.rows = await http.get('/analytics/supplier-performance', {
+      params: { from: perf.from || undefined, to: perf.to || undefined }
+    })
+  } finally {
+    perf.loading = false
+  }
+}
+
+const auth = useAuth()
+const canPrice = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE'))
+const bc = reactive({ loading: false, rows: [] })
+async function loadBatchCosts() {
+  if (!canPrice.value) return
+  bc.loading = true
+  try { bc.rows = await http.get('/analytics/batch-costs') } finally { bc.loading = false }
+}
+
+const mg = reactive({ loading: false, dim: 'item', data: null })
+const cf = reactive({ loading: false, data: null })
+const iv = reactive({ loading: false, data: null })
+async function loadFinanceInsights() {
+  if (!canPrice.value) return
+  mg.loading = cf.loading = iv.loading = true
+  try {
+    const [m, c, v] = await Promise.all([
+      http.get('/analytics/margins'),
+      http.get('/analytics/cashflow-forecast'),
+      http.get('/analytics/inventory-variance')
+    ])
+    mg.data = m; cf.data = c; iv.data = v
+  } finally {
+    mg.loading = cf.loading = iv.loading = false
+  }
+}
+
+onMounted(() => { load(); loadPerf(); loadBatchCosts(); loadFinanceInsights() })
 </script>
 
 <style scoped>

@@ -8,6 +8,11 @@ import lombok.RequiredArgsConstructor;
 import com.cosmetic.scm.oemportal.OemPortalService.OemOrderView;
 import com.cosmetic.scm.oemportal.OemPortalService.ProgressReq;
 import com.cosmetic.scm.oemportal.OemPortalService.ReportReq;
+import com.cosmetic.scm.settlement.SettlementService;
+import com.cosmetic.scm.settlement.SettlementService.BatchInvoiceReq;
+import com.cosmetic.scm.settlement.SettlementService.DisputeReq;
+import com.cosmetic.scm.settlement.SettlementService.InvoiceReq;
+import com.cosmetic.scm.settlement.SettlementService.StatementView;
 
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -23,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class OemPortalController {
 
     private final OemPortalService portal;
+    private final SettlementService settlement;
 
     @GetMapping("/orders")
     public List<OemOrderView> orders() {
@@ -37,5 +43,30 @@ public class OemPortalController {
     @PostMapping("/orders/{id}/report")
     public OemOrderView report(@PathVariable Long id, @Valid @RequestBody ReportReq req) {
         return portal.submitReport(id, req);
+    }
+
+    @GetMapping("/statements")
+    public List<StatementView> statements() {
+        return settlement.myStatements();
+    }
+
+    @PostMapping("/statements/{id}/confirm")
+    public StatementView confirmStatement(@PathVariable Long id) {
+        return settlement.confirm(id);
+    }
+
+    @PostMapping("/statements/{id}/dispute")
+    public StatementView disputeStatement(@PathVariable Long id, @Valid @RequestBody DisputeReq req) {
+        return settlement.dispute(id, req);
+    }
+
+    @PostMapping("/statements/{id}/invoice")
+    public StatementView invoiceStatement(@PathVariable Long id, @Valid @RequestBody InvoiceReq req) {
+        return settlement.myInvoice(id, req);
+    }
+
+    @PostMapping("/statements/{id}/invoices")
+    public StatementView invoicesStatement(@PathVariable Long id, @Valid @RequestBody BatchInvoiceReq req) {
+        return settlement.myInvoices(id, req);
     }
 }

@@ -52,6 +52,13 @@ public class ReportService {
     private final RetainService retains;
     private final PurchaseService purchases;
     private final com.cosmetic.scm.settlement.SettlementService settlement;
+    private final com.cosmetic.scm.settlement.ArSettlementService arSettlement;
+    private final com.cosmetic.scm.settlement.AgingAnalysisService agingAnalysis;
+    private final com.cosmetic.scm.sourcing.SupplierPriceService supplierPrices;
+    private final com.cosmetic.scm.sales.CustomerPriceService customerPrices;
+    private final com.cosmetic.scm.analytics.SupplierPerformanceService supplierPerformance;
+    private final com.cosmetic.scm.analytics.BatchCostingService batchCosting;
+    private final com.cosmetic.scm.analytics.FinanceInsightsService financeInsights;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnService supplierReturns;
     private final EquipmentService equipment;
     private final AuditService audit;
@@ -78,6 +85,19 @@ public class ReportService {
         m.put("equipment", this::equipmentList);
         m.put("audit", () -> auditLogs(from, to));
         m.put("statements", this::statements);
+        m.put("ar-statements", this::arStatements);
+        m.put("ar-invoice-ledger", () -> arInvoiceLedger(from, to));
+        m.put("customer-credit", this::customerCreditSummary);
+        m.put("ap-aging", () -> agingTable(agingAnalysis.apAging(), "应付账龄分析"));
+        m.put("ar-aging", () -> agingTable(agingAnalysis.arAging(), "应收账龄分析"));
+        m.put("invoice-ledger", () -> invoiceLedger(from, to));
+        m.put("supplier-prices", this::supplierPriceList);
+        m.put("customer-prices", this::customerPriceList);
+        m.put("batch-costs", this::batchCosts);
+        m.put("margins", () -> marginReport(from, to));
+        m.put("cashflow-forecast", this::cashFlowReport);
+        m.put("inventory-variance", () -> inventoryVarianceReport(from, to));
+        m.put("supplier-performance", () -> supplierPerformanceReport(from, to));
         m.put("supplier-returns", this::supplierReturns);
         m.put("stability", this::stabilityResults);
         m.put("inspections", () -> inspectionResults(from, to));
@@ -86,9 +106,12 @@ public class ReportService {
 
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to) {
-        // 金额只给采购和财务看，其它报表所有内部岗位都能导
-        if ("statements".equals(key) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
-            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出对账单");
+        // 金额只给采购和财务看，应收报表给销售、财务和管理员看，其它报表所有内部岗位都能导
+        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "batch-costs".equals(key) || "margins".equals(key) || "cashflow-forecast".equals(key) || "inventory-variance".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
+            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与成本数据");
+        }
+        if (("ar-statements".equals(key) || "ar-aging".equals(key) || "ar-invoice-ledger".equals(key) || "customer-credit".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
+            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出客户应收对账数据");
         }
         Supplier<Table> source = registry(from, to).get(key);
         if (source == null) {
@@ -115,6 +138,12 @@ public class ReportService {
                 "承运商", "运单号", "物流登记人", "物流登记时间", "签收登记人", "签收登记时间", "签收备注", "签收来源", "实际签收日期", "回单或凭证编号"), rows);
     }
 
+    private static boolean arReportAllowed() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream().anyMatch(a ->
+                "ROLE_ADMIN".equals(a.getAuthority()) || "ROLE_SALES".equals(a.getAuthority()) || "ROLE_FINANCE".equals(a.getAuthority()));
+    }
+
     private Table statements() {
         List<List<Object>> rows = new ArrayList<>();
         settlement.listAll().forEach(t -> rows.add(row(t.statementNo(), t.supplierName(), t.periodTo(), t.statusLabel(), t.goodsAmount(), t.taxAmount(), t.adjustment(), t.adjustmentNote(),
@@ -122,6 +151,127 @@ public class ReportService {
                 t.creditDays(), t.dueDate(), t.overdueDays(), t.totalAmount().signum() < 0 ? "供应商退款" : "付款")));
         return new Table("对账单", List.of("对账单", "供应商", "对账截止", "状态", "含税货款", "其中税额", "调整", "调整原因", "合计", "发票号", "发票日期",
                 "已结（退款为负）", "未结（退款为负）", "制单", "审批", "账期（天）", "到期日", "逾期天数", "收付方向"), rows);
+    }
+
+    private Table arStatements() {
+        List<List<Object>> rows = new ArrayList<>();
+        arSettlement.listAll().forEach(t -> rows.add(row(t.statementNo(), t.customerCode(), t.customerName(), t.customerTaxId(),
+                t.periodTo(), t.creditDays(), t.dueDate(), t.overdueDays(), t.statusLabel(),
+                t.goodsAmount(), t.taxAmount(), t.adjustment(), t.totalAmount(), t.receivedAmount(), t.unreceived(),
+                t.invoiceNo(), t.invoiceDate(), t.extVoucherNo(), t.createdBy(), t.approvedBy())));
+        return new Table("客户应收对账单", List.of("应收单号", "客户编码", "客户名称", "客户税号",
+                "对账截止", "账期（天）", "到期日", "逾期天数", "状态",
+                "含税货款", "销项税额", "调整金额", "应收合计", "已回款", "待回款",
+                "销项发票号", "开票日期", "外部凭证号", "制单", "审批"), rows);
+    }
+
+    private Table agingTable(com.cosmetic.scm.settlement.AgingAnalysisService.AgingReport rep, String title) {
+        List<List<Object>> rows = new ArrayList<>();
+        rep.rows().forEach(r -> rows.add(row(r.partnerCode(), r.partnerName(), r.openCount(),
+                r.notDue(), r.days1to30(), r.days31to60(), r.days61to90(), r.over90(), r.total())));
+        rows.add(row("合计", "统计日 " + rep.asOf(), rep.rows().stream().mapToInt(r -> r.openCount()).sum(),
+                rep.notDue(), rep.days1to30(), rep.days31to60(), rep.days61to90(), rep.over90(), rep.total()));
+        return new Table(title, List.of("往来单位编码", "往来单位名称", "未结单数",
+                "未到期", "逾期 1-30 天", "逾期 31-60 天", "逾期 61-90 天", "逾期 90 天以上", "未结合计"), rows);
+    }
+
+    private Table arInvoiceLedger(LocalDate from, LocalDate to) {
+        List<List<Object>> rows = new ArrayList<>();
+        arSettlement.invoiceLedger(from, to, null).rows().forEach(r -> rows.add(row(
+                r.invoiceMonth(), r.invoiceDate(), r.invoiceNo(), r.customerCode(), r.customerName(),
+                r.customerTaxId(), r.financeCode(), r.statementNo(), r.statementStatusLabel(),
+                r.netAmount(), r.taxAmount(), r.amount(), r.approvedBy())));
+        return new Table("销项发票台账", List.of("开票月份", "开票日期", "销项发票号", "客户编码", "客户名称",
+                "客户税号", "财务客商编码", "关联应收单", "状态", "不含税金额", "销项税额", "含税合计", "审批人"), rows);
+    }
+
+    private Table customerCreditSummary() {
+        List<List<Object>> rows = new ArrayList<>();
+        arSettlement.creditSummary().forEach(r -> rows.add(row(
+                r.customerCode(), r.customerName(), r.channel(), r.defaultCreditDays(),
+                r.creditLimit(), r.openCount(), r.openAr(), r.overdueAr(), r.availableCredit(),
+                r.utilizationPct(), r.overLimit() ? "超额" : "正常")));
+        return new Table("客户授信使用概览", List.of("客户编码", "客户名称", "渠道", "默认账期（天）",
+                "授信额度", "未结单数", "未结应收", "逾期应收", "剩余可用额度", "使用率（%）", "状态"), rows);
+    }
+
+    private Table batchCosts() {
+        List<List<Object>> rows = new ArrayList<>();
+        batchCosting.report().forEach(r -> rows.add(row(
+                r.moNo(), r.moTypeLabel(), r.factoryName(), r.fgCode(), r.fgName(), r.outBatchNo(),
+                r.actualQty(), r.materialCost(), r.processingCost(), r.totalCost(),
+                r.actualUnitCost(), r.stdUnitCost(), r.variancePct(), r.completedAt())));
+        return new Table("生产批次实际成本", List.of("生产单号", "类型", "生产方", "成品编码", "成品名称", "产出批号",
+                "实际产量", "领料成本", "委外加工费", "总成本", "实际单位成本", "标准单位成本", "偏差（%）", "完工时间"), rows);
+    }
+
+    private Table marginReport(LocalDate from, LocalDate to) {
+        var rep = financeInsights.margins(from, to);
+        List<List<Object>> rows = new ArrayList<>();
+        rep.byItem().forEach(r -> rows.add(row("按成品", r.code(), r.name(), r.qty(), r.revenue(), r.cogs(), r.grossProfit(), r.grossMarginPct())));
+        rep.byCustomer().forEach(r -> rows.add(row("按客户", r.code(), r.name(), r.qty(), r.revenue(), r.cogs(), r.grossProfit(), r.grossMarginPct())));
+        rows.add(row("汇总", rep.from() + "~" + rep.to(), "全部", null, rep.totalRevenue(), rep.totalCogs(), rep.totalGrossProfit(), rep.grossMarginPct()));
+        return new Table("毛利分析", List.of("维度", "编码", "名称", "出库数量", "含税销售额", "销售成本", "毛利额", "毛利率（%）"), rows);
+    }
+
+    private Table cashFlowReport() {
+        var rep = financeInsights.cashFlowForecast();
+        List<List<Object>> rows = new ArrayList<>();
+        rep.buckets().forEach(b -> rows.add(row(b.label(), b.inflow(), b.outflow(), b.netCashFlow(), b.arCount(), b.apCount())));
+        rows.add(row("合计（" + rep.asOf() + "）", rep.totalInflow(), rep.totalOutflow(), rep.netCashFlow(), null, null));
+        return new Table("现金流预测", List.of("时间区间", "预计回款/流入", "预计付款/流出", "预计净现金流", "涉及应收单", "涉及应付单"), rows);
+    }
+
+    private Table inventoryVarianceReport(LocalDate from, LocalDate to) {
+        var rep = financeInsights.inventoryVariance(from, to);
+        List<List<Object>> rows = new ArrayList<>();
+        rep.rows().forEach(r -> rows.add(row(r.docNo(), r.docTypeLabel(), r.createdAt(), r.itemCode(), r.itemName(), r.unit(), r.qty(), r.unitCost(), r.amount(), r.reason())));
+        rows.add(row("汇总", "盘盈/盘亏/报废", null, rep.from() + "~" + rep.to(), "盘盈 " + rep.gainValue() + " / 盘亏 " + rep.lossValue() + " / 报废 " + rep.scrapValue(), null, null, null, rep.netValue(), null));
+        return new Table("库存盘点报废损益", List.of("作业单号", "类型", "时间", "物料编码", "物料名称", "单位", "差异数量", "单位成本", "损益金额", "原因"), rows);
+    }
+
+    private Table invoiceLedger(LocalDate from, LocalDate to) {
+        List<List<Object>> rows = new ArrayList<>();
+        settlement.invoiceLedger(from, to, null, null).rows().forEach(r -> rows.add(row(
+                r.invoiceMonth(), r.invoiceDate(), r.invoiceNo(), r.invoiceTypeLabel(),
+                r.supplierName(), r.supplierTaxId(), r.financeCode(), r.statementNo(), r.statementStatusLabel(),
+                r.taxRate(), r.netAmount(), r.taxAmount(), r.amount(), r.note(), r.createdBy())));
+        return new Table("进项发票台账", List.of("开票月份", "开票日期", "发票号", "票种",
+                "供应商", "销方税号", "财务客商编码", "关联对账单", "对账单状态",
+                "税率（%）", "不含税金额", "税额", "含税金额", "备注", "登记人"), rows);
+    }
+
+    private Table supplierPriceList() {
+        List<List<Object>> rows = new ArrayList<>();
+        supplierPrices.list(null, null, false).forEach(p -> rows.add(row(
+                p.supplierCode(), p.supplierName(), p.itemCode(), p.itemName(), p.unit(),
+                p.unitPrice(), p.taxRate(), p.validFrom(), p.validTo(),
+                !p.active() ? "已停用" : p.effectiveToday() ? "生效中" : "未生效/过期", p.note(), p.updatedBy(), p.updatedAt())));
+        return new Table("供应商协议价", List.of("供应商编码", "供应商", "物料编码", "物料名称", "单位",
+                "含税协议价", "税率（%）", "生效日期", "失效日期", "状态", "备注", "维护人", "更新时间"), rows);
+    }
+
+    private Table customerPriceList() {
+        List<List<Object>> rows = new ArrayList<>();
+        customerPrices.list(null, null, false).forEach(p -> rows.add(row(
+                p.customerCode(), p.customerName(), p.itemCode(), p.itemName(), p.unit(),
+                p.unitPrice(), p.taxRate(), p.validFrom(), p.validTo(),
+                !p.active() ? "已停用" : p.effectiveToday() ? "生效中" : "未生效/过期", p.note(), p.updatedBy(), p.updatedAt())));
+        return new Table("客户协议价", List.of("客户编码", "客户名称", "成品编码", "成品名称", "单位",
+                "含税供货价", "税率（%）", "生效日期", "失效日期", "状态", "备注", "维护人", "更新时间"), rows);
+    }
+
+    private Table supplierPerformanceReport(LocalDate from, LocalDate to) {
+        List<List<Object>> rows = new ArrayList<>();
+        supplierPerformance.report(from, to).forEach(r -> rows.add(row(
+                r.supplierCode(), r.supplierName(), r.qualified() ? "合格" : "未批准",
+                r.totalBatches(), r.releasedBatches(), r.rejectedBatches(), r.passRatePct(),
+                r.deliveredPoCount(), r.onTimePoCount(), r.onTimeRatePct(),
+                r.receiptDisputeCount(), r.returnCount(), r.activeContractCount(), r.score(), r.grade())));
+        return new Table("供应商绩效考核", List.of("供应商编码", "供应商名称", "准入状态",
+                "来料总批数", "放行批数", "不合格批数", "来料合格率（%）",
+                "已交付PO数", "准时PO数", "准时交货率（%）",
+                "收货异议次数", "退供次数", "有效协议价数", "综合得分", "考核等级"), rows);
     }
 
     private Table stock() {

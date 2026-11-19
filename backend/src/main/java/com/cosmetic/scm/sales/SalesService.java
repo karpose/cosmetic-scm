@@ -2,6 +2,7 @@ package com.cosmetic.scm.sales;
 
 import com.cosmetic.scm.common.Qty;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -13,6 +14,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -53,12 +57,21 @@ public class SalesService {
     private final BatchRepository batches;
     private final InventoryService inventory;
     private final MasterLookup lookup;
+    private final CustomerPriceService customerPrices;
+    private final com.cosmetic.scm.settlement.CustomerStatementRepository customerStatements;
     private final DocNoService docNo;
     private final AuditService audit;
     private final TimeProvider time;
     private final CurrentUser currentUser;
 
-    public record SoLineReq(@NotNull Long itemId, @NotNull @Positive @Qty BigDecimal qty) {
+    private static final Set<String> SALES_PRICE_ROLES = Set.of("ROLE_ADMIN", "ROLE_SALES", "ROLE_FINANCE");
+
+    public record SoLineReq(@NotNull Long itemId, @NotNull @Positive @Qty BigDecimal qty,
+                            @Positive(message = "含税单价要大于 0") @Digits(integer = 14, fraction = 4) BigDecimal unitPrice,
+                            @DecimalMin("0") @DecimalMax("100") @Digits(integer = 3, fraction = 2) BigDecimal taxRate) {
+        public SoLineReq(Long itemId, BigDecimal qty) {
+            this(itemId, qty, null, null);
+        }
     }
 
     public record SoReq(@NotNull Long customerId, @NotNull Long warehouseId,
@@ -75,7 +88,8 @@ public class SalesService {
     public record PreviewView(String customerName, int minShelfPct, boolean fulfilled, List<AllocLineView> lines) {
     }
 
-    public record SoLineView(Long itemId, String itemCode, String itemName, BigDecimal qty) {
+    public record SoLineView(Long itemId, String itemCode, String itemName, BigDecimal qty,
+                             BigDecimal unitPrice, BigDecimal taxRate, BigDecimal amount) {
     }
 
     public record AllocView(Long batchId, String batchNo, Long itemId, String itemName, BigDecimal qty) {
@@ -118,11 +132,17 @@ public class SalesService {
         Map<Long, Item> im = lookup.itemMap();
         Map<Long, Partner> pm = lookup.partnerMap();
         Map<Long, Warehouse> wm = lookup.warehouseMap();
+        boolean showPrice = salesPriceAllowed();
         return list.stream().map(so -> {
             Partner c = pm.get(so.getCustomerId());
             Warehouse w = wm.get(so.getWarehouseId());
             List<SoLineView> lv = lm.getOrDefault(so.getId(), List.of()).stream()
-                    .map(l -> new SoLineView(l.getItemId(), im.get(l.getItemId()).getCode(), im.get(l.getItemId()).getName(), l.getQty()))
+                    .map(l -> {
+                        BigDecimal up = showPrice ? l.getUnitPrice() : null;
+                        BigDecimal tr = showPrice ? l.getTaxRate() : null;
+                        BigDecimal amt = up != null ? l.getQty().multiply(up).setScale(2, RoundingMode.HALF_UP) : null;
+                        return new SoLineView(l.getItemId(), im.get(l.getItemId()).getCode(), im.get(l.getItemId()).getName(), l.getQty(), up, tr, amt);
+                    })
                     .toList();
             List<AllocView> av = am.getOrDefault(so.getId(), List.of()).stream()
                     .map(a -> new AllocView(a.getBatchId(), bm.get(a.getBatchId()).getBatchNo(), a.getItemId(),
@@ -155,6 +175,34 @@ public class SalesService {
             throw new BizException("可分配库存不足：" + String.join("；", shortages));
         }
         LocalDate today = time.today();
+        BigDecimal defaultRate = plan.customer().getDefaultTaxRate() != null
+                ? plan.customer().getDefaultTaxRate() : new BigDecimal("13.00");
+        boolean canPrice = salesPriceAllowed();
+        BigDecimal[] resolvedPrices = new BigDecimal[plan.items().size()];
+        BigDecimal[] resolvedRates = new BigDecimal[plan.items().size()];
+        BigDecimal orderTotal = BigDecimal.ZERO;
+        for (int i = 0; i < plan.items().size(); i++) {
+            Item item = plan.items().get(i);
+            SoLineReq lr = plan.lines().get(i);
+            if (lr.unitPrice() != null) {
+                if (!canPrice) {
+                    throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限录入销售单价");
+                }
+                resolvedPrices[i] = lr.unitPrice();
+                resolvedRates[i] = lr.taxRate() != null ? lr.taxRate() : defaultRate;
+            } else {
+                var cp = customerPrices.effectivePrice(plan.customer().getId(), item.getId(), today).orElse(null);
+                if (cp != null) {
+                    resolvedPrices[i] = cp.getUnitPrice();
+                    resolvedRates[i] = cp.getTaxRate() != null ? cp.getTaxRate() : defaultRate;
+                }
+            }
+            if (resolvedPrices[i] != null) {
+                orderTotal = orderTotal.add(lr.qty().multiply(resolvedPrices[i]).setScale(2, RoundingMode.HALF_UP));
+            }
+        }
+        checkCreditLimit(plan.customer(), orderTotal);
+
         SalesOrder so = new SalesOrder();
         so.setSoNo(docNo.next("SO", today));
         so.setCustomerId(plan.customer().getId());
@@ -168,10 +216,13 @@ public class SalesService {
         List<String> detail = new ArrayList<>();
         for (int i = 0; i < plan.items().size(); i++) {
             Item item = plan.items().get(i);
+            SoLineReq lr = plan.lines().get(i);
             SoLine line = new SoLine();
             line.setSoId(so.getId());
             line.setItemId(item.getId());
-            line.setQty(plan.lines().get(i).qty());
+            line.setQty(lr.qty());
+            line.setUnitPrice(resolvedPrices[i]);
+            line.setTaxRate(resolvedRates[i]);
             lines.save(line);
             List<FefoAllocator.Pick> picks = plan.results().get(i).picks();
             inventory.consume(picks, TxnType.SHIP, so.getSoNo());
@@ -189,6 +240,26 @@ public class SalesService {
         audit.log("销售出库", so.getSoNo(), plan.customer().getName() + "：" + String.join("，", detail));
         return list().stream().filter(v -> v.id().equals(so.getId())).findFirst()
                 .orElseThrow(() -> BizException.notFound("出库单"));
+    }
+
+    private void checkCreditLimit(Partner customer, BigDecimal orderTotal) {
+        if (customer.getCreditLimit() == null || orderTotal.signum() <= 0) {
+            return;
+        }
+        BigDecimal openAr = customerStatements.findByCustomerIdOrderByIdDesc(customer.getId()).stream()
+                .filter(s -> !"PAID".equals(s.getStatus()) && !"CANCELLED".equals(s.getStatus()))
+                .map(com.cosmetic.scm.settlement.CustomerStatement::outstandingAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (openAr.add(orderTotal).compareTo(customer.getCreditLimit()) > 0) {
+            throw new BizException("客户 " + customer.getName() + " 信用额度不足：授信 ¥" + customer.getCreditLimit().toPlainString()
+                    + "，当前未结应收 ¥" + openAr.toPlainString() + "，本次出库 ¥" + orderTotal.toPlainString()
+                    + "，请先回款核销或调整授信额度");
+        }
+    }
+
+    private static boolean salesPriceAllowed() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream().anyMatch(a -> SALES_PRICE_ROLES.contains(a.getAuthority()));
     }
 
     /** forUpdate：真正出库时锁库存行再分配；预览只读，不加锁。 */

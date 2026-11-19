@@ -64,4 +64,10 @@ public class ProductionController {
     public MoView complete(@PathVariable Long id, @Valid @RequestBody CompleteReq req) {
         return production.complete(id, req);
     }
+
+    @PostMapping("/{id}/processing-fee")
+    @PreAuthorize("hasAnyRole('ADMIN','PURCHASE','FINANCE')")
+    public MoView setProcessingFee(@PathVariable Long id, @Valid @RequestBody ProductionService.SetFeeReq req) {
+        return production.setProcessingFee(id, req);
+    }
 }

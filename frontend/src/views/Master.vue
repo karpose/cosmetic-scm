@@ -195,6 +195,7 @@
           <el-form-item label="默认信用账期（天，选填）"><el-input-number id="pt-credit" v-model="partner.defaultCreditDays" :min="0" :max="365" :precision="0" :controls="false" style="width:100%" placeholder="默认 30 天" /></el-form-item>
           <el-form-item label="默认税率 %（选填）"><el-input-number id="pt-taxrate" v-model="partner.defaultTaxRate" :min="0" :max="100" :precision="2" :controls="false" style="width:100%" placeholder="如 13" /></el-form-item>
           <el-form-item label="财务客商编码（选填）"><el-input id="pt-fincode" v-model="partner.financeCode" maxlength="40" placeholder="对接外部财务系统用" /></el-form-item>
+          <el-form-item v-if="partner.kind === 'CUSTOMER'" label="信用额度（元，留空不限）"><el-input-number id="pt-credit-limit" v-model="partner.creditLimit" :min="0" :precision="2" :controls="false" style="width:100%" placeholder="超额时拦截出库" /></el-form-item>
         </div>
         <AttachmentList v-if="partner.id && partner.kind !== 'CUSTOMER'" style="margin-bottom:12px" owner-type="PARTNER" :owner-id="partner.id"
                         :can-upload="auth.canAttach()" title="资质证书（营业执照、生产许可证、体系证书）" empty-text="还没有上传资质证书" />
@@ -292,7 +293,7 @@ const canEdit = computed(() => auth.hasAny('ADMIN', 'MASTER_DATA'))
 const addLabel = computed(() => ({ items: '新增物料', partners: '新增往来单位', warehouses: '新增仓库', boms: '维护 BOM' }[tab.value]))
 
 const emptyItem = () => ({ id: null, code: '', name: '', itemType: 'RM', unit: 'kg', inci: '', casNo: '', limitPct: null, banned: false, shelfMonths: null, filingNo: '', netG: null, active: true, stdCost: null, listPrice: null })
-const emptyPartner = () => ({ id: null, code: '', name: '', kind: 'SUPPLIER', licenseNo: '', licenseExpiry: null, licenseScope: '', batchPrefix: '', channel: '', minShelfPct: 0, contact: '', address: '', qualified: true, criticalSupplier: false, taxId: '', bankName: '', bankAccount: '', defaultCreditDays: null, defaultTaxRate: null, financeCode: '' })
+const emptyPartner = () => ({ id: null, code: '', name: '', kind: 'SUPPLIER', licenseNo: '', licenseExpiry: null, licenseScope: '', batchPrefix: '', channel: '', minShelfPct: 0, contact: '', address: '', qualified: true, criticalSupplier: false, taxId: '', bankName: '', bankAccount: '', defaultCreditDays: null, defaultTaxRate: null, financeCode: '', creditLimit: null })
 const item = reactive({ visible: false, saving: false, ...emptyItem() })
 const partner = reactive({ visible: false, saving: false, ...emptyPartner() })
 const wh = reactive({ visible: false, saving: false, code: '', name: '', kind: 'OWN', partnerId: null })
@@ -358,7 +359,7 @@ async function savePartner() {
     licenseScope: rest.licenseScope, batchPrefix: rest.batchPrefix, channel: rest.channel, minShelfPct: rest.minShelfPct,
     contact: rest.contact, address: rest.address, qualified: rest.qualified, criticalSupplier: rest.criticalSupplier,
     taxId: rest.taxId, bankName: rest.bankName, bankAccount: rest.bankAccount,
-    defaultCreditDays: rest.defaultCreditDays, defaultTaxRate: rest.defaultTaxRate, financeCode: rest.financeCode
+    defaultCreditDays: rest.defaultCreditDays, defaultTaxRate: rest.defaultTaxRate, financeCode: rest.financeCode, creditLimit: rest.creditLimit
   }
   partner.saving = true
   try {

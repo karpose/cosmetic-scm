@@ -10,7 +10,9 @@ import com.cosmetic.scm.settlement.SettlementService.ApproveReq;
 import com.cosmetic.scm.settlement.SettlementService.BatchInvoiceReq;
 import com.cosmetic.scm.settlement.SettlementService.CancelReq;
 import com.cosmetic.scm.settlement.SettlementService.CreateReq;
+import com.cosmetic.scm.settlement.SettlementService.FinanceSyncReq;
 import com.cosmetic.scm.settlement.SettlementService.FollowUp;
+import com.cosmetic.scm.settlement.SettlementService.InvoiceLedgerView;
 import com.cosmetic.scm.settlement.SettlementService.InvoiceReq;
 import com.cosmetic.scm.settlement.SettlementService.PayReq;
 import com.cosmetic.scm.settlement.SettlementService.PreviewView;
@@ -41,12 +43,15 @@ public class SettlementController {
     private static final String FINANCE = "hasAnyRole('ADMIN','FINANCE')";
 
     private final SettlementService settlement;
+    private final AgingAnalysisService aging;
     private final FinanceIntegrationService financeIntegration;
 
     @GetMapping
     @PreAuthorize(READ)
-    public List<StatementView> list(@RequestParam(required = false) String statementNo, @RequestParam(required = false) FollowUp followUp) {
-        return settlement.list(statementNo, followUp);
+    public List<StatementView> list(@RequestParam(required = false) String statementNo,
+                                    @RequestParam(required = false) FollowUp followUp,
+                                    @RequestParam(required = false) FinanceSyncStatus financeSyncStatus) {
+        return settlement.list(statementNo, followUp, financeSyncStatus);
     }
 
     @GetMapping("/preview")
@@ -65,6 +70,12 @@ public class SettlementController {
     @PreAuthorize(BUYER)
     public StatementView cancel(@PathVariable Long id, @Valid @RequestBody CancelReq req) {
         return settlement.cancel(id, req);
+    }
+
+    @PostMapping("/{id}/confirm")
+    @PreAuthorize(BUYER)
+    public StatementView internalConfirm(@PathVariable Long id) {
+        return settlement.internalConfirm(id);
     }
 
     @PostMapping("/{id}/invoice")
@@ -101,6 +112,27 @@ public class SettlementController {
     @PreAuthorize(FINANCE)
     public StatementView refund(@PathVariable Long id, @Valid @RequestBody PayReq req) {
         return settlement.refund(id, req);
+    }
+
+    @PostMapping("/{id}/finance-sync")
+    @PreAuthorize(FINANCE)
+    public StatementView updateFinanceSync(@PathVariable Long id, @Valid @RequestBody FinanceSyncReq req) {
+        return settlement.updateFinanceSync(id, req);
+    }
+
+    @GetMapping("/invoice-ledger")
+    @PreAuthorize(READ)
+    public InvoiceLedgerView invoiceLedger(@RequestParam(required = false) LocalDate from,
+                                           @RequestParam(required = false) LocalDate to,
+                                           @RequestParam(required = false) Long supplierId,
+                                           @RequestParam(required = false) String invoiceType) {
+        return settlement.invoiceLedger(from, to, supplierId, invoiceType);
+    }
+
+    @GetMapping("/aging")
+    @PreAuthorize("hasAnyRole('ADMIN','PURCHASE','SALES','FINANCE')")
+    public AgingAnalysisService.AgingReport aging(@RequestParam(defaultValue = "AP") String side) {
+        return "AR".equalsIgnoreCase(side) ? aging.arAging() : aging.apAging();
     }
 
     @GetMapping("/finance-vouchers")

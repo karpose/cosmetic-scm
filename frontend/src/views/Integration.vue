@@ -55,7 +55,16 @@
     </el-card>
 
     <el-card v-else-if="tab === 'logs'" shadow="never" body-style="padding:0">
-      <el-table :data="logs" v-loading="loader.loading.value" empty-text="还没有对接记录" max-height="560">
+      <template #header>
+        <div class="filters">
+          <el-radio-group v-model="logScope" size="small">
+            <el-radio-button value="">全部</el-radio-button>
+            <el-radio-button value="ECOM">电商 ERP</el-radio-button>
+            <el-radio-button v-if="canSeeFinance" value="FINANCE">外部财务</el-radio-button>
+          </el-radio-group>
+        </div>
+      </template>
+      <el-table :data="filteredLogs" v-loading="loader.loading.value" empty-text="还没有对接记录" max-height="560">
         <el-table-column label="时间" width="150"><template #default="{ row }"><span class="mono small">{{ fmtTime(row.createdAt) }}</span></template></el-table-column>
         <el-table-column label="方向" width="110"><template #default="{ row }">{{ row.direction === 'IN' ? '平台 → 本系统' : '本系统 → 平台' }}</template></el-table-column>
         <el-table-column prop="platform" label="平台" width="90" />
@@ -87,6 +96,20 @@
         <p>按该客户的效期接收标准计算每个 SKU 的可售数量（只算自有仓已放行库存，不含退货隔离区），供 ERP 同步到店铺。</p>
         <pre>{{ curlExample }}</pre>
       </section>
+      <section class="glass doc">
+        <h3>拉取应付凭证 <code>GET /finance/vouchers?pendingOnly=true</code></h3>
+        <p>供外部财务系统拉取已审批/已结清的对账单（含往来单位财务编码、税号、开户行、分税率汇总、发票与批次明细）。支持 <code>syncStatus=PENDING|SYNCED|FAILED</code> 或 <code>pendingOnly=true</code>。</p>
+      </section>
+      <section class="glass doc">
+        <h3>凭证回执 <code>POST /finance/vouchers/{statementNo}/ack</code></h3>
+        <p>外部财务系统制证后回写外部凭证号或失败说明。</p>
+        <pre>{ "success": true, "extVoucherNo": "AP-2026-0001", "note": "已生成应付凭证" }</pre>
+      </section>
+      <section class="glass doc">
+        <h3>付款水单回调核销 <code>POST /finance/payments</code></h3>
+        <p>按 <code>extPaymentNo</code> 幂等核销对账单付款或红字退款，重复推送直接返回 <code>duplicate: true</code>。</p>
+        <pre>{ "statementNo": "ST-20261118-0001", "extPaymentNo": "BANK-20261118-01", "payDate": "2026-11-18", "amount": 1000.00, "referenceNo": "银企流水号" }</pre>
+      </section>
     </div>
   </div>
 </template>
@@ -108,8 +131,15 @@ const tab = ref('orders')
 const orders = ref([])
 const logs = ref([])
 const state = ref('')
+const logScope = ref('')
 const busy = ref(null)
 const canOperate = computed(() => auth.hasAny('ADMIN', 'SALES'))
+const canSeeFinance = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE'))
+const filteredLogs = computed(() => logs.value.filter((l) => {
+  if (logScope.value === 'FINANCE') return l.platform === 'FINANCE'
+  if (logScope.value === 'ECOM') return l.platform !== 'FINANCE'
+  return true
+}))
 const base = `${location.origin}/api/integration`
 
 const loader = useLoader(async () => {
