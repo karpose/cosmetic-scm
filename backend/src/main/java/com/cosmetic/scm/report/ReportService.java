@@ -58,6 +58,7 @@ public class ReportService {
     private final com.cosmetic.scm.sales.CustomerPriceService customerPrices;
     private final com.cosmetic.scm.analytics.SupplierPerformanceService supplierPerformance;
     private final com.cosmetic.scm.analytics.BatchCostingService batchCosting;
+    private final com.cosmetic.scm.analytics.FinanceInsightsService financeInsights;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnService supplierReturns;
     private final EquipmentService equipment;
     private final AuditService audit;
@@ -93,6 +94,9 @@ public class ReportService {
         m.put("supplier-prices", this::supplierPriceList);
         m.put("customer-prices", this::customerPriceList);
         m.put("batch-costs", this::batchCosts);
+        m.put("margins", () -> marginReport(from, to));
+        m.put("cashflow-forecast", this::cashFlowReport);
+        m.put("inventory-variance", () -> inventoryVarianceReport(from, to));
         m.put("supplier-performance", () -> supplierPerformanceReport(from, to));
         m.put("supplier-returns", this::supplierReturns);
         m.put("stability", this::stabilityResults);
@@ -103,7 +107,7 @@ public class ReportService {
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to) {
         // 金额只给采购和财务看，应收报表给销售、财务和管理员看，其它报表所有内部岗位都能导
-        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "batch-costs".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
+        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "batch-costs".equals(key) || "margins".equals(key) || "cashflow-forecast".equals(key) || "inventory-variance".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与成本数据");
         }
         if (("ar-statements".equals(key) || "ar-aging".equals(key) || "ar-invoice-ledger".equals(key) || "customer-credit".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
@@ -199,6 +203,31 @@ public class ReportService {
                 r.actualUnitCost(), r.stdUnitCost(), r.variancePct(), r.completedAt())));
         return new Table("生产批次实际成本", List.of("生产单号", "类型", "生产方", "成品编码", "成品名称", "产出批号",
                 "实际产量", "领料成本", "委外加工费", "总成本", "实际单位成本", "标准单位成本", "偏差（%）", "完工时间"), rows);
+    }
+
+    private Table marginReport(LocalDate from, LocalDate to) {
+        var rep = financeInsights.margins(from, to);
+        List<List<Object>> rows = new ArrayList<>();
+        rep.byItem().forEach(r -> rows.add(row("按成品", r.code(), r.name(), r.qty(), r.revenue(), r.cogs(), r.grossProfit(), r.grossMarginPct())));
+        rep.byCustomer().forEach(r -> rows.add(row("按客户", r.code(), r.name(), r.qty(), r.revenue(), r.cogs(), r.grossProfit(), r.grossMarginPct())));
+        rows.add(row("汇总", rep.from() + "~" + rep.to(), "全部", null, rep.totalRevenue(), rep.totalCogs(), rep.totalGrossProfit(), rep.grossMarginPct()));
+        return new Table("毛利分析", List.of("维度", "编码", "名称", "出库数量", "含税销售额", "销售成本", "毛利额", "毛利率（%）"), rows);
+    }
+
+    private Table cashFlowReport() {
+        var rep = financeInsights.cashFlowForecast();
+        List<List<Object>> rows = new ArrayList<>();
+        rep.buckets().forEach(b -> rows.add(row(b.label(), b.inflow(), b.outflow(), b.netCashFlow(), b.arCount(), b.apCount())));
+        rows.add(row("合计（" + rep.asOf() + "）", rep.totalInflow(), rep.totalOutflow(), rep.netCashFlow(), null, null));
+        return new Table("现金流预测", List.of("时间区间", "预计回款/流入", "预计付款/流出", "预计净现金流", "涉及应收单", "涉及应付单"), rows);
+    }
+
+    private Table inventoryVarianceReport(LocalDate from, LocalDate to) {
+        var rep = financeInsights.inventoryVariance(from, to);
+        List<List<Object>> rows = new ArrayList<>();
+        rep.rows().forEach(r -> rows.add(row(r.docNo(), r.docTypeLabel(), r.createdAt(), r.itemCode(), r.itemName(), r.unit(), r.qty(), r.unitCost(), r.amount(), r.reason())));
+        rows.add(row("汇总", "盘盈/盘亏/报废", null, rep.from() + "~" + rep.to(), "盘盈 " + rep.gainValue() + " / 盘亏 " + rep.lossValue() + " / 报废 " + rep.scrapValue(), null, null, null, rep.netValue(), null));
+        return new Table("库存盘点报废损益", List.of("作业单号", "类型", "时间", "物料编码", "物料名称", "单位", "差异数量", "单位成本", "损益金额", "原因"), rows);
     }
 
     private Table invoiceLedger(LocalDate from, LocalDate to) {
