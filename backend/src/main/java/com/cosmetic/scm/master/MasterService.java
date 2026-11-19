@@ -230,6 +230,7 @@ public class MasterService {
         p.setDefaultCreditDays(req.defaultCreditDays());
         p.setDefaultTaxRate(req.defaultTaxRate());
         p.setFinanceCode(blankToNull(req.financeCode()));
+        p.setCreditLimit(req.kind() == PartnerKind.CUSTOMER ? req.creditLimit() : null);
     }
 
     public PartnerView toView(Partner p, LocalDate today) {
@@ -244,7 +245,7 @@ public class MasterService {
                 p.getBatchPrefix(), p.getChannel(), p.getMinShelfPct(), p.getContact(), p.getAddress(),
                 p.isQualified(), p.isCriticalSupplier(),
                 p.getTaxId(), p.getBankName(), p.getBankAccount(),
-                p.getDefaultCreditDays(), p.getDefaultTaxRate(), p.getFinanceCode());
+                p.getDefaultCreditDays(), p.getDefaultTaxRate(), p.getFinanceCode(), p.getCreditLimit());
     }
 
     private static Map<String, Object> partnerFields(Partner p) {
@@ -267,6 +268,7 @@ public class MasterService {
         m.put("默认账期（天）", p.getDefaultCreditDays());
         m.put("默认税率（%）", p.getDefaultTaxRate());
         m.put("财务客商编码", p.getFinanceCode());
+        m.put("信用额度", p.getCreditLimit());
         return m;
     }
 

@@ -58,6 +58,7 @@ public class SalesService {
     private final InventoryService inventory;
     private final MasterLookup lookup;
     private final CustomerPriceService customerPrices;
+    private final com.cosmetic.scm.settlement.CustomerStatementRepository customerStatements;
     private final DocNoService docNo;
     private final AuditService audit;
     private final TimeProvider time;
@@ -174,6 +175,34 @@ public class SalesService {
             throw new BizException("可分配库存不足：" + String.join("；", shortages));
         }
         LocalDate today = time.today();
+        BigDecimal defaultRate = plan.customer().getDefaultTaxRate() != null
+                ? plan.customer().getDefaultTaxRate() : new BigDecimal("13.00");
+        boolean canPrice = salesPriceAllowed();
+        BigDecimal[] resolvedPrices = new BigDecimal[plan.items().size()];
+        BigDecimal[] resolvedRates = new BigDecimal[plan.items().size()];
+        BigDecimal orderTotal = BigDecimal.ZERO;
+        for (int i = 0; i < plan.items().size(); i++) {
+            Item item = plan.items().get(i);
+            SoLineReq lr = plan.lines().get(i);
+            if (lr.unitPrice() != null) {
+                if (!canPrice) {
+                    throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限录入销售单价");
+                }
+                resolvedPrices[i] = lr.unitPrice();
+                resolvedRates[i] = lr.taxRate() != null ? lr.taxRate() : defaultRate;
+            } else {
+                var cp = customerPrices.effectivePrice(plan.customer().getId(), item.getId(), today).orElse(null);
+                if (cp != null) {
+                    resolvedPrices[i] = cp.getUnitPrice();
+                    resolvedRates[i] = cp.getTaxRate() != null ? cp.getTaxRate() : defaultRate;
+                }
+            }
+            if (resolvedPrices[i] != null) {
+                orderTotal = orderTotal.add(lr.qty().multiply(resolvedPrices[i]).setScale(2, RoundingMode.HALF_UP));
+            }
+        }
+        checkCreditLimit(plan.customer(), orderTotal);
+
         SalesOrder so = new SalesOrder();
         so.setSoNo(docNo.next("SO", today));
         so.setCustomerId(plan.customer().getId());
@@ -184,9 +213,6 @@ public class SalesService {
         so.setCreatedAt(time.now());
         orders.save(so);
 
-        BigDecimal defaultRate = plan.customer().getDefaultTaxRate() != null
-                ? plan.customer().getDefaultTaxRate() : new BigDecimal("13.00");
-        boolean canPrice = salesPriceAllowed();
         List<String> detail = new ArrayList<>();
         for (int i = 0; i < plan.items().size(); i++) {
             Item item = plan.items().get(i);
@@ -195,18 +221,8 @@ public class SalesService {
             line.setSoId(so.getId());
             line.setItemId(item.getId());
             line.setQty(lr.qty());
-            if (lr.unitPrice() != null) {
-                if (!canPrice) {
-                    throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限录入销售单价");
-                }
-                line.setUnitPrice(lr.unitPrice());
-                line.setTaxRate(lr.taxRate() != null ? lr.taxRate() : defaultRate);
-            } else {
-                customerPrices.effectivePrice(plan.customer().getId(), item.getId(), today).ifPresent(cp -> {
-                    line.setUnitPrice(cp.getUnitPrice());
-                    line.setTaxRate(cp.getTaxRate() != null ? cp.getTaxRate() : defaultRate);
-                });
-            }
+            line.setUnitPrice(resolvedPrices[i]);
+            line.setTaxRate(resolvedRates[i]);
             lines.save(line);
             List<FefoAllocator.Pick> picks = plan.results().get(i).picks();
             inventory.consume(picks, TxnType.SHIP, so.getSoNo());
@@ -224,6 +240,21 @@ public class SalesService {
         audit.log("销售出库", so.getSoNo(), plan.customer().getName() + "：" + String.join("，", detail));
         return list().stream().filter(v -> v.id().equals(so.getId())).findFirst()
                 .orElseThrow(() -> BizException.notFound("出库单"));
+    }
+
+    private void checkCreditLimit(Partner customer, BigDecimal orderTotal) {
+        if (customer.getCreditLimit() == null || orderTotal.signum() <= 0) {
+            return;
+        }
+        BigDecimal openAr = customerStatements.findByCustomerIdOrderByIdDesc(customer.getId()).stream()
+                .filter(s -> !"PAID".equals(s.getStatus()) && !"CANCELLED".equals(s.getStatus()))
+                .map(com.cosmetic.scm.settlement.CustomerStatement::outstandingAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (openAr.add(orderTotal).compareTo(customer.getCreditLimit()) > 0) {
+            throw new BizException("客户 " + customer.getName() + " 信用额度不足：授信 ¥" + customer.getCreditLimit().toPlainString()
+                    + "，当前未结应收 ¥" + openAr.toPlainString() + "，本次出库 ¥" + orderTotal.toPlainString()
+                    + "，请先回款核销或调整授信额度");
+        }
     }
 
     private static boolean salesPriceAllowed() {

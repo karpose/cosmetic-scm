@@ -82,6 +82,7 @@ public class PlanningService {
     private final PurchaseOrderRepository purchaseOrders;
     private final PoLineRepository poLines;
     private final MasterService master;
+    private final com.cosmetic.scm.sourcing.SupplierPriceRepository supplierPrices;
     private final com.cosmetic.scm.salesreturn.SalesReturnRepository salesReturns;
     private final com.cosmetic.scm.salesreturn.SalesReturnLineRepository returnLines;
     private final MasterLookup lookup;
@@ -116,7 +117,8 @@ public class PlanningService {
     public record MaterialRow(Long itemId, String code, String name, String unit, String itemType, BigDecimal gross,
                               BigDecimal openOrders, BigDecimal onHand, BigDecimal quarantine, BigDecimal onOrder,
                               BigDecimal suggested, Long supplierId, String supplierName, boolean supplierUsable,
-                              List<String> usedBy, BigDecimal unitCost) {
+                              List<String> usedBy, BigDecimal unitCost,
+                              BigDecimal contractPrice, BigDecimal contractTaxRate) {
     }
 
     // ---------- 成品 ----------
@@ -324,6 +326,18 @@ public class PlanningService {
         Map<Long, Boolean> usable = master.listPartners().stream()
                 .collect(Collectors.toMap(v -> v.id(), v -> v.usable()));
 
+        // 联动当日有效协议价：优先推荐价格最低且资质可用的协议价供应商（仅价格权限角色可见协议单价）
+        LocalDate today = time.today();
+        boolean showPrice = com.cosmetic.scm.security.PriceAccess.allowed();
+        Map<Long, com.cosmetic.scm.sourcing.SupplierPrice> bestContract = new HashMap<>();
+        for (var sp : supplierPrices.findAllByOrderByIdDesc()) {
+            if (!sp.isEffectiveOn(today) || !usable.getOrDefault(sp.getSupplierId(), false)) {
+                continue;
+            }
+            bestContract.merge(sp.getItemId(), sp,
+                    (a, b) -> b.getUnitPrice().compareTo(a.getUnitPrice()) < 0 ? b : a);
+        }
+
         List<MaterialRow> out = new ArrayList<>();
         for (Map.Entry<Long, BigDecimal> e : gross.entrySet()) {
             Item m = im.get(e.getKey());
@@ -332,14 +346,17 @@ public class PlanningService {
                     .add(quarantine.getOrDefault(m.getId(), BigDecimal.ZERO))
                     .add(onOrder.getOrDefault(m.getId(), BigDecimal.ZERO));
             BigDecimal lot = m.getItemType() == ItemType.PK ? BigDecimal.ONE : null;
-            Long sid = lastSupplier.get(m.getId());
+            var cp = bestContract.get(m.getId());
+            Long sid = cp != null ? cp.getSupplierId() : lastSupplier.get(m.getId());
             Partner sup = sid == null ? null : pm.get(sid);
             out.add(new MaterialRow(m.getId(), m.getCode(), m.getName(), m.getUnit(), m.getItemType().name(), e.getValue(),
                     openNeed.getOrDefault(m.getId(), BigDecimal.ZERO), onHand.getOrDefault(m.getId(), BigDecimal.ZERO),
                     quarantine.getOrDefault(m.getId(), BigDecimal.ZERO), onOrder.getOrDefault(m.getId(), BigDecimal.ZERO),
                     Replenishment.netRequirement(need, have, lot), sup == null ? null : sup.getId(),
                     sup == null ? null : sup.getName(), sup != null && usable.getOrDefault(sup.getId(), false),
-                    usedBy.getOrDefault(m.getId(), List.of()), m.getStdCost()));
+                    usedBy.getOrDefault(m.getId(), List.of()), m.getStdCost(),
+                    showPrice && cp != null ? cp.getUnitPrice() : null,
+                    showPrice && cp != null ? cp.getTaxRate() : null));
         }
         return out;
     }

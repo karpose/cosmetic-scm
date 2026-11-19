@@ -67,6 +67,8 @@ public class Partner {
 
     private String financeCode;
 
+    private BigDecimal creditLimit;
+
     /** 资质已过期。 */
     public boolean licenseExpired(LocalDate today) {
         return licenseExpiry != null && licenseExpiry.isBefore(today);

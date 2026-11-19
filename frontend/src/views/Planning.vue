@@ -89,7 +89,14 @@
         <el-table-column label="本次需求" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.gross) }}</span></template></el-table-column>
         <el-table-column label="已计划占用" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.openOrders) }}</span></template></el-table-column>
         <el-table-column label="在库 / 待检 / 在途" width="160" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.onHand) }} / {{ fmtQty(row.quarantine) }} / {{ fmtQty(row.onOrder) }}</span></template></el-table-column>
-        <el-table-column label="单价" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.unitCost) }}</span></template></el-table-column>
+        <el-table-column label="协议价 / 标准成本" width="145" align="right">
+          <template #default="{ row }">
+            <template v-if="row.contractPrice != null">
+              <el-tag size="small" type="success" disable-transitions style="margin-right:4px">协议价</el-tag><span class="mono">{{ fmtMoney(row.contractPrice) }}</span>
+            </template>
+            <span v-else class="mono">{{ fmtMoney(row.unitCost) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="采购数量" width="130">
           <template #default="{ row }"><el-input-number aria-label="建议采购数量" v-model="buy[row.itemId]" :min="0" :precision="row.itemType === 'PK' ? 0 : 4" :controls="false" size="small" style="width:100%" /> <span class="muted small">{{ row.unit }}</span></template>
         </el-table-column>
@@ -151,7 +158,10 @@ const buy = reactive({})
 const supplier = reactive({})
 const toBuy = computed(() => (m.rows || []).filter((r) => buy[r.itemId] > 0))
 // 金额只算有成本的行；没有成本的物料不计入
-const buyValue = computed(() => toBuy.value.reduce((a, r) => a + (r.unitCost != null ? Number(r.unitCost) * buy[r.itemId] : 0), 0))
+const buyValue = computed(() => toBuy.value.reduce((a, r) => {
+  const p = r.contractPrice ?? r.unitCost
+  return a + (p != null ? Number(p) * buy[r.itemId] : 0)
+}, 0))
 const fgPlanValue = computed(() => chosen.value.reduce((a, r) => a + (r.unitCost != null ? Number(r.unitCost) * (qty[r.itemId] || 0) : 0), 0))
 const supplierGroups = computed(() => [...new Set(toBuy.value.map((r) => supplier[r.itemId]).filter(Boolean))])
 
@@ -198,7 +208,12 @@ async function createPos() {
   try {
     const nos = []
     for (const sid of supplierGroups.value) {
-      const lines = toBuy.value.filter((r) => supplier[r.itemId] === sid).map((r) => ({ itemId: r.itemId, qty: buy[r.itemId] }))
+      const lines = toBuy.value.filter((r) => supplier[r.itemId] === sid).map((r) => ({
+        itemId: r.itemId,
+        qty: buy[r.itemId],
+        unitPrice: r.supplierId === sid && r.contractPrice != null ? r.contractPrice : null,
+        taxRate: r.supplierId === sid && r.contractTaxRate != null ? r.contractTaxRate : null
+      }))
       const po = await http.post('/purchase-orders', { supplierId: sid, lines })
       nos.push(po.poNo)
     }
