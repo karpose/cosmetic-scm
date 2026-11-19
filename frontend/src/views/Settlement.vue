@@ -311,6 +311,10 @@
         <StatementInvoiceReturns :statement="dt.s" />
         <AttachmentList owner-type="SUPPLIER_STATEMENT" :owner-id="dt.s.id" :can-upload="auth.canAttach()" title="附件（发票扫描件）" style="margin-top:12px" />
       </template>
+      <template #footer>
+        <el-button v-if="dt.s" @click="printStatement('AP', dt.s.statementNo)">打印对账函</el-button>
+        <el-button @click="dt.visible = false">关闭</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="iv.visible" :title="`${iv.s?.invoiceCorrectionPending ? '代更正发票' : '代登记发票'}：${iv.s?.statementNo || ''}`" width="620px" :close-on-click-modal="false">
@@ -466,6 +470,10 @@
           </div>
         </div>
       </template>
+      <template #footer>
+        <el-button v-if="arDt.s" @click="printStatement('AR', arDt.s.statementNo)">打印对账函</el-button>
+        <el-button @click="arDt.visible = false">关闭</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="cs.visible" title="客户授信额度使用概览" width="820px">
@@ -593,6 +601,9 @@ async function openCreditSummary() {
   cs.visible = true
   cs.loading = true
   try { cs.rows = await http.get('/ar-statements/credit-summary') } finally { cs.loading = false }
+}
+function printStatement(side, no) {
+  window.open(`/statement-print?side=${side}&no=${encodeURIComponent(no)}`, '_blank')
 }
 async function exportArVouchers() {
   const data = await http.get('/ar-statements/finance-vouchers')

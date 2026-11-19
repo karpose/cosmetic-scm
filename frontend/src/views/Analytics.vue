@@ -237,6 +237,57 @@
           </el-table-column>
         </el-table>
       </el-card>
+
+      <!-- 毛利分析与现金流预测（仅价格权限角色可见） -->
+      <div v-if="canPrice" class="grid2">
+        <el-card shadow="never" body-style="padding:0 0 8px">
+          <template #header>
+            <div class="ch">
+              <b>毛利分析（近 180 天）</b>
+              <div class="toolbar">
+                <el-radio-group v-model="mg.dim" size="small">
+                  <el-radio-button value="item">按成品</el-radio-button>
+                  <el-radio-button value="customer">按客户</el-radio-button>
+                </el-radio-group>
+                <ExportButton report="margins" />
+              </div>
+            </div>
+            <div v-if="mg.data" class="muted small" style="margin-top:6px">
+              销售额 <b class="mono">¥{{ fmtMoney(mg.data.totalRevenue) }}</b> · 成本 <b class="mono">¥{{ fmtMoney(mg.data.totalCogs) }}</b> · 毛利 <b class="mono">¥{{ fmtMoney(mg.data.totalGrossProfit) }}</b>（{{ mg.data.grossMarginPct ?? '—' }}%）
+            </div>
+          </template>
+          <el-table :data="mg.dim === 'item' ? (mg.data?.byItem || []) : (mg.data?.byCustomer || [])" v-loading="mg.loading" size="small" empty-text="暂无带价销售出库数据">
+            <el-table-column :label="mg.dim === 'item' ? '成品' : '客户'" min-width="140"><template #default="{ row }">{{ row.name }}<div class="muted small mono">{{ row.code }}</div></template></el-table-column>
+            <el-table-column label="销售额" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.revenue) }}</span></template></el-table-column>
+            <el-table-column label="毛利" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.grossProfit) }}</span></template></el-table-column>
+            <el-table-column label="毛利率" width="80" align="right"><template #default="{ row }"><b class="mono">{{ row.grossMarginPct != null ? `${row.grossMarginPct}%` : '—' }}</b></template></el-table-column>
+          </el-table>
+        </el-card>
+
+        <el-card shadow="never" body-style="padding:0 0 8px">
+          <template #header>
+            <div class="ch">
+              <b>现金流预测 & 库存损益</b>
+              <div class="toolbar">
+                <ExportButton report="cashflow-forecast" />
+                <ExportButton report="inventory-variance" label="导出损益" />
+              </div>
+            </div>
+            <div v-if="cf.data" class="muted small" style="margin-top:6px">
+              预计流入 <b class="mono">¥{{ fmtMoney(cf.data.totalInflow) }}</b> · 预计流出 <b class="mono">¥{{ fmtMoney(cf.data.totalOutflow) }}</b> · 净现金流 <b class="mono" :class="{ bad: Number(cf.data.netCashFlow) < 0 }">¥{{ fmtMoney(cf.data.netCashFlow) }}</b>
+            </div>
+            <div v-if="iv.data" class="muted small" style="margin-top:4px">
+              近 180 天库存损益：盘盈 ¥{{ fmtMoney(iv.data.gainValue) }} · 盘亏 ¥{{ fmtMoney(iv.data.lossValue) }} · 报废 ¥{{ fmtMoney(iv.data.scrapValue) }} · 净额 <b class="mono" :class="{ bad: Number(iv.data.netValue) < 0 }">¥{{ fmtMoney(iv.data.netValue) }}</b>
+            </div>
+          </template>
+          <el-table :data="cf.data?.buckets || []" v-loading="cf.loading" size="small">
+            <el-table-column prop="label" label="区间" width="100" />
+            <el-table-column label="预计回款" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.inflow) }}</span></template></el-table-column>
+            <el-table-column label="预计付款" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.outflow) }}</span></template></el-table-column>
+            <el-table-column label="净现金流" min-width="110" align="right"><template #default="{ row }"><b class="mono" :class="{ bad: Number(row.netCashFlow) < 0 }">{{ fmtMoney(row.netCashFlow) }}</b></template></el-table-column>
+          </el-table>
+        </el-card>
+      </div>
     </template>
 
     <div v-show="tip.show" class="tip glass" :style="{ left: `${tip.x}px`, top: `${tip.y}px` }">{{ tip.text }}</div>
@@ -337,7 +388,25 @@ async function loadBatchCosts() {
   try { bc.rows = await http.get('/analytics/batch-costs') } finally { bc.loading = false }
 }
 
-onMounted(() => { load(); loadPerf(); loadBatchCosts() })
+const mg = reactive({ loading: false, dim: 'item', data: null })
+const cf = reactive({ loading: false, data: null })
+const iv = reactive({ loading: false, data: null })
+async function loadFinanceInsights() {
+  if (!canPrice.value) return
+  mg.loading = cf.loading = iv.loading = true
+  try {
+    const [m, c, v] = await Promise.all([
+      http.get('/analytics/margins'),
+      http.get('/analytics/cashflow-forecast'),
+      http.get('/analytics/inventory-variance')
+    ])
+    mg.data = m; cf.data = c; iv.data = v
+  } finally {
+    mg.loading = cf.loading = iv.loading = false
+  }
+}
+
+onMounted(() => { load(); loadPerf(); loadBatchCosts(); loadFinanceInsights() })
 </script>
 
 <style scoped>
