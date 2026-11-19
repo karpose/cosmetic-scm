@@ -53,6 +53,7 @@ public class ReportService {
     private final PurchaseService purchases;
     private final com.cosmetic.scm.settlement.SettlementService settlement;
     private final com.cosmetic.scm.sourcing.SupplierPriceService supplierPrices;
+    private final com.cosmetic.scm.analytics.SupplierPerformanceService supplierPerformance;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnService supplierReturns;
     private final EquipmentService equipment;
     private final AuditService audit;
@@ -81,6 +82,7 @@ public class ReportService {
         m.put("statements", this::statements);
         m.put("invoice-ledger", () -> invoiceLedger(from, to));
         m.put("supplier-prices", this::supplierPriceList);
+        m.put("supplier-performance", () -> supplierPerformanceReport(from, to));
         m.put("supplier-returns", this::supplierReturns);
         m.put("stability", this::stabilityResults);
         m.put("inspections", () -> inspectionResults(from, to));
@@ -146,6 +148,19 @@ public class ReportService {
                 !p.active() ? "已停用" : p.effectiveToday() ? "生效中" : "未生效/过期", p.note(), p.updatedBy(), p.updatedAt())));
         return new Table("供应商协议价", List.of("供应商编码", "供应商", "物料编码", "物料名称", "单位",
                 "含税协议价", "税率（%）", "生效日期", "失效日期", "状态", "备注", "维护人", "更新时间"), rows);
+    }
+
+    private Table supplierPerformanceReport(LocalDate from, LocalDate to) {
+        List<List<Object>> rows = new ArrayList<>();
+        supplierPerformance.report(from, to).forEach(r -> rows.add(row(
+                r.supplierCode(), r.supplierName(), r.qualified() ? "合格" : "未批准",
+                r.totalBatches(), r.releasedBatches(), r.rejectedBatches(), r.passRatePct(),
+                r.deliveredPoCount(), r.onTimePoCount(), r.onTimeRatePct(),
+                r.receiptDisputeCount(), r.returnCount(), r.activeContractCount(), r.score(), r.grade())));
+        return new Table("供应商绩效考核", List.of("供应商编码", "供应商名称", "准入状态",
+                "来料总批数", "放行批数", "不合格批数", "来料合格率（%）",
+                "已交付PO数", "准时PO数", "准时交货率（%）",
+                "收货异议次数", "退供次数", "有效协议价数", "综合得分", "考核等级"), rows);
     }
 
     private Table stock() {
