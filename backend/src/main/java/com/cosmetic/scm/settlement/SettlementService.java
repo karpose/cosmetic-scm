@@ -866,7 +866,7 @@ public class SettlementService {
         LocalDateTime before = periodTo.plusDays(1).atStartOfDay();
         List<com.cosmetic.scm.production.MfgOrder> mos = mfgOrders
                 .findByFactoryIdAndMoTypeAndStatusAndCompletedAtLessThanOrderById(
-                        factoryId, com.cosmetic.scm.domain.MoType.OEM, com.cosmetic.scm.domain.MoStatus.DONE, before);
+                        factoryId, com.cosmetic.scm.domain.MoType.OEM, com.cosmetic.scm.domain.MoStatus.COMPLETED, before);
         if (mos.isEmpty()) {
             return new Unbilled(List.of(), List.of());
         }

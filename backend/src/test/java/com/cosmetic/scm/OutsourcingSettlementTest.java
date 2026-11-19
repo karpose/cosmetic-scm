@@ -119,7 +119,7 @@ class OutsourcingSettlementTest {
         mo.setPlannedQty(new BigDecimal("100"));
         mo.setActualQty(new BigDecimal("100"));
         mo.setPlannedDate(d(0));
-        mo.setStatus(MoStatus.DONE);
+        mo.setStatus(MoStatus.COMPLETED);
         mo.setOutBatchId(outBatch.getId());
         mo.setCreatedBy("prod1");
         mo.setCreatedAt(time.now());
