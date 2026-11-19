@@ -155,6 +155,56 @@
           </el-table>
         </el-card>
       </div>
+
+      <!-- 供应商绩效考核台账 -->
+      <el-card shadow="never" body-style="padding:0 0 8px">
+        <template #header>
+          <div class="ch">
+            <b>供应商绩效考核台账</b>
+            <div class="toolbar">
+              <el-date-picker v-model="perf.from" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" clearable style="width:140px" @change="loadPerf" />
+              <el-date-picker v-model="perf.to" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" clearable style="width:140px" @change="loadPerf" />
+              <el-button size="small" @click="loadPerf">查询</el-button>
+              <ExportButton report="supplier-performance" />
+            </div>
+          </div>
+        </template>
+        <el-table :data="perf.rows" v-loading="perf.loading" size="small" empty-text="暂无供应商绩效数据">
+          <el-table-column label="供应商" min-width="160">
+            <template #default="{ row }">
+              {{ row.supplierName }}
+              <div class="muted small mono">{{ row.supplierCode }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="准入" width="80">
+            <template #default="{ row }"><el-tag size="small" :type="row.qualified ? 'success' : 'info'" disable-transitions>{{ row.qualified ? '合格' : '未批准' }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="来料批数" width="95" align="right">
+            <template #default="{ row }"><span class="mono">{{ row.releasedBatches }}/{{ row.totalBatches }}</span></template>
+          </el-table-column>
+          <el-table-column label="合格率" width="85" align="right">
+            <template #default="{ row }"><span class="mono">{{ row.passRatePct == null ? '—' : `${row.passRatePct}%` }}</span></template>
+          </el-table-column>
+          <el-table-column label="准时交货率" width="95" align="right">
+            <template #default="{ row }"><span class="mono">{{ row.onTimeRatePct == null ? '—' : `${row.onTimeRatePct}%` }}</span></template>
+          </el-table-column>
+          <el-table-column label="异议 / 退供" width="95" align="right">
+            <template #default="{ row }"><span class="mono">{{ row.receiptDisputeCount }} / {{ row.returnCount }}</span></template>
+          </el-table-column>
+          <el-table-column label="有效协议价" width="95" align="right">
+            <template #default="{ row }"><span class="mono">{{ row.activeContractCount }}</span></template>
+          </el-table-column>
+          <el-table-column label="综合得分" width="90" align="right">
+            <template #default="{ row }"><b class="mono">{{ row.score ?? '—' }}</b></template>
+          </el-table-column>
+          <el-table-column label="等级" width="75" align="center">
+            <template #default="{ row }">
+              <el-tag v-if="row.grade && row.grade !== '-'" size="small" :type="row.grade === 'A' ? 'success' : row.grade === 'B' ? 'primary' : row.grade === 'C' ? 'warning' : 'danger'" disable-transitions>{{ row.grade }}</el-tag>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
     </template>
 
     <div v-show="tip.show" class="tip glass" :style="{ left: `${tip.x}px`, top: `${tip.y}px` }">{{ tip.text }}</div>
@@ -166,6 +216,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { CircleCheckFilled, WarningFilled } from '@element-plus/icons-vue'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
+import ExportButton from '../components/ExportButton.vue'
 import LoadError from '../components/LoadError.vue'
 import ShelfBar from '../components/ShelfBar.vue'
 import { fmtMoney, fmtQty, fmtTime } from '../utils/format'
@@ -232,7 +283,19 @@ function tipMove(e) {
 }
 const tipOff = () => { tip.show = false }
 
-onMounted(load)
+const perf = reactive({ loading: false, from: null, to: null, rows: [] })
+async function loadPerf() {
+  perf.loading = true
+  try {
+    perf.rows = await http.get('/analytics/supplier-performance', {
+      params: { from: perf.from || undefined, to: perf.to || undefined }
+    })
+  } finally {
+    perf.loading = false
+  }
+}
+
+onMounted(() => { load(); loadPerf() })
 </script>
 
 <style scoped>
