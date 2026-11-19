@@ -66,4 +66,10 @@ public class MfgOrder {
     private String cancelledBy;
 
     private LocalDateTime cancelledAt;
+
+    /** 委外加工含税单位加工费（仅委托生产单用于对账）。 */
+    private BigDecimal processingUnitFee;
+
+    /** 委外加工费税率（%）。 */
+    private BigDecimal processingTaxRate;
 }

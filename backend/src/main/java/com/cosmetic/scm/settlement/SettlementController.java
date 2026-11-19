@@ -71,6 +71,12 @@ public class SettlementController {
         return settlement.cancel(id, req);
     }
 
+    @PostMapping("/{id}/confirm")
+    @PreAuthorize(BUYER)
+    public StatementView internalConfirm(@PathVariable Long id) {
+        return settlement.internalConfirm(id);
+    }
+
     @PostMapping("/{id}/invoice")
     @PreAuthorize(BUYER)
     public StatementView invoice(@PathVariable Long id, @Valid @RequestBody InvoiceReq req) {

@@ -30,6 +30,9 @@ public class SupplierStatementLine {
 
     private Long poLineId;
 
+    /** 委外加工费对账行关联的委托生产单 ID。 */
+    private Long mfgOrderId;
+
     private BigDecimal qty;
 
     private BigDecimal unitPrice;

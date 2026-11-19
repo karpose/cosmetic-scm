@@ -37,4 +37,16 @@ public interface SupplierStatementLineRepository extends JpaRepository<SupplierS
             where s.id = l.statementId and s.status <> :cancelled and l.poLineId = :poLineId
             """)
     long countBilled(@Param("poLineId") Long poLineId, @Param("cancelled") StatementStatus cancelled);
+
+    @Query("""
+            select l.mfgOrderId from SupplierStatementLine l, SupplierStatement s
+            where s.id = l.statementId and s.status <> :cancelled and l.mfgOrderId in :moIds
+            """)
+    List<Long> billedMfgOrderIds(@Param("moIds") Collection<Long> moIds, @Param("cancelled") StatementStatus cancelled);
+
+    @Query("""
+            select count(l) from SupplierStatementLine l, SupplierStatement s
+            where s.id = l.statementId and s.status <> :cancelled and l.mfgOrderId = :moId
+            """)
+    long countBilledMfgOrder(@Param("moId") Long moId, @Param("cancelled") StatementStatus cancelled);
 }

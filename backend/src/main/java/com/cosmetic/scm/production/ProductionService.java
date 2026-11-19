@@ -91,6 +91,7 @@ public class ProductionService {
     private final AuditService audit;
     private final TimeProvider time;
     private final CurrentUser currentUser;
+    private final com.cosmetic.scm.settlement.SupplierStatementLineRepository statementLines;
 
     public record CreateMoReq(@NotNull Long factoryId, @NotNull Long fgItemId,
                               @NotNull @Positive @Qty BigDecimal plannedQty, LocalDate plannedDate) {
@@ -113,6 +114,14 @@ public class ProductionService {
     public record CancelReq(@NotBlank(message = "请填写取消原因") @Size(max = 300) String reason) {
     }
 
+    public record SetFeeReq(@NotNull(message = "请填写单位加工费") @Positive(message = "加工费要大于 0")
+                            @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "加工费最多 14 位整数、4 位小数") BigDecimal processingUnitFee,
+                            @jakarta.validation.constraints.DecimalMin(value = "0", message = "税率不能为负")
+                            @jakarta.validation.constraints.DecimalMax(value = "100", message = "税率不能超过 100")
+                            @jakarta.validation.constraints.Digits(integer = 3, fraction = 2, message = "税率最多 2 位小数") BigDecimal processingTaxRate,
+                            @Size(max = 300) String reason) {
+    }
+
     public record PickView(Long batchId, String batchNo, Long warehouseId, String warehouseName, BigDecimal qty,
                            LocalDate expDate) {
     }
@@ -125,7 +134,8 @@ public class ProductionService {
     public record MoView(Long id, String moNo, MoType moType, String moTypeLabel, Long factoryId, String factoryName,
                          Long fgItemId, String fgCode, String fgName, BigDecimal plannedQty, LocalDate plannedDate,
                          MoStatus status, String statusLabel, String outBatchNo, BigDecimal actualQty,
-                         BigDecimal yieldPct, String createdBy, LocalDateTime createdAt,
+                         BigDecimal yieldPct, BigDecimal processingUnitFee, BigDecimal processingTaxRate,
+                         String createdBy, LocalDateTime createdAt,
                          String oemStageLabel, OemReportStatus oemReportStatus, String oemReportStatusLabel,
                          String cancelReason, String cancelledBy, LocalDateTime cancelledAt) {
     }
@@ -487,16 +497,49 @@ public class ProductionService {
         return toView(m, im, pm, outNos, null, null);
     }
 
+    /** 维护委托生产单单位加工费与税率。已进入有效对账单的不能再修改。 */
+    @Transactional
+    public MoView setProcessingFee(Long moId, SetFeeReq req) {
+        MfgOrder mo = lock(moId);
+        if (mo.getMoType() != MoType.OEM) {
+            throw new BizException("只有委托生产单需要维护加工费");
+        }
+        if (mo.getStatus() == MoStatus.CANCELLED) {
+            throw new BizException("生产单 " + mo.getMoNo() + " 已取消");
+        }
+        if (statementLines.countBilledMfgOrder(mo.getId(), com.cosmetic.scm.domain.StatementStatus.CANCELLED) > 0) {
+            throw new BizException("生产单 " + mo.getMoNo() + " 已进了对账单，不能改加工费。要改请先作废对账单");
+        }
+        String reason = blankToNull(req.reason());
+        if (mo.getProcessingUnitFee() != null && reason == null) {
+            throw new BizException("修改已有加工费要写明原因");
+        }
+        Partner f = lookup.partner(mo.getFactoryId());
+        BigDecimal rate = req.processingTaxRate() != null ? req.processingTaxRate()
+                : (f.getDefaultTaxRate() != null ? f.getDefaultTaxRate() : new BigDecimal("13.00"));
+        String prev = mo.getProcessingUnitFee() == null ? "未录入" : plain(mo.getProcessingUnitFee());
+        mo.setProcessingUnitFee(req.processingUnitFee());
+        mo.setProcessingTaxRate(rate);
+        orders.save(mo);
+        audit.logMoney("设置委外加工费", mo.getMoNo(),
+                f.getName() + " 加工费 " + prev + " → " + plain(req.processingUnitFee()) + "（税率 " + plain(rate) + "%）", reason);
+        Map<Long, String> outNos = mo.getOutBatchId() == null ? Map.of()
+                : batches.findById(mo.getOutBatchId()).map(b -> Map.of(b.getId(), b.getBatchNo())).orElse(Map.of());
+        return toView(mo, lookup.itemMap(), lookup.partnerMap(), outNos);
+    }
+
     private MoView toView(MfgOrder m, Map<Long, Item> im, Map<Long, Partner> pm, Map<Long, String> outNos,
                           String oemStage, OemReportStatus oemReport) {
         Item fg = im.get(m.getFgItemId());
         Partner f = pm.get(m.getFactoryId());
+        boolean showPrice = com.cosmetic.scm.security.PriceAccess.allowed();
         BigDecimal yieldPct = m.getActualQty() == null ? null
                 : m.getActualQty().multiply(BigDecimal.valueOf(100)).divide(m.getPlannedQty(), 1, RoundingMode.HALF_UP);
         return new MoView(m.getId(), m.getMoNo(), m.getMoType(), m.getMoType().getLabel(), m.getFactoryId(),
                 f == null ? null : f.getName(), m.getFgItemId(), fg.getCode(), fg.getName(), m.getPlannedQty(),
                 m.getPlannedDate(), m.getStatus(), m.getStatus().getLabel(),
                 m.getOutBatchId() == null ? null : outNos.get(m.getOutBatchId()), m.getActualQty(), yieldPct,
+                showPrice ? m.getProcessingUnitFee() : null, showPrice ? m.getProcessingTaxRate() : null,
                 m.getCreatedBy(), m.getCreatedAt(), oemStage, oemReport, oemReport == null ? null : oemReport.getLabel(),
                 m.getCancelReason(), m.getCancelledBy(), m.getCancelledAt());
     }

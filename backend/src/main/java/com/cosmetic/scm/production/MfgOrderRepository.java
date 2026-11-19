@@ -25,6 +25,9 @@ public interface MfgOrderRepository extends JpaRepository<MfgOrder, Long> {
 
     List<MfgOrder> findByFactoryIdAndMoTypeOrderByIdDesc(Long factoryId, MoType moType);
 
+    List<MfgOrder> findByFactoryIdAndMoTypeAndStatusAndCompletedAtLessThanOrderById(Long factoryId, MoType moType,
+                                                                                     MoStatus status, java.time.LocalDateTime before);
+
     /** 状态流转前先锁行：并发时第二个请求排队，读到新状态后按业务规则拒绝。只在写事务里用。 */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from MfgOrder x where x.id = :id")

@@ -84,6 +84,7 @@ public class SettlementService {
     private final BatchRepository batches;
     private final PurchaseOrderRepository orders;
     private final PoLineRepository poLines;
+    private final com.cosmetic.scm.production.MfgOrderRepository mfgOrders;
     private final PoShipmentRepository shipments;
     private final PartnerRepository partners;
     private final MasterLookup lookup;
@@ -191,7 +192,8 @@ public class SettlementService {
                                     BigDecimal totalAmount, BigDecimal totalNetAmount, BigDecimal totalTaxAmount, int count) {
     }
 
-    public record StatementView(Long id, String statementNo, Long supplierId, String supplierName, String supplierTaxId, LocalDate periodTo,
+    public record StatementView(Long id, String statementNo, String statementType, String statementTypeLabel,
+                                Long supplierId, String supplierName, String supplierTaxId, LocalDate periodTo,
                                 int creditDays, LocalDate dueDate, boolean overdue, long overdueDays,
                                 StatementStatus status, String statusLabel, BigDecimal goodsAmount, BigDecimal taxAmount,
                                 BigDecimal adjustment, String adjustmentNote, BigDecimal totalAmount, String disputeNote,
@@ -207,7 +209,7 @@ public class SettlementService {
     }
 
     /** ret 不为空的是冲减行。settled 是这一行顺带算过的退货，要标记，下次不再算。 */
-    private record Priced(Batch batch, Long poLineId, String poNo, BigDecimal qty, BigDecimal unitPrice, BigDecimal taxRate, BigDecimal amount, BigDecimal tax,
+    private record Priced(Batch batch, Long poLineId, Long mfgOrderId, String poNo, BigDecimal qty, BigDecimal unitPrice, BigDecimal taxRate, BigDecimal amount, BigDecimal tax,
                           SupplierReturn ret, List<SupplierReturn> settled) {
     }
 
@@ -343,9 +345,9 @@ public class SettlementService {
      */
     @Transactional
     public StatementView create(CreateReq req) {
-        Partner s = partners.lockById(req.supplierId()).orElseThrow(() -> BizException.notFound("供应商"));
-        if (s.getKind() != PartnerKind.SUPPLIER) {
-            throw new BizException(s.getName() + " 不是物料供应商");
+        Partner s = partners.lockById(req.supplierId()).orElseThrow(() -> BizException.notFound("往来单位"));
+        if (s.getKind() != PartnerKind.SUPPLIER && s.getKind() != PartnerKind.OEM) {
+            throw new BizException(s.getName() + " 不是物料供应商或受托生产企业");
         }
         LocalDate today = time.today();
         if (req.periodTo().isAfter(today)) {
@@ -378,6 +380,7 @@ public class SettlementService {
         }
         SupplierStatement st = new SupplierStatement();
         st.setStatementNo(docNo.next("ST", today));
+        st.setStatementType(s.getKind() == PartnerKind.OEM ? "OUTSOURCING" : "PURCHASE");
         st.setSupplierId(s.getId());
         st.setPeriodTo(req.periodTo());
         st.setCreditDays(creditDays);
@@ -397,6 +400,7 @@ public class SettlementService {
             l.setStatementId(st.getId());
             l.setBatchId(p.batch().getId());
             l.setPoLineId(p.poLineId());
+            l.setMfgOrderId(p.mfgOrderId());
             l.setQty(p.qty());
             l.setUnitPrice(p.unitPrice());
             l.setTaxRate(p.taxRate());
@@ -600,6 +604,22 @@ public class SettlementService {
         return views(List.of(st)).get(0);
     }
 
+    /** 委外加工费对账单内部代确认（受托厂线下核对后由采购/管理员确认，进入登记发票阶段）。 */
+    @Transactional
+    public StatementView internalConfirm(Long id) {
+        SupplierStatement st = locked(id);
+        require(st, StatementStatus.SENT, "确认");
+        if (!"OUTSOURCING".equals(st.effectiveStatementType())) {
+            throw new BizException("采购对账单请由供应商在门户确认");
+        }
+        st.setStatus(StatementStatus.CONFIRMED);
+        st.setConfirmedBy(currentUser.usernameOrSystem());
+        st.setConfirmedAt(time.now());
+        statements.save(st);
+        audit.logMoney("确认委外对账单", st.getStatementNo(), name(st) + ", 合计 " + st.getTotalAmount().toPlainString());
+        return views(List.of(st)).get(0);
+    }
+
     // ---------- 供应商门户 ----------
 
     @Transactional(readOnly = true)
@@ -783,6 +803,10 @@ public class SettlementService {
      * 已结算的批次后来又退货的，按当时的单价和税率生成冲减行。
      */
     private Unbilled unbilled(Long supplierId, LocalDate periodTo) {
+        Partner partner = lookup.partner(supplierId);
+        if (partner.getKind() == PartnerKind.OEM) {
+            return unbilledOutsourcing(supplierId, periodTo);
+        }
         LocalDateTime before = periodTo.plusDays(1).atStartOfDay();
         List<Batch> list = batches.findByPartnerIdAndSourceTypeAndStatusAndCreatedAtLessThanOrderById(supplierId, SourceType.PO, BatchStatus.RELEASED, before);
         Set<Long> billed = list.isEmpty() ? Set.of() : Set.copyOf(statementLines.billedBatchIds(list.stream().map(Batch::getId).toList(), StatementStatus.CANCELLED));
@@ -815,7 +839,7 @@ public class SettlementService {
                 }
                 BigDecimal rate = taxOf(line);
                 BigDecimal amount = qty.multiply(line.getUnitPrice()).setScale(2, RoundingMode.HALF_UP);
-                priced.add(new Priced(b, line.getId(), po.getPoNo(), qty, line.getUnitPrice(), rate, amount, SettlementRule.taxIn(amount, rate), null, settled));
+                priced.add(new Priced(b, line.getId(), null, po.getPoNo(), qty, line.getUnitPrice(), rate, amount, SettlementRule.taxIn(amount, rate), null, settled));
             }
         }
         // 冲减：批次已经结算过，之后才退的货
@@ -830,9 +854,46 @@ public class SettlementService {
                 Batch b = bm.get(e.getKey());
                 for (SupplierReturn r : unsettled.get(e.getKey())) {
                     BigDecimal amount = r.getQty().multiply(l.getUnitPrice()).setScale(2, RoundingMode.HALF_UP).negate();
-                    priced.add(new Priced(b, l.getPoLineId(), b.getSourceNo(), r.getQty().negate(), l.getUnitPrice(), l.getTaxRate(), amount, SettlementRule.taxIn(amount, l.getTaxRate()), r, List.of(r)));
+                    priced.add(new Priced(b, l.getPoLineId(), null, b.getSourceNo(), r.getQty().negate(), l.getUnitPrice(), l.getTaxRate(), amount, SettlementRule.taxIn(amount, l.getTaxRate()), r, List.of(r)));
                 }
             }
+        }
+        return new Unbilled(priced, missing);
+    }
+
+    /** 委外加工费可结算单据：受托生产单已完工、产出成品批次已上市放行、尚未进入有效对账单。 */
+    private Unbilled unbilledOutsourcing(Long factoryId, LocalDate periodTo) {
+        LocalDateTime before = periodTo.plusDays(1).atStartOfDay();
+        List<com.cosmetic.scm.production.MfgOrder> mos = mfgOrders
+                .findByFactoryIdAndMoTypeAndStatusAndCompletedAtLessThanOrderById(
+                        factoryId, com.cosmetic.scm.domain.MoType.OEM, com.cosmetic.scm.domain.MoStatus.DONE, before);
+        if (mos.isEmpty()) {
+            return new Unbilled(List.of(), List.of());
+        }
+        Set<Long> billedMos = Set.copyOf(statementLines.billedMfgOrderIds(
+                mos.stream().map(com.cosmetic.scm.production.MfgOrder::getId).toList(), StatementStatus.CANCELLED));
+        Map<Long, Batch> bm = new HashMap<>();
+        batches.findAllById(mos.stream().map(com.cosmetic.scm.production.MfgOrder::getOutBatchId)
+                .filter(Objects::nonNull).toList()).forEach(b -> bm.put(b.getId(), b));
+        Map<Long, Item> items = lookup.itemMap();
+        List<Priced> priced = new ArrayList<>();
+        List<MissingPrice> missing = new ArrayList<>();
+        for (com.cosmetic.scm.production.MfgOrder mo : mos) {
+            if (billedMos.contains(mo.getId()) || mo.getOutBatchId() == null || mo.getActualQty() == null || mo.getActualQty().signum() <= 0) {
+                continue;
+            }
+            Batch outBatch = bm.get(mo.getOutBatchId());
+            if (outBatch == null || outBatch.getStatus() != BatchStatus.RELEASED) {
+                continue;
+            }
+            if (mo.getProcessingUnitFee() == null) {
+                missing.add(new MissingPrice(outBatch.getBatchNo(), mo.getMoNo(), items.get(mo.getFgItemId()).getName()));
+                continue;
+            }
+            BigDecimal rate = mo.getProcessingTaxRate() == null ? BigDecimal.ZERO : mo.getProcessingTaxRate();
+            BigDecimal amount = mo.getActualQty().multiply(mo.getProcessingUnitFee()).setScale(2, RoundingMode.HALF_UP);
+            priced.add(new Priced(outBatch, null, mo.getId(), mo.getMoNo(), mo.getActualQty(),
+                    mo.getProcessingUnitFee(), rate, amount, SettlementRule.taxIn(amount, rate), null, List.of()));
         }
         return new Unbilled(priced, missing);
     }
@@ -882,7 +943,8 @@ public class SettlementService {
             long overdueDays = SettlementRule.overdueDays(dueDate, today, settledOrCancelled);
             com.cosmetic.scm.domain.FinanceSyncStatus syncStatus = s.effectiveFinanceSyncStatus();
             Partner sp = lookup.partner(s.getSupplierId());
-            return new StatementView(s.getId(), s.getStatementNo(), s.getSupplierId(), sp.getName(), sp.getTaxId(), s.getPeriodTo(),
+            return new StatementView(s.getId(), s.getStatementNo(), s.effectiveStatementType(), s.statementTypeLabel(),
+                    s.getSupplierId(), sp.getName(), sp.getTaxId(), s.getPeriodTo(),
                     s.getCreditDays(), dueDate, overdueDays > 0, overdueDays,
                     s.getStatus(), s.statusLabel(), s.getGoodsAmount(), s.getTaxAmount(), s.getAdjustment(), s.getAdjustmentNote(), s.getTotalAmount(), s.getDisputeNote(),
                     s.getCancelReason(), s.getConfirmedBy(), s.getConfirmedAt(), s.getInvoiceNo(), s.getInvoiceDate(), s.getInvoiceAmount(),

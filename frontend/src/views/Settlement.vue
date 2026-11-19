@@ -97,7 +97,12 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="supplierName" label="供应商" min-width="160" />
+        <el-table-column label="往来单位" min-width="160">
+          <template #default="{ row }">
+            {{ row.supplierName }}
+            <el-tag v-if="row.statementType === 'OUTSOURCING'" size="small" type="info" disable-transitions style="margin-left:4px">委外加工费</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="合计" width="120" align="right"><template #default="{ row }"><span class="mono" :class="{ late: Number(row.totalAmount) < 0 }">{{ fmtMoney(row.totalAmount) }}</span></template></el-table-column>
         <el-table-column label="未结清" width="135" align="right">
           <template #default="{ row }"><span class="mono">{{ row.status === 'CANCELLED' ? '—' : Number(row.unpaid) < 0 ? `待收 ${fmtMoney(Math.abs(Number(row.unpaid)))}` : fmtMoney(row.unpaid) }}</span></template>
@@ -123,6 +128,7 @@
         </el-table-column>
         <el-table-column label="" width="220" :fixed="narrow ? false : 'right'">
           <template #default="{ row }">
+            <el-button v-if="row.status === 'SENT' && row.statementType === 'OUTSOURCING' && canBuy" size="small" @click="confirmOutsourcing(row)">确认对账</el-button>
             <el-button v-if="row.status === 'CONFIRMED' && canBuy" size="small" @click="openInvoice(row)">{{ row.invoiceCorrectionPending ? '代更正发票' : '代登记发票' }}</el-button>
             <el-button v-if="row.status === 'INVOICED' && canFinance" size="small" type="primary" @click="openApprove(row)">审批</el-button>
             <el-button v-if="row.status === 'INVOICED' && canFinance" size="small" @click="openInvoiceReturn(row)">退回发票</el-button>
@@ -140,9 +146,9 @@
     <el-dialog v-model="cr.visible" title="生成对账单" width="840px" :close-on-click-modal="false">
       <el-form label-position="top" @submit.prevent>
         <div class="form-grid">
-          <el-form-item label="供应商">
-            <el-select id="st-supplier" v-model="cr.supplierId" filterable placeholder="选择供应商" style="width:100%" @change="loadPreview">
-              <el-option v-for="p in rd.suppliers.value" :key="p.id" :value="p.id" :label="p.name" />
+          <el-form-item label="供应商 / 受托生产企业">
+            <el-select id="st-supplier" v-model="cr.supplierId" filterable placeholder="选择供应商或受托厂" style="width:100%" @change="loadPreview">
+              <el-option v-for="p in rd.settlementPartners.value" :key="p.id" :value="p.id" :label="p.kind === 'OEM' ? `【委外】${p.name}` : p.name" />
             </el-select>
           </el-form-item>
           <el-form-item label="对账截止日期（这天及以前入库的）"><el-date-picker id="st-period" v-model="cr.periodTo" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d > startOfToday" @change="loadPreview" /></el-form-item>
@@ -430,7 +436,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
 const previewReq = latestOnly()
 const cr = reactive({ visible: false, saving: false, supplierId: null, periodTo: null, creditDays: undefined, allowNegative: false, preview: null, adjustment: undefined, adjustmentNote: '' })
-const defaultCreditDays = computed(() => rd.suppliers.value.find((p) => p.id === cr.supplierId)?.defaultCreditDays ?? 30)
+const defaultCreditDays = computed(() => rd.settlementPartners.value.find((p) => p.id === cr.supplierId)?.defaultCreditDays ?? 30)
 const missingText = computed(() => {
   const list = cr.preview?.missingPrice || []
   return list.slice(0, 5).map((m) => m.poNo + ' ' + m.itemName).join('、') + (list.length > 5 ? ` 等 ${list.length} 个` : '')
@@ -607,6 +613,12 @@ async function submitFinanceSync() {
   } finally {
     fs.saving = false
   }
+}
+
+async function confirmOutsourcing(row) {
+  await http.post(`/statements/${row.id}/confirm`)
+  ElMessage.success('委外对账单已确认，请登记发票')
+  load()
 }
 
 async function exportVouchers() {
