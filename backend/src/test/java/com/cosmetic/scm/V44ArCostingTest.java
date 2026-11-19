@@ -12,10 +12,13 @@ import java.util.Map;
 
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
+import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.PartnerKind;
-import com.cosmetic.scm.master.Item;
-import com.cosmetic.scm.master.ItemRepository;
+import com.cosmetic.scm.domain.ReturnDisposition;
+import com.cosmetic.scm.domain.WarehouseKind;
+import com.cosmetic.scm.inventory.Batch;
+import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.master.Partner;
 import com.cosmetic.scm.master.PartnerRepository;
 import com.cosmetic.scm.master.WarehouseRepository;
@@ -36,12 +39,14 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** V44 客户退货冲减应收、AR 作废重算、销项台账、客户授信概览与生产批次实际成本核算集成测试。 */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@TestPropertySource(properties = "spring.datasource.url=jdbc:h2:mem:scm-ar-costing;MODE=MySQL;DB_CLOSE_DELAY=-1")
 class V44ArCostingTest {
 
     private static final String PWD = DemoDataLoader.DEMO_PASSWORD;
@@ -49,7 +54,7 @@ class V44ArCostingTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired PartnerRepository partners;
-    @Autowired ItemRepository items;
+    @Autowired BatchRepository batches;
     @Autowired WarehouseRepository warehouses;
     @Autowired SalesOrderRepository salesOrders;
     @Autowired SoLineRepository soLines;
@@ -74,7 +79,8 @@ class V44ArCostingTest {
             p.setDefaultTaxRate(new BigDecimal("13.00"));
             return partners.save(p);
         });
-        Item fg = items.findAll().stream().filter(i -> i.getItemType() == ItemType.FG).findFirst().orElseThrow();
+        Batch fgBatch = batches.findInStockByStatusAndItemType(BatchStatus.RELEASED, ItemType.FG)
+                .stream().findFirst().orElseThrow();
         long whId = warehouses.findAll().stream().filter(w -> "WH-MAIN".equals(w.getCode())).findFirst().orElseThrow().getId();
 
         SalesOrder so = new SalesOrder();
@@ -89,7 +95,7 @@ class V44ArCostingTest {
 
         SoLine sol = new SoLine();
         sol.setSoId(so.getId());
-        sol.setItemId(fg.getId());
+        sol.setItemId(fgBatch.getItemId());
         sol.setQty(new BigDecimal("10"));
         sol.setUnitPrice(new BigDecimal("100.00"));
         sol.setTaxRate(new BigDecimal("13.00"));
@@ -98,7 +104,7 @@ class V44ArCostingTest {
         SalesReturn sr = new SalesReturn();
         sr.setReturnNo("SR-V44-001");
         sr.setCustomerId(customer.getId());
-        sr.setWarehouseId(whId);
+        sr.setWarehouseId(warehouses.findByKind(WarehouseKind.RETURN).stream().findFirst().orElseThrow().getId());
         sr.setReturnDate(time.today());
         sr.setReason("外箱破损退回");
         sr.setCreatedBy("sales1");
@@ -107,8 +113,10 @@ class V44ArCostingTest {
 
         SalesReturnLine srl = new SalesReturnLine();
         srl.setReturnId(sr.getId());
-        srl.setItemId(fg.getId());
+        srl.setItemId(fgBatch.getItemId());
+        srl.setBatchId(fgBatch.getId());
         srl.setQty(new BigDecimal("2"));
+        srl.setDisposition(ReturnDisposition.PENDING);
         salesReturnLines.save(srl);
 
         String sales = login("sales1");

@@ -28,12 +28,14 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** V43 客户协议价自动带价、客户信用额度风控与补货协议价联动集成测试。 */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@TestPropertySource(properties = "spring.datasource.url=jdbc:h2:mem:scm-customer-credit;MODE=MySQL;DB_CLOSE_DELAY=-1")
 class CustomerPriceCreditAndPlanningTest {
 
     private static final String PWD = DemoDataLoader.DEMO_PASSWORD;
