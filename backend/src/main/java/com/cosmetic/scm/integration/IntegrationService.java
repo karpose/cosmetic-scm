@@ -207,8 +207,11 @@ public class IntegrationService {
 
     @Transactional(readOnly = true)
     public List<LogView> recentLogs() {
-        return logs.findTop200ByOrderByIdDesc().stream().map(l -> new LogView(l.getId(), l.getDirection(), l.getPlatform(),
-                l.getAction(), l.getRef(), l.isSuccess(), l.getMessage(), l.getCreatedAt())).toList();
+        boolean canSeeFinance = com.cosmetic.scm.security.PriceAccess.allowed();
+        return logs.findTop200ByOrderByIdDesc().stream()
+                .filter(l -> canSeeFinance || !"FINANCE".equalsIgnoreCase(l.getPlatform()))
+                .map(l -> new LogView(l.getId(), l.getDirection(), l.getPlatform(),
+                        l.getAction(), l.getRef(), l.isSuccess(), l.getMessage(), l.getCreatedAt())).toList();
     }
 
     @Transactional(readOnly = true)

@@ -320,5 +320,31 @@ class FinanceIntegrationTest {
 
         assertThat(integrationLogs.findTop200ByOrderByIdDesc())
                 .anyMatch(l -> "FINANCE".equals(l.getPlatform()) && "付款回调核销".equals(l.getAction()) && l.isSuccess());
+
+        // 4. 财务手工维护外部凭证状态与按同步状态筛选
+        long otherId = body(read(login("finance1"), "/api/statements?statementNo=" + otherStNo).andExpect(status().isOk()))
+                .get(0).get("id").asLong();
+        call(login("purchase1"), "/api/statements/" + otherId + "/finance-sync",
+                Map.of("syncStatus", "SYNCED", "extVoucherNo", "AP-MANUAL-1")).andExpect(status().isForbidden());
+        call(login("finance1"), "/api/statements/" + otherId + "/finance-sync",
+                Map.of("syncStatus", "SYNCED", "extVoucherNo", "AP-MANUAL-1", "note", "手工补录"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.financeSyncStatus").value("SYNCED"))
+                .andExpect(jsonPath("$.extVoucherNo").value("AP-MANUAL-1"));
+        assertThat(body(read(login("finance1"), "/api/statements?financeSyncStatus=SYNCED").andExpect(status().isOk()))
+                .findValuesAsText("statementNo")).contains(otherStNo);
+        call(login("finance1"), "/api/statements/" + otherId + "/finance-sync",
+                Map.of("syncStatus", "PENDING", "note", "重置重推"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.financeSyncStatus").value("PENDING"))
+                .andExpect(jsonPath("$.financeSyncedAt").isEmpty());
+
+        // 5. 集成日志隔离：非价格权限角色看不到 FINANCE 日志（防金额泄露）
+        String viewerLogs = read(login("viewer1"), "/api/channel-orders/logs").andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(viewerLogs).doesNotContain("BANK-PAY-001").doesNotContain("FINANCE");
+        String finLogs = read(login("finance1"), "/api/channel-orders/logs").andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(finLogs).contains("BANK-PAY-001");
     }
 }

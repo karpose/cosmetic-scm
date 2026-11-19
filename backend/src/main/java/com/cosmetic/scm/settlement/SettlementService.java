@@ -140,6 +140,11 @@ public class SettlementService {
                          @Size(max = 60) String referenceNo) {
     }
 
+    public record FinanceSyncReq(@NotNull(message = "请选择财务同步状态") com.cosmetic.scm.domain.FinanceSyncStatus syncStatus,
+                                 @Size(max = 60) String extVoucherNo,
+                                 @Size(max = 300) String note) {
+    }
+
     /** returnNo 不为空的是冲减行：结算后才退的货，数量和金额是负数。 */
     public record LineView(String batchNo, String extBatchNo, String poNo, String itemCode, String itemName, String unit, BigDecimal qty,
                            BigDecimal unitPrice, BigDecimal taxRate, BigDecimal amount, BigDecimal taxAmount, LocalDate receivedOn, String returnNo) {
@@ -197,8 +202,18 @@ public class SettlementService {
 
     @Transactional(readOnly = true)
     public List<StatementView> list(String statementNo, FollowUp followUp) {
+        return list(statementNo, followUp, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<StatementView> list(String statementNo, FollowUp followUp, com.cosmetic.scm.domain.FinanceSyncStatus financeSyncStatus) {
         if (statementNo != null && !statementNo.isBlank()) {
             return views(statements.findByStatementNo(statementNo.trim()).stream().toList());
+        }
+        if (financeSyncStatus != null) {
+            List<SupplierStatement> syncedList = statements.findByStatusInAndFinanceSyncStatusInOrderById(
+                    List.of(StatementStatus.APPROVED, StatementStatus.PAID), List.of(financeSyncStatus));
+            return views(syncedList);
         }
         if (followUp == null) {
             return views(statements.findTop300ByOrderByIdDesc());
@@ -474,6 +489,35 @@ public class SettlementService {
         }
         statements.save(st);
         audit.logMoney("登记供应商退款", st.getStatementNo(), name(st) + ", 退款 " + req.amount().toPlainString());
+        return views(List.of(st)).get(0);
+    }
+
+    /** 财务手工维护外部凭证号或重置同步状态（以便外部财务系统重新拉取）。 */
+    @Transactional
+    public StatementView updateFinanceSync(Long id, FinanceSyncReq req) {
+        SupplierStatement st = locked(id);
+        if (st.getStatus() != StatementStatus.APPROVED && st.getStatus() != StatementStatus.PAID) {
+            throw new BizException("对账单 " + st.getStatementNo() + " 当前为" + st.getStatus().getLabel() + "，仅已审批或已结清的对账单可维护财务凭证状态");
+        }
+        String extNo = req.extVoucherNo() == null || req.extVoucherNo().isBlank() ? null : req.extVoucherNo().trim();
+        String note = req.note() == null || req.note().isBlank() ? null : req.note().trim();
+        if (req.syncStatus() == com.cosmetic.scm.domain.FinanceSyncStatus.SYNCED && extNo == null) {
+            throw new BizException("标记已制证时请填写外部财务凭证号");
+        }
+        st.setFinanceSyncStatus(req.syncStatus());
+        if (req.syncStatus() == com.cosmetic.scm.domain.FinanceSyncStatus.PENDING) {
+            st.setExtVoucherNo(extNo);
+            st.setFinanceSyncedAt(null);
+        } else {
+            if (extNo != null) {
+                st.setExtVoucherNo(extNo);
+            }
+            st.setFinanceSyncedAt(time.now());
+        }
+        st.setFinanceSyncNote(note);
+        statements.save(st);
+        String detail = req.syncStatus().getLabel() + (extNo != null ? " · 凭证 " + extNo : "") + (note != null ? " · " + note : "");
+        audit.logMoney("维护财务凭证状态", st.getStatementNo(), name(st) + ", " + detail);
         return views(List.of(st)).get(0);
     }
 

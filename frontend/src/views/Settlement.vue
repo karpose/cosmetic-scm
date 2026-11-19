@@ -29,6 +29,11 @@
           <el-select aria-label="按状态筛选" v-model="filterBy" placeholder="全部状态" clearable>
             <el-option v-for="o in filterOptions" :key="o.value" :value="o.value" :label="o.label" />
           </el-select>
+          <el-select aria-label="财务凭证同步" v-model="syncFilter" placeholder="财务凭证同步" clearable>
+            <el-option value="PENDING" label="待同步" />
+            <el-option value="SYNCED" label="已制证" />
+            <el-option value="FAILED" label="同步失败" />
+          </el-select>
         </div>
       </template>
       <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
@@ -73,6 +78,7 @@
             <el-button v-if="row.status === 'INVOICED' && canFinance" size="small" @click="openInvoiceReturn(row)">退回发票</el-button>
             <el-button v-if="row.status === 'APPROVED' && canFinance && Number(row.totalAmount) > 0" size="small" type="primary" @click="openCash(row, false)">登记付款</el-button>
             <el-button v-if="row.status === 'APPROVED' && canFinance && Number(row.totalAmount) < 0" size="small" type="warning" @click="openCash(row, true)">登记退款</el-button>
+            <el-button v-if="(row.status === 'APPROVED' || row.status === 'PAID') && canFinance" size="small" text @click="openFinanceSync(row)">财务凭证</el-button>
             <el-button v-if="canVoid(row) && canBuy" size="small" text @click="voidStatement(row)">作废</el-button>
           </template>
         </el-table-column>
@@ -262,6 +268,29 @@
         <el-button type="primary" :loading="pa.saving" @click="submitPay">{{ pa.isRefund ? '登记退款' : '登记付款' }}</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="fs.visible" :title="`维护财务凭证状态：${fs.s?.statementNo || ''}`" width="460px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <p class="muted small" style="margin-top:0">手工补录外部财务系统凭证号，或重置为“待同步”供外部接口重新拉取。</p>
+        <el-form-item label="同步状态">
+          <el-select v-model="fs.syncStatus" style="width:100%">
+            <el-option value="PENDING" label="待同步（重置重推）" />
+            <el-option value="SYNCED" label="已制证" />
+            <el-option value="FAILED" label="同步失败" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="外部财务凭证号">
+          <el-input v-model="fs.extVoucherNo" maxlength="60" placeholder="例如 AP-2026-0001" />
+        </el-form-item>
+        <el-form-item label="备注（选填）">
+          <el-input v-model="fs.note" maxlength="300" placeholder="失败原因或手工制证说明" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="fs.visible = false">取消</el-button>
+        <el-button type="primary" :loading="fs.saving" @click="submitFinanceSync">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -295,11 +324,16 @@ const canFinance = computed(() => auth.hasAny('ADMIN', 'FINANCE'))
 const rows = ref([])
 const filterBy = ref('')
 const followUp = ref('')
+const syncFilter = ref('')
 const selectedNo = computed(() => typeof route.query.no === 'string' ? route.query.no : '')
 const listRequest = latestOnly()
 const loader = useLoader(async () => {
   const current = listRequest()
-  const data = await http.get('/statements', { params: { statementNo: selectedNo.value || undefined, followUp: followUp.value || undefined } })
+  const data = await http.get('/statements', { params: {
+    statementNo: selectedNo.value || undefined,
+    followUp: followUp.value || undefined,
+    financeSyncStatus: syncFilter.value || undefined
+  } })
   if (current()) rows.value = data
 })
 const load = () => loader.run()
@@ -308,7 +342,7 @@ const filterOptions = computed(() => [...new Map(rows.value.map((r) => [r.status
   .map(([value, label]) => ({ value, label })))
 const t = usePaged(rows, { match: textMatch('statementNo', 'supplierName', 'invoiceNo', (r) => r.invoices?.map((i) => i.invoiceNo).join(' ')),
   extra: (r) => !filterBy.value || r.status === filterBy.value })
-watch([selectedNo, followUp], () => {
+watch([selectedNo, followUp, syncFilter], () => {
   rows.value = []
   filterBy.value = ''
   t.keyword.value = ''
@@ -471,6 +505,36 @@ async function submitPay() {
     load()
   } finally {
     pa.saving = false
+  }
+}
+
+const fs = reactive({ visible: false, saving: false, s: null, syncStatus: 'SYNCED', extVoucherNo: '', note: '' })
+function openFinanceSync(row) {
+  Object.assign(fs, {
+    visible: true,
+    saving: false,
+    s: row,
+    syncStatus: row.financeSyncStatus || 'PENDING',
+    extVoucherNo: row.extVoucherNo || '',
+    note: row.financeSyncNote || ''
+  })
+}
+async function submitFinanceSync() {
+  if (fs.syncStatus === 'SYNCED' && !fs.extVoucherNo.trim()) {
+    return ElMessage.warning('标记已制证时请填写外部财务凭证号')
+  }
+  fs.saving = true
+  try {
+    await http.post(`/statements/${fs.s.id}/finance-sync`, {
+      syncStatus: fs.syncStatus,
+      extVoucherNo: fs.extVoucherNo,
+      note: fs.note
+    })
+    ElMessage.success('财务凭证状态已更新')
+    fs.visible = false
+    load()
+  } finally {
+    fs.saving = false
   }
 }
 

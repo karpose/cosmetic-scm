@@ -10,6 +10,7 @@ import com.cosmetic.scm.settlement.SettlementService.ApproveReq;
 import com.cosmetic.scm.settlement.SettlementService.BatchInvoiceReq;
 import com.cosmetic.scm.settlement.SettlementService.CancelReq;
 import com.cosmetic.scm.settlement.SettlementService.CreateReq;
+import com.cosmetic.scm.settlement.SettlementService.FinanceSyncReq;
 import com.cosmetic.scm.settlement.SettlementService.FollowUp;
 import com.cosmetic.scm.settlement.SettlementService.InvoiceReq;
 import com.cosmetic.scm.settlement.SettlementService.PayReq;
@@ -45,8 +46,10 @@ public class SettlementController {
 
     @GetMapping
     @PreAuthorize(READ)
-    public List<StatementView> list(@RequestParam(required = false) String statementNo, @RequestParam(required = false) FollowUp followUp) {
-        return settlement.list(statementNo, followUp);
+    public List<StatementView> list(@RequestParam(required = false) String statementNo,
+                                    @RequestParam(required = false) FollowUp followUp,
+                                    @RequestParam(required = false) FinanceSyncStatus financeSyncStatus) {
+        return settlement.list(statementNo, followUp, financeSyncStatus);
     }
 
     @GetMapping("/preview")
@@ -101,6 +104,12 @@ public class SettlementController {
     @PreAuthorize(FINANCE)
     public StatementView refund(@PathVariable Long id, @Valid @RequestBody PayReq req) {
         return settlement.refund(id, req);
+    }
+
+    @PostMapping("/{id}/finance-sync")
+    @PreAuthorize(FINANCE)
+    public StatementView updateFinanceSync(@PathVariable Long id, @Valid @RequestBody FinanceSyncReq req) {
+        return settlement.updateFinanceSync(id, req);
     }
 
     @GetMapping("/finance-vouchers")
