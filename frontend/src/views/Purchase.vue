@@ -7,6 +7,7 @@
       </div>
       <div class="toolbar">
         <ExportButton report="purchases" />
+        <el-button v-if="canSeePrice" @click="openPriceList">供应商协议价</el-button>
         <el-button v-if="canCreate" type="primary" @click="openCreate">新建采购单</el-button>
       </div>
     </div>
@@ -66,7 +67,7 @@
     <el-dialog v-model="create.visible" title="新建采购单" width="640px">
       <el-form label-position="top" @submit.prevent>
         <el-form-item label="供应商">
-          <el-select id="po-supplier" v-model="create.supplierId" placeholder="选择供应商" filterable style="width:100%">
+          <el-select id="po-supplier" v-model="create.supplierId" placeholder="选择供应商" filterable style="width:100%" @change="refreshContractPrices">
             <el-option v-for="p in rd.suppliers.value" :key="p.id" :value="p.id" :disabled="!p.usable"
                        :label="p.name + (p.usable ? '' : (p.qualified ? '（资质已过期）' : '（未进合格名录）'))" />
           </el-select>
@@ -78,15 +79,20 @@
         <el-form-item label="物料与数量">
           <div style="width:100%">
             <div v-for="(l, i) in create.lines" :key="i" class="line-row">
-              <el-select aria-label="物料" :id="`po-item-${i}`" v-model="l.itemId" placeholder="选择物料" filterable>
+              <el-select aria-label="物料" :id="`po-item-${i}`" v-model="l.itemId" placeholder="选择物料" filterable @change="() => fetchContractPrice(l)">
                 <el-option v-for="m in rd.materials.value" :key="m.id" :value="m.id" :disabled="m.banned"
                            :label="`${m.code} ${m.name}${m.banned ? '（禁用原料）' : ''}`" />
               </el-select>
               <el-input-number :id="`po-qty-${i}`" v-model="l.qty" :min="0" :precision="4" :controls="false" placeholder="数量" style="width:100%" />
               <el-button text :disabled="create.lines.length === 1" @click="create.lines.splice(i, 1)">删除</el-button>
               <div class="price-row">
-                <el-input-number :id="`po-price-${i}`" aria-label="含税单价" v-model="l.unitPrice" :min="0" :precision="4" :controls="false" placeholder="含税单价（选填，对账按它算）" style="width:100%" />
+                <el-input-number :id="`po-price-${i}`" aria-label="含税单价" v-model="l.unitPrice" :min="0" :precision="4" :controls="false" placeholder="含税单价（留空自动取协议价）" style="width:100%" />
                 <el-input-number :id="`po-tax-${i}`" aria-label="税率" v-model="l.taxRate" :min="0" :max="100" :precision="2" :controls="false" :placeholder="`默认 ${fmtQty(createDefaultTaxRate)}%`" style="width:100%" />
+              </div>
+              <div v-if="l.contractPrice != null" class="small" style="grid-column:1 / -1">
+                <el-tag size="small" :type="l.unitPrice != null && Number(l.unitPrice) !== Number(l.contractPrice) ? 'warning' : 'success'" disable-transitions>
+                  协议价 ¥{{ fmtQty(l.contractPrice) }}（税率 {{ fmtQty(l.contractTaxRate) }}%）{{ l.unitPrice != null && Number(l.unitPrice) !== Number(l.contractPrice) ? ' · 当前单价偏离协议价' : '' }}
+                </el-tag>
               </div>
             </div>
             <el-button size="small" @click="create.lines.push(newPurchaseLine())">添加一行</el-button>
@@ -192,6 +198,42 @@
                    @click="resolveReceiptDispute">发送答复</el-button>
       </template>
     </el-dialog>
+    <!-- 供应商协议价管理 -->
+    <el-dialog v-model="pl.visible" title="供应商协议价 / 价目表" width="840px">
+      <div v-if="canCreate" class="form-grid" style="margin-bottom:12px;align-items:end">
+        <el-select v-model="pl.form.supplierId" placeholder="供应商" filterable>
+          <el-option v-for="p in rd.suppliers.value" :key="p.id" :value="p.id" :label="p.name" />
+        </el-select>
+        <el-select v-model="pl.form.itemId" placeholder="物料" filterable>
+          <el-option v-for="m in rd.materials.value" :key="m.id" :value="m.id" :label="`${m.code} ${m.name}`" />
+        </el-select>
+        <el-input-number v-model="pl.form.unitPrice" :min="0" :precision="4" :controls="false" placeholder="含税协议价" style="width:100%" />
+        <el-input-number v-model="pl.form.taxRate" :min="0" :max="100" :precision="2" :controls="false" placeholder="税率 %" style="width:100%" />
+        <el-date-picker v-model="pl.form.validFrom" type="date" value-format="YYYY-MM-DD" placeholder="生效日期" style="width:100%" />
+        <el-date-picker v-model="pl.form.validTo" type="date" value-format="YYYY-MM-DD" placeholder="失效日期（选填）" clearable style="width:100%" />
+        <el-input v-model="pl.form.note" maxlength="300" placeholder="备注（如年度框架协议）" />
+        <el-button type="primary" :loading="pl.saving" @click="submitPriceItem">新增协议价</el-button>
+      </div>
+      <el-table :data="pl.rows" v-loading="pl.loading" size="small" max-height="360" empty-text="暂未维护协议价">
+        <el-table-column prop="supplierName" label="供应商" min-width="140" />
+        <el-table-column label="物料" min-width="150"><template #default="{ row }">{{ row.itemName }} <span class="muted small mono">{{ row.itemCode }}</span></template></el-table-column>
+        <el-table-column label="含税单价" width="110" align="right"><template #default="{ row }"><span class="mono">¥{{ fmtQty(row.unitPrice) }}</span></template></el-table-column>
+        <el-table-column label="税率" width="75" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.taxRate) }}%</span></template></el-table-column>
+        <el-table-column label="有效期" width="175"><template #default="{ row }"><span class="mono small">{{ row.validFrom }} ~ {{ row.validTo || '长期' }}</span></template></el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="!row.active ? 'info' : row.effectiveToday ? 'success' : 'warning'" disable-transitions>
+              {{ !row.active ? '已停用' : row.effectiveToday ? '生效中' : '未生效/过期' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="canCreate" label="" width="80">
+          <template #default="{ row }">
+            <el-button v-if="row.active" size="small" text type="danger" @click="deactivatePrice(row)">停用</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
@@ -231,6 +273,7 @@ const t = usePaged(orders, {
   extra: (r) => !filterBy.value || r.status === filterBy.value
 })
 const canCreate = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
+const canSeePrice = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE'))
 const canReceive = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'WAREHOUSE'))
 const isOpen = (row) => row.status === 'OPEN' || row.status === 'PARTIAL'
 
@@ -408,6 +451,52 @@ async function submitReceive() {
 }
 
 onMounted(() => Promise.all([load(), rd.load()]))
+async function fetchContractPrice(line) {
+  line.contractPrice = null
+  line.contractTaxRate = null
+  if (!create.supplierId || !line.itemId) return
+  const res = await http.get('/supplier-prices/effective', { params: { supplierId: create.supplierId, itemId: line.itemId } })
+  if (res) {
+    line.contractPrice = Number(res.unitPrice)
+    line.contractTaxRate = Number(res.taxRate)
+    if (line.unitPrice == null) line.unitPrice = Number(res.unitPrice)
+    if (line.taxRate == null) line.taxRate = Number(res.taxRate)
+  }
+}
+function refreshContractPrices() {
+  create.lines.forEach((l) => fetchContractPrice(l))
+}
+
+const pl = reactive({
+  visible: false, loading: false, saving: false, rows: [],
+  form: { supplierId: null, itemId: null, unitPrice: undefined, taxRate: 13, validFrom: today(), validTo: null, note: '' }
+})
+async function loadPriceList() {
+  pl.loading = true
+  try { pl.rows = await http.get('/supplier-prices') } finally { pl.loading = false }
+}
+async function openPriceList() {
+  await rd.ready()
+  pl.visible = true
+  loadPriceList()
+}
+async function submitPriceItem() {
+  if (!pl.form.supplierId || !pl.form.itemId || !(pl.form.unitPrice > 0) || !pl.form.validFrom) {
+    return ElMessage.warning('请填写供应商、物料、协议价与生效日期')
+  }
+  pl.saving = true
+  try {
+    await http.post('/supplier-prices', pl.form)
+    ElMessage.success('协议价已保存')
+    Object.assign(pl.form, { itemId: null, unitPrice: undefined, note: '' })
+    loadPriceList()
+  } finally { pl.saving = false }
+}
+async function deactivatePrice(row) {
+  await http.post(`/supplier-prices/${row.id}/deactivate`)
+  ElMessage.success('已停用')
+  loadPriceList()
+}
 </script>
 
 <style scoped>

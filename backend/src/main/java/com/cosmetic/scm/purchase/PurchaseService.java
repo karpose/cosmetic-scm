@@ -67,6 +67,7 @@ public class PurchaseService {
     private final com.cosmetic.scm.security.UserRepository users;
     private final com.cosmetic.scm.settlement.SupplierStatementLineRepository statementLines;
     private final com.cosmetic.scm.master.RegulatoryService regulatory;
+    private final com.cosmetic.scm.sourcing.SupplierPriceService supplierPrices;
 
     public record PoLineReq(@NotNull Long itemId, @NotNull @Positive @Qty BigDecimal qty,
                             @Positive(message = "单价要大于 0") @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "单价最多 14 位整数、4 位小数") BigDecimal unitPrice,
@@ -203,6 +204,7 @@ public class PurchaseService {
         po.setExpectedDate(req.expectedDate());
         orders.save(po);
         int no = 1;
+        List<String> deviations = new ArrayList<>();
         for (PoLineReq l : req.lines()) {
             PoLine line = new PoLine();
             line.setPoId(po.getId());
@@ -210,12 +212,22 @@ public class PurchaseService {
             line.setItemId(l.itemId());
             line.setQty(l.qty());
             line.setReceivedQty(BigDecimal.ZERO);
-            line.setUnitPrice(l.unitPrice());
-            BigDecimal rate = l.taxRate() != null ? l.taxRate() : supplier.getDefaultTaxRate();
-            line.setTaxRate(l.unitPrice() == null ? null : rate);
+            var contract = supplierPrices.effectivePrice(supplier.getId(), l.itemId(), today).orElse(null);
+            BigDecimal resolvedPrice = l.unitPrice() != null ? l.unitPrice() : (contract == null ? null : contract.getUnitPrice());
+            BigDecimal resolvedRate = l.taxRate() != null ? l.taxRate()
+                    : (contract != null ? contract.getTaxRate() : supplier.getDefaultTaxRate());
+            line.setUnitPrice(resolvedPrice);
+            line.setTaxRate(resolvedPrice == null ? null : resolvedRate);
             lines.save(line);
+            if (contract != null && l.unitPrice() != null && l.unitPrice().compareTo(contract.getUnitPrice()) != 0) {
+                Item item = lookup.item(l.itemId());
+                deviations.add(item.getName() + " 协议价 " + plain(contract.getUnitPrice()) + "，下单价 " + plain(l.unitPrice()));
+            }
         }
         audit.log("新建采购单", po.getPoNo(), supplier.getName() + "，" + req.lines().size() + " 行");
+        if (!deviations.isEmpty()) {
+            audit.logMoney("采购单偏离协议价", po.getPoNo(), supplier.getName() + "：" + String.join("；", deviations));
+        }
         return get(po.getId());
     }
 
