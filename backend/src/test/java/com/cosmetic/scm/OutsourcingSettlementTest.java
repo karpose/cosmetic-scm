@@ -55,6 +55,8 @@ class OutsourcingSettlementTest {
     @Autowired ItemRepository items;
     @Autowired BatchRepository batches;
     @Autowired MfgOrderRepository mfgOrders;
+    @Autowired com.cosmetic.scm.security.UserRepository users;
+    @Autowired com.cosmetic.scm.security.UserService userService;
     @Autowired TimeProvider time;
 
     private LocalDate d(int n) {
@@ -193,5 +195,26 @@ class OutsourcingSettlementTest {
         assertThat(oemVoucher.get("statementType").asText()).isEqualTo("OUTSOURCING");
         assertThat(oemVoucher.get("financeCode").asText()).isEqualTo("ERP-OEM-041");
         assertThat(oemVoucher.get("totalAmount").decimalValue()).isEqualByComparingTo("1060.00");
+
+        // 5. 受托厂门户（OEM Portal）在线确认、登记发票与跨厂隔离
+        if (!users.existsByUsername("oem_portal_41")) {
+            userService.newUser("oem_portal_41", "oem_portal_41", PWD, java.util.EnumSet.of(com.cosmetic.scm.domain.Role.OEM_PORTAL), oem.getId(), false);
+        }
+        Partner otherOem = partners.findByCode("OEM-SET-41-B").orElseGet(() -> {
+            Partner n = new Partner();
+            n.setCode("OEM-SET-41-B");
+            n.setName("其他委外厂");
+            n.setKind(PartnerKind.OEM);
+            n.setQualified(true);
+            return partners.save(n);
+        });
+        if (!users.existsByUsername("oem_portal_41_b")) {
+            userService.newUser("oem_portal_41_b", "oem_portal_41_b", PWD, java.util.EnumSet.of(com.cosmetic.scm.domain.Role.OEM_PORTAL), otherOem.getId(), false);
+        }
+        String oemToken = login("oem_portal_41");
+        String otherOemToken = login("oem_portal_41_b");
+        assertThat(body(read(oemToken, "/api/portal/oem/statements").andExpect(status().isOk())).findValuesAsText("statementNo")).contains(stNo);
+        assertThat(body(read(otherOemToken, "/api/portal/oem/statements").andExpect(status().isOk())).findValuesAsText("statementNo")).doesNotContain(stNo);
+        call(otherOemToken, "/api/portal/oem/statements/" + stId + "/confirm", Map.of()).andExpect(status().isNotFound());
     }
 }

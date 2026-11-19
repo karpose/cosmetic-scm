@@ -11,12 +11,44 @@
     <el-tabs v-model="tab" class="seg">
       <el-tab-pane :label="`进行中（${active.length}）`" name="active" />
       <el-tab-pane :label="`已结束（${finished.length}）`" name="done" />
+      <el-tab-pane :label="`委外对账（${statements.length}）`" name="statements" />
     </el-tabs>
 
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
+    <template v-else-if="tab === 'statements'">
+      <el-empty v-if="!statements.length && !loader.loading.value" description="还没有委外加工费对账单" />
+      <div v-else class="cards">
+        <section v-for="s in statements" :key="s.id" class="order glass">
+          <header class="oh">
+            <div>
+              <div class="mono muted small">{{ s.statementNo }} · 截止 {{ s.periodTo }} · 到期 {{ s.dueDate }}</div>
+              <h3>合计 <span class="mono">¥{{ fmtMoney(s.totalAmount) }}</span> <span class="muted small">（已结 ¥{{ fmtMoney(s.paidAmount) }}）</span></h3>
+            </div>
+            <div class="tags">
+              <StatusTag :status="s.status" :label="s.statusLabel" />
+            </div>
+          </header>
+          <el-table :data="s.lines" size="small">
+            <el-table-column prop="poNo" label="委托单号" width="150" />
+            <el-table-column prop="batchNo" label="产出批号" width="150" />
+            <el-table-column prop="itemName" label="成品" min-width="140" />
+            <el-table-column label="数量" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span></template></el-table-column>
+            <el-table-column label="加工费" width="95" align="right"><template #default="{ row }"><span class="mono">¥{{ fmtQty(row.unitPrice) }}</span></template></el-table-column>
+            <el-table-column label="税率" width="75" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.taxRate) }}%</span></template></el-table-column>
+            <el-table-column label="含税金额" width="110" align="right"><template #default="{ row }"><span class="mono">¥{{ fmtMoney(row.amount) }}</span></template></el-table-column>
+          </el-table>
+          <footer class="toolbar" style="margin-top:8px">
+            <el-button v-if="s.status === 'SENT'" type="primary" size="small" @click="confirmStatement(s)">确认对账</el-button>
+            <el-button v-if="s.status === 'SENT'" size="small" @click="disputeStatement(s)">提出异议</el-button>
+            <el-button v-if="s.status === 'CONFIRMED'" type="primary" size="small" @click="openStInvoice(s)">登记加工费发票</el-button>
+            <span v-if="s.invoiceNo" class="muted small mono">发票：{{ s.invoiceNo }}（{{ s.invoiceDate }}）</span>
+          </footer>
+        </section>
+      </div>
+    </template>
     <el-empty v-else-if="!shown.length && !loader.loading.value" :description="tab === 'active' ? '目前没有进行中的委托单' : '还没有已结束的委托单'" />
 
-    <div class="cards">
+    <div v-else class="cards">
       <section v-for="o in shown" :key="o.id" class="order glass">
         <header class="oh">
           <div>
@@ -89,6 +121,20 @@
       </template>
     </el-dialog>
 
+    <!-- 登记委外加工费发票 -->
+    <el-dialog v-model="stInv.visible" :title="`登记加工费发票：${stInv.s?.statementNo || ''}`" width="460px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="发票号"><el-input v-model="stInv.invoiceNo" maxlength="60" /></el-form-item>
+        <el-form-item label="开票日期"><el-date-picker v-model="stInv.invoiceDate" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
+        <el-form-item label="税率 %"><el-input-number v-model="stInv.taxRate" :min="0" :max="100" :precision="2" :controls="false" style="width:100%" /></el-form-item>
+        <el-form-item label="含税金额"><el-input-number v-model="stInv.amount" :precision="2" :controls="false" style="width:100%" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="stInv.visible = false">取消</el-button>
+        <el-button type="primary" :loading="stInv.saving" @click="submitStInvoice">提交发票</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 申报完工 -->
     <el-dialog v-model="rp.visible" :title="`完工与出厂放行申报：${rp.order?.moNo || ''}`" width="700px" :close-on-click-modal="false">
       <el-form label-position="top" @submit.prevent>
@@ -123,19 +169,24 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import AttachmentList from '../components/AttachmentList.vue'
 import { useAuth } from '../stores/auth'
-import { OEM_STAGES, fmtQty, fmtTime, startOfBusinessDay, today } from '../utils/format'
+import { fmtMoney, OEM_STAGES, fmtQty, fmtTime, startOfBusinessDay, today } from '../utils/format'
 import { useLoader } from '../utils/loader'
 
 const auth = useAuth()
 const orders = ref([])
+const statements = ref([])
 const tab = ref('active')
-const loader = useLoader(async () => { orders.value = await http.get('/portal/oem/orders') })
+const loader = useLoader(async () => {
+  const [o, s] = await Promise.all([http.get('/portal/oem/orders'), http.get('/portal/oem/statements')])
+  orders.value = o
+  statements.value = s
+})
 const load = () => loader.run()
 
 const isClosed = (o) => o.status === 'COMPLETED' || o.status === 'CANCELLED'
@@ -203,6 +254,38 @@ async function submitReport() {
   } finally {
     rp.saving = false
   }
+}
+
+async function confirmStatement(s) {
+  await http.post(`/portal/oem/statements/${s.id}/confirm`)
+  ElMessage.success('已确认委外对账单，请登记加工费发票')
+  load()
+}
+async function disputeStatement(s) {
+  let note
+  try {
+    note = (await ElMessageBox.prompt('请写明异议原因，品牌方采购会跟进核对。', `对账异议 ${s.statementNo}`,
+      { confirmButtonText: '提交异议', cancelButtonText: '取消', inputValidator: (v) => !!v?.trim() || '请填写异议内容' })).value
+  } catch { return }
+  await http.post(`/portal/oem/statements/${s.id}/dispute`, { note })
+  ElMessage.success('已提交异议')
+  load()
+}
+const stInv = reactive({ visible: false, saving: false, s: null, invoiceNo: '', invoiceDate: today(), taxRate: 6, amount: 0 })
+function openStInvoice(s) {
+  Object.assign(stInv, { visible: true, saving: false, s, invoiceNo: '', invoiceDate: today(), taxRate: Number(s.taxBreakdown?.[0]?.taxRate ?? 6), amount: Number(s.totalAmount) })
+}
+async function submitStInvoice() {
+  if (!stInv.invoiceNo.trim() || !stInv.invoiceDate) return ElMessage.warning('请填写发票号与开票日期')
+  stInv.saving = true
+  try {
+    await http.post(`/portal/oem/statements/${stInv.s.id}/invoices`, {
+      invoices: [{ invoiceNo: stInv.invoiceNo, invoiceType: stInv.amount < 0 ? 'RED' : 'BLUE', invoiceDate: stInv.invoiceDate, taxRate: stInv.taxRate, amount: stInv.amount }]
+    })
+    ElMessage.success('加工费发票已提交，等待品牌方财务审批')
+    stInv.visible = false
+    load()
+  } finally { stInv.saving = false }
 }
 
 onMounted(load)
