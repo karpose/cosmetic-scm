@@ -7,6 +7,8 @@
       </div>
       <div class="toolbar">
         <ExportButton :report="activeTab === 'ledger' ? 'invoice-ledger' : activeTab === 'ar' ? 'ar-statements' : activeTab === 'aging' ? (ag.side === 'AR' ? 'ar-aging' : 'ap-aging') : 'statements'" />
+        <ExportButton v-if="canAr && activeTab === 'ar'" report="ar-invoice-ledger" label="导出销项台账" />
+        <el-button v-if="canAr && activeTab === 'ar'" @click="openCreditSummary">客户授信概览</el-button>
         <el-button v-if="canFinance && activeTab === 'statements'" @click="exportVouchers">导出应付凭证</el-button>
         <el-button v-if="canFinance && activeTab === 'ar'" @click="exportArVouchers">导出应收凭证</el-button>
         <el-button v-if="canBuy && activeTab === 'statements'" type="primary" @click="openCreate">生成对账单</el-button>
@@ -89,11 +91,12 @@
             <div v-if="row.extVoucherNo" class="small mono" style="margin-top:2px"><el-tag size="small" type="success" disable-transitions>凭证 {{ row.extVoucherNo }}</el-tag></div>
           </template>
         </el-table-column>
-        <el-table-column label="" width="210" :fixed="narrow ? false : 'right'">
+        <el-table-column label="" width="240" :fixed="narrow ? false : 'right'">
           <template #default="{ row }">
             <el-button v-if="row.status === 'DRAFT' && canFinance" size="small" @click="arInvoice(row)">登记销项票</el-button>
             <el-button v-if="row.status === 'INVOICED' && canFinance" size="small" type="primary" @click="arApprove(row)">审批</el-button>
             <el-button v-if="row.status === 'APPROVED' && canFinance" size="small" type="primary" @click="arReceive(row)">登记回款</el-button>
+            <el-button v-if="(row.status === 'DRAFT' || row.status === 'INVOICED') && canFinance" size="small" text @click="arCancel(row)">作废</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -448,11 +451,13 @@
         </el-descriptions>
         <el-table :data="arDt.s.lines" size="small" max-height="220" style="margin-top:12px">
           <el-table-column prop="soNo" label="出库单" width="135" />
-          <el-table-column prop="itemName" label="成品" min-width="130" />
+          <el-table-column label="成品" min-width="140">
+            <template #default="{ row }">{{ row.itemName }}<div v-if="row.returnNo" class="late small">退货冲减 {{ row.returnNo }}</div></template>
+          </el-table-column>
           <el-table-column label="数量" width="85" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span></template></el-table-column>
           <el-table-column label="单价" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.unitPrice) }}</span></template></el-table-column>
           <el-table-column label="税率" width="75" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.taxRate) }}%</span></template></el-table-column>
-          <el-table-column label="金额" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.amount) }}</span></template></el-table-column>
+          <el-table-column label="金额" width="105" align="right"><template #default="{ row }"><span class="mono" :class="{ late: Number(row.amount) < 0 }">{{ fmtMoney(row.amount) }}</span></template></el-table-column>
         </el-table>
         <div v-if="arDt.s.receipts?.length" style="margin-top:12px">
           <b class="small">回款记录</b>
@@ -461,6 +466,25 @@
           </div>
         </div>
       </template>
+    </el-dialog>
+
+    <el-dialog v-model="cs.visible" title="客户授信额度使用概览" width="820px">
+      <div style="margin-bottom:10px;display:flex;justify-content:flex-end">
+        <ExportButton report="customer-credit" />
+      </div>
+      <el-table :data="cs.rows" v-loading="cs.loading" size="small" empty-text="暂无客户数据">
+        <el-table-column label="客户" min-width="160"><template #default="{ row }">{{ row.customerName }}<div class="muted small mono">{{ row.customerCode }}</div></template></el-table-column>
+        <el-table-column label="授信额度" width="110" align="right"><template #default="{ row }"><span class="mono">{{ row.creditLimit != null ? fmtMoney(row.creditLimit) : '不限' }}</span></template></el-table-column>
+        <el-table-column label="未结应收" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.openAr) }}</span></template></el-table-column>
+        <el-table-column label="逾期应收" width="105" align="right"><template #default="{ row }"><span class="mono" :class="{ late: Number(row.overdueAr) > 0 }">{{ fmtMoney(row.overdueAr) }}</span></template></el-table-column>
+        <el-table-column label="可用额度" width="110" align="right"><template #default="{ row }"><span class="mono">{{ row.availableCredit != null ? fmtMoney(row.availableCredit) : '—' }}</span></template></el-table-column>
+        <el-table-column label="使用率" width="95" align="right">
+          <template #default="{ row }">
+            <el-tag v-if="row.overLimit" size="small" type="danger" disable-transitions>超额 {{ row.utilizationPct }}%</el-tag>
+            <span v-else class="mono">{{ row.utilizationPct != null ? `${row.utilizationPct}%` : '—' }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-dialog>
   </div>
 </template>
@@ -556,6 +580,19 @@ async function arReceive(row) {
   await http.post(`/ar-statements/${row.id}/receive`, { receiptDate: today(), amount: Number(amt) })
   ElMessage.success('回款已登记')
   loadAr()
+}
+async function arCancel(row) {
+  let reason
+  try { reason = (await ElMessageBox.prompt('作废后关联的出库行与退货行将释放可重新对账。', `作废应收单：${row.statementNo}`, { inputValidator: (v) => !!v?.trim() || '请填写作废原因' })).value } catch { return }
+  await http.post(`/ar-statements/${row.id}/cancel`, { reason })
+  ElMessage.success('客户应收对账单已作废')
+  loadAr()
+}
+const cs = reactive({ visible: false, loading: false, rows: [] })
+async function openCreditSummary() {
+  cs.visible = true
+  cs.loading = true
+  try { cs.rows = await http.get('/ar-statements/credit-summary') } finally { cs.loading = false }
 }
 async function exportArVouchers() {
   const data = await http.get('/ar-statements/finance-vouchers')

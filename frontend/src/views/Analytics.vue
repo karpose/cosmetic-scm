@@ -205,6 +205,38 @@
           </el-table-column>
         </el-table>
       </el-card>
+
+      <!-- 生产批次实际成本核算（仅价格权限角色可见） -->
+      <el-card v-if="canPrice" shadow="never" body-style="padding:0 0 8px">
+        <template #header>
+          <div class="ch">
+            <b>生产批次实际成本核算</b>
+            <div class="toolbar">
+              <el-button size="small" @click="loadBatchCosts">刷新</el-button>
+              <ExportButton report="batch-costs" />
+            </div>
+          </div>
+        </template>
+        <el-table :data="bc.rows" v-loading="bc.loading" size="small" empty-text="暂无已完工生产单成本数据">
+          <el-table-column label="生产单 / 批号" width="165">
+            <template #default="{ row }"><span class="mono">{{ row.moNo }}</span><div class="muted small mono">{{ row.outBatchNo }}</div></template>
+          </el-table-column>
+          <el-table-column label="成品 / 生产方" min-width="170">
+            <template #default="{ row }">{{ row.fgName }}<div class="muted small">{{ row.moTypeLabel }} · {{ row.factoryName }}</div></template>
+          </el-table-column>
+          <el-table-column label="实际产量" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.actualQty) }}</span></template></el-table-column>
+          <el-table-column label="领料成本" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.materialCost) }}</span></template></el-table-column>
+          <el-table-column label="委外加工费" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.processingCost) }}</span></template></el-table-column>
+          <el-table-column label="实际单位成本" width="115" align="right"><template #default="{ row }"><b class="mono">{{ fmtMoney(row.actualUnitCost) }}</b></template></el-table-column>
+          <el-table-column label="标准成本" width="100" align="right"><template #default="{ row }"><span class="mono">{{ row.stdUnitCost != null ? fmtMoney(row.stdUnitCost) : '—' }}</span></template></el-table-column>
+          <el-table-column label="偏差" width="90" align="right">
+            <template #default="{ row }">
+              <span v-if="row.variancePct != null" class="mono" :class="{ bad: Number(row.variancePct) > 5 }">{{ Number(row.variancePct) > 0 ? '+' : '' }}{{ row.variancePct }}%</span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
     </template>
 
     <div v-show="tip.show" class="tip glass" :style="{ left: `${tip.x}px`, top: `${tip.y}px` }">{{ tip.text }}</div>
@@ -219,6 +251,7 @@ import BatchNo from '../components/BatchNo.vue'
 import ExportButton from '../components/ExportButton.vue'
 import LoadError from '../components/LoadError.vue'
 import ShelfBar from '../components/ShelfBar.vue'
+import { useAuth } from '../stores/auth'
 import { fmtMoney, fmtQty, fmtTime } from '../utils/format'
 import { useLoader } from '../utils/loader'
 
@@ -295,7 +328,16 @@ async function loadPerf() {
   }
 }
 
-onMounted(() => { load(); loadPerf() })
+const auth = useAuth()
+const canPrice = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE'))
+const bc = reactive({ loading: false, rows: [] })
+async function loadBatchCosts() {
+  if (!canPrice.value) return
+  bc.loading = true
+  try { bc.rows = await http.get('/analytics/batch-costs') } finally { bc.loading = false }
+}
+
+onMounted(() => { load(); loadPerf(); loadBatchCosts() })
 </script>
 
 <style scoped>

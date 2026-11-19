@@ -57,6 +57,7 @@ public class ReportService {
     private final com.cosmetic.scm.sourcing.SupplierPriceService supplierPrices;
     private final com.cosmetic.scm.sales.CustomerPriceService customerPrices;
     private final com.cosmetic.scm.analytics.SupplierPerformanceService supplierPerformance;
+    private final com.cosmetic.scm.analytics.BatchCostingService batchCosting;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnService supplierReturns;
     private final EquipmentService equipment;
     private final AuditService audit;
@@ -84,11 +85,14 @@ public class ReportService {
         m.put("audit", () -> auditLogs(from, to));
         m.put("statements", this::statements);
         m.put("ar-statements", this::arStatements);
+        m.put("ar-invoice-ledger", () -> arInvoiceLedger(from, to));
+        m.put("customer-credit", this::customerCreditSummary);
         m.put("ap-aging", () -> agingTable(agingAnalysis.apAging(), "应付账龄分析"));
         m.put("ar-aging", () -> agingTable(agingAnalysis.arAging(), "应收账龄分析"));
         m.put("invoice-ledger", () -> invoiceLedger(from, to));
         m.put("supplier-prices", this::supplierPriceList);
         m.put("customer-prices", this::customerPriceList);
+        m.put("batch-costs", this::batchCosts);
         m.put("supplier-performance", () -> supplierPerformanceReport(from, to));
         m.put("supplier-returns", this::supplierReturns);
         m.put("stability", this::stabilityResults);
@@ -99,10 +103,10 @@ public class ReportService {
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to) {
         // 金额只给采购和财务看，应收报表给销售、财务和管理员看，其它报表所有内部岗位都能导
-        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
-            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与发票数据");
+        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "batch-costs".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
+            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与成本数据");
         }
-        if (("ar-statements".equals(key) || "ar-aging".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
+        if (("ar-statements".equals(key) || "ar-aging".equals(key) || "ar-invoice-ledger".equals(key) || "customer-credit".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出客户应收对账数据");
         }
         Supplier<Table> source = registry(from, to).get(key);
@@ -165,6 +169,36 @@ public class ReportService {
                 rep.notDue(), rep.days1to30(), rep.days31to60(), rep.days61to90(), rep.over90(), rep.total()));
         return new Table(title, List.of("往来单位编码", "往来单位名称", "未结单数",
                 "未到期", "逾期 1-30 天", "逾期 31-60 天", "逾期 61-90 天", "逾期 90 天以上", "未结合计"), rows);
+    }
+
+    private Table arInvoiceLedger(LocalDate from, LocalDate to) {
+        List<List<Object>> rows = new ArrayList<>();
+        arSettlement.invoiceLedger(from, to, null).rows().forEach(r -> rows.add(row(
+                r.invoiceMonth(), r.invoiceDate(), r.invoiceNo(), r.customerCode(), r.customerName(),
+                r.customerTaxId(), r.financeCode(), r.statementNo(), r.statementStatusLabel(),
+                r.netAmount(), r.taxAmount(), r.amount(), r.approvedBy())));
+        return new Table("销项发票台账", List.of("开票月份", "开票日期", "销项发票号", "客户编码", "客户名称",
+                "客户税号", "财务客商编码", "关联应收单", "状态", "不含税金额", "销项税额", "含税合计", "审批人"), rows);
+    }
+
+    private Table customerCreditSummary() {
+        List<List<Object>> rows = new ArrayList<>();
+        arSettlement.creditSummary().forEach(r -> rows.add(row(
+                r.customerCode(), r.customerName(), r.channel(), r.defaultCreditDays(),
+                r.creditLimit(), r.openCount(), r.openAr(), r.overdueAr(), r.availableCredit(),
+                r.utilizationPct(), r.overLimit() ? "超额" : "正常")));
+        return new Table("客户授信使用概览", List.of("客户编码", "客户名称", "渠道", "默认账期（天）",
+                "授信额度", "未结单数", "未结应收", "逾期应收", "剩余可用额度", "使用率（%）", "状态"), rows);
+    }
+
+    private Table batchCosts() {
+        List<List<Object>> rows = new ArrayList<>();
+        batchCosting.report().forEach(r -> rows.add(row(
+                r.moNo(), r.moTypeLabel(), r.factoryName(), r.fgCode(), r.fgName(), r.outBatchNo(),
+                r.actualQty(), r.materialCost(), r.processingCost(), r.totalCost(),
+                r.actualUnitCost(), r.stdUnitCost(), r.variancePct(), r.completedAt())));
+        return new Table("生产批次实际成本", List.of("生产单号", "类型", "生产方", "成品编码", "成品名称", "产出批号",
+                "实际产量", "领料成本", "委外加工费", "总成本", "实际单位成本", "标准单位成本", "偏差（%）", "完工时间"), rows);
     }
 
     private Table invoiceLedger(LocalDate from, LocalDate to) {
