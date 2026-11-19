@@ -55,6 +55,7 @@ public class ReportService {
     private final com.cosmetic.scm.settlement.ArSettlementService arSettlement;
     private final com.cosmetic.scm.settlement.AgingAnalysisService agingAnalysis;
     private final com.cosmetic.scm.sourcing.SupplierPriceService supplierPrices;
+    private final com.cosmetic.scm.sales.CustomerPriceService customerPrices;
     private final com.cosmetic.scm.analytics.SupplierPerformanceService supplierPerformance;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnService supplierReturns;
     private final EquipmentService equipment;
@@ -87,6 +88,7 @@ public class ReportService {
         m.put("ar-aging", () -> agingTable(agingAnalysis.arAging(), "应收账龄分析"));
         m.put("invoice-ledger", () -> invoiceLedger(from, to));
         m.put("supplier-prices", this::supplierPriceList);
+        m.put("customer-prices", this::customerPriceList);
         m.put("supplier-performance", () -> supplierPerformanceReport(from, to));
         m.put("supplier-returns", this::supplierReturns);
         m.put("stability", this::stabilityResults);
@@ -100,7 +102,7 @@ public class ReportService {
         if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与发票数据");
         }
-        if (("ar-statements".equals(key) || "ar-aging".equals(key)) && !arReportAllowed()) {
+        if (("ar-statements".equals(key) || "ar-aging".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出客户应收对账数据");
         }
         Supplier<Table> source = registry(from, to).get(key);
@@ -184,6 +186,16 @@ public class ReportService {
                 !p.active() ? "已停用" : p.effectiveToday() ? "生效中" : "未生效/过期", p.note(), p.updatedBy(), p.updatedAt())));
         return new Table("供应商协议价", List.of("供应商编码", "供应商", "物料编码", "物料名称", "单位",
                 "含税协议价", "税率（%）", "生效日期", "失效日期", "状态", "备注", "维护人", "更新时间"), rows);
+    }
+
+    private Table customerPriceList() {
+        List<List<Object>> rows = new ArrayList<>();
+        customerPrices.list(null, null, false).forEach(p -> rows.add(row(
+                p.customerCode(), p.customerName(), p.itemCode(), p.itemName(), p.unit(),
+                p.unitPrice(), p.taxRate(), p.validFrom(), p.validTo(),
+                !p.active() ? "已停用" : p.effectiveToday() ? "生效中" : "未生效/过期", p.note(), p.updatedBy(), p.updatedAt())));
+        return new Table("客户协议价", List.of("客户编码", "客户名称", "成品编码", "成品名称", "单位",
+                "含税供货价", "税率（%）", "生效日期", "失效日期", "状态", "备注", "维护人", "更新时间"), rows);
     }
 
     private Table supplierPerformanceReport(LocalDate from, LocalDate to) {

@@ -6,12 +6,35 @@
         <p>出库时系统只分配已上市放行的批次，按“先到期先出”排序，并排除剩余效期达不到客户接收标准的批次。批号随出库单记录到客户，用于召回。</p>
       </div>
       <div class="toolbar">
-        <ExportButton report="shipments" />
-        <el-button v-if="canCreate" type="primary" @click="openCreate">新建出库单</el-button>
+        <ExportButton :report="activeTab === 'prices' ? 'customer-prices' : 'shipments'" />
+        <el-button v-if="canCreate && activeTab === 'orders'" type="primary" @click="openCreate">新建出库单</el-button>
+        <el-button v-if="canPrice && activeTab === 'prices'" type="primary" @click="openPriceCreate">新增客户协议价</el-button>
       </div>
     </div>
 
-    <el-card shadow="never" body-style="padding:0 0 8px">
+    <el-tabs v-if="canPrice" v-model="activeTab" class="seg" @tab-change="onTabChange">
+      <el-tab-pane label="销售出库单" name="orders" />
+      <el-tab-pane label="客户协议价" name="prices" />
+    </el-tabs>
+
+    <el-card v-if="activeTab === 'prices'" shadow="never" body-style="padding:0 0 8px">
+      <el-table :data="cp.rows" v-loading="cp.loading" empty-text="还没有维护客户协议价">
+        <el-table-column label="客户" min-width="160"><template #default="{ row }">{{ row.customerName }}<div class="muted small mono">{{ row.customerCode }}</div></template></el-table-column>
+        <el-table-column label="成品" min-width="170"><template #default="{ row }">{{ row.itemName }}<div class="muted small mono">{{ row.itemCode }}</div></template></el-table-column>
+        <el-table-column label="含税供货价" width="120" align="right"><template #default="{ row }"><span class="mono">¥{{ fmtQty(row.unitPrice) }}</span></template></el-table-column>
+        <el-table-column label="税率" width="80" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.taxRate) }}%</span></template></el-table-column>
+        <el-table-column label="有效期" width="200"><template #default="{ row }"><span class="mono">{{ row.validFrom }} ~ {{ row.validTo || '长期' }}</span></template></el-table-column>
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }"><el-tag size="small" :type="!row.active ? 'info' : row.effectiveToday ? 'success' : 'warning'" disable-transitions>{{ !row.active ? '已停用' : row.effectiveToday ? '生效中' : '未生效/过期' }}</el-tag></template>
+        </el-table-column>
+        <el-table-column prop="note" label="备注" min-width="120" />
+        <el-table-column label="" width="90" fixed="right">
+          <template #default="{ row }"><el-button size="small" text @click="toggleCp(row)">{{ row.active ? '停用' : '启用' }}</el-button></template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card v-else shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="filters">
           <el-input v-model="t.keyword.value" placeholder="搜索单号、客户、批号" clearable />
@@ -94,6 +117,34 @@
         <el-button type="primary" :loading="form.saving" :disabled="!plan || !plan.fulfilled" @click="submit">确认出库</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="cpForm.visible" title="新增客户协议价" width="480px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="客户">
+          <el-select v-model="cpForm.customerId" filterable placeholder="选择客户" style="width:100%">
+            <el-option v-for="c in rd.customers.value" :key="c.id" :value="c.id" :label="c.name" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="成品">
+          <el-select v-model="cpForm.itemId" filterable placeholder="选择成品" style="width:100%">
+            <el-option v-for="f in rd.finished.value" :key="f.id" :value="f.id" :label="`${f.code} ${f.name}`" />
+          </el-select>
+        </el-form-item>
+        <div class="form-grid">
+          <el-form-item label="含税供货价"><el-input-number v-model="cpForm.unitPrice" :min="0" :precision="4" :controls="false" style="width:100%" /></el-form-item>
+          <el-form-item label="税率 %（留空取客户默认）"><el-input-number v-model="cpForm.taxRate" :min="0" :max="100" :precision="2" :controls="false" style="width:100%" /></el-form-item>
+        </div>
+        <div class="form-grid">
+          <el-form-item label="生效日期"><el-date-picker v-model="cpForm.validFrom" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
+          <el-form-item label="失效日期（留空长期有效）"><el-date-picker v-model="cpForm.validTo" type="date" value-format="YYYY-MM-DD" style="width:100%" clearable /></el-form-item>
+        </div>
+        <el-form-item label="备注（选填）"><el-input v-model="cpForm.note" maxlength="300" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="cpForm.visible = false">取消</el-button>
+        <el-button type="primary" :loading="cpForm.saving" @click="submitCp">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -126,6 +177,33 @@ const t = usePaged(orders, {
 const plan = ref(null)
 const canCreate = computed(() => auth.hasAny('ADMIN', 'SALES', 'WAREHOUSE'))
 const canPrice = computed(() => auth.hasAny('ADMIN', 'SALES', 'FINANCE'))
+const activeTab = ref('orders')
+const cp = reactive({ loading: false, rows: [] })
+const cpForm = reactive({ visible: false, saving: false, customerId: null, itemId: null, unitPrice: null, taxRate: null, validFrom: null, validTo: null, note: '' })
+async function loadCp() {
+  cp.loading = true
+  try { cp.rows = await http.get('/customer-prices') } finally { cp.loading = false }
+}
+function onTabChange(name) { if (name === 'prices') loadCp() }
+async function openPriceCreate() {
+  await rd.ready()
+  Object.assign(cpForm, { visible: true, saving: false, customerId: null, itemId: null, unitPrice: null, taxRate: null, validFrom: null, validTo: null, note: '' })
+}
+async function submitCp() {
+  if (!cpForm.customerId || !cpForm.itemId || !(cpForm.unitPrice > 0)) return ElMessage.warning('请填写客户、成品和含税供货价')
+  cpForm.saving = true
+  try {
+    await http.post('/customer-prices', { customerId: cpForm.customerId, itemId: cpForm.itemId, unitPrice: cpForm.unitPrice, taxRate: cpForm.taxRate, validFrom: cpForm.validFrom || null, validTo: cpForm.validTo || null, note: cpForm.note })
+    ElMessage.success('客户协议价已保存')
+    cpForm.visible = false
+    loadCp()
+  } finally { cpForm.saving = false }
+}
+async function toggleCp(row) {
+  await http.post(`/customer-prices/${row.id}/active`, null, { params: { active: !row.active } })
+  ElMessage.success(row.active ? '已停用' : '已启用')
+  loadCp()
+}
 const form = reactive({ visible: false, saving: false, customerId: null, warehouseId: null, lines: [] })
 const defaultTaxRate = computed(() => rd.customers.value.find((c) => c.id === form.customerId)?.defaultTaxRate ?? 13)
 

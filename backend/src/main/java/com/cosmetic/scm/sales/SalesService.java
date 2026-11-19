@@ -57,6 +57,7 @@ public class SalesService {
     private final BatchRepository batches;
     private final InventoryService inventory;
     private final MasterLookup lookup;
+    private final CustomerPriceService customerPrices;
     private final DocNoService docNo;
     private final AuditService audit;
     private final TimeProvider time;
@@ -200,6 +201,11 @@ public class SalesService {
                 }
                 line.setUnitPrice(lr.unitPrice());
                 line.setTaxRate(lr.taxRate() != null ? lr.taxRate() : defaultRate);
+            } else {
+                customerPrices.effectivePrice(plan.customer().getId(), item.getId(), today).ifPresent(cp -> {
+                    line.setUnitPrice(cp.getUnitPrice());
+                    line.setTaxRate(cp.getTaxRate() != null ? cp.getTaxRate() : defaultRate);
+                });
             }
             lines.save(line);
             List<FefoAllocator.Pick> picks = plan.results().get(i).picks();
