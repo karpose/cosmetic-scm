@@ -6,7 +6,7 @@
         <p>只结算检验放行的来料批次，按采购单价算金额，支持账期到期日计算、多税率拆分汇总、一单多票/红字发票及退货冲减退款登记。这里只做业务台账登记，不代替财务记账。</p>
       </div>
       <div class="toolbar">
-        <ExportButton v-if="activeTab !== 'ar'" :report="activeTab === 'ledger' ? 'invoice-ledger' : 'statements'" />
+        <ExportButton :report="activeTab === 'ledger' ? 'invoice-ledger' : activeTab === 'ar' ? 'ar-statements' : 'statements'" />
         <el-button v-if="canFinance && activeTab !== 'ar'" @click="exportVouchers">导出应付凭证</el-button>
         <el-button v-if="canFinance && activeTab === 'ar'" @click="exportArVouchers">导出应收凭证</el-button>
         <el-button v-if="canBuy && activeTab !== 'ar'" type="primary" @click="openCreate">生成对账单</el-button>
@@ -69,7 +69,7 @@
       <el-table :data="ar.rows" v-loading="ar.loading" empty-text="暂无客户应收对账单">
         <el-table-column label="应收单号" width="175">
           <template #default="{ row }">
-            <span class="mono">{{ row.statementNo }}</span>
+            <a href="#" class="mono" @click.prevent="arDt.s = row; arDt.visible = true">{{ row.statementNo }}</a>
             <div class="muted small mono">截止 {{ row.periodTo }} · 账期 {{ row.creditDays }}天</div>
             <div class="small mono" :class="{ late: row.overdue }">到期 {{ row.dueDate }} <el-tag v-if="row.overdue" size="small" type="danger" disable-transitions>逾期 {{ row.overdueDays }} 天</el-tag></div>
           </template>
@@ -407,6 +407,33 @@
         <el-button type="primary" :loading="arCr.saving" @click="submitArCreate">生成应收单</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="arDt.visible" :title="`客户应收对账单：${arDt.s?.statementNo || ''}`" width="780px">
+      <template v-if="arDt.s">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="客户">{{ arDt.s.customerName }}（{{ arDt.s.customerCode }}）</el-descriptions-item>
+          <el-descriptions-item label="状态"><StatusTag :status="arDt.s.status" :label="arDt.s.statusLabel" /></el-descriptions-item>
+          <el-descriptions-item label="账期与到期日"><span class="mono">{{ arDt.s.creditDays }} 天 · 到期 {{ arDt.s.dueDate }}</span></el-descriptions-item>
+          <el-descriptions-item label="应收合计"><b class="mono">¥{{ fmtMoney(arDt.s.totalAmount) }}</b>（已收 ¥{{ fmtMoney(arDt.s.receivedAmount) }} / 待收 ¥{{ fmtMoney(arDt.s.unreceived) }}）</el-descriptions-item>
+          <el-descriptions-item label="销项发票">{{ arDt.s.invoiceNo ? `${arDt.s.invoiceNo} · ${arDt.s.invoiceDate}` : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="财务凭证">{{ arDt.s.extVoucherNo || arDt.s.financeSyncLabel }}</el-descriptions-item>
+        </el-descriptions>
+        <el-table :data="arDt.s.lines" size="small" max-height="220" style="margin-top:12px">
+          <el-table-column prop="soNo" label="出库单" width="135" />
+          <el-table-column prop="itemName" label="成品" min-width="130" />
+          <el-table-column label="数量" width="85" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span></template></el-table-column>
+          <el-table-column label="单价" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.unitPrice) }}</span></template></el-table-column>
+          <el-table-column label="税率" width="75" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.taxRate) }}%</span></template></el-table-column>
+          <el-table-column label="金额" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.amount) }}</span></template></el-table-column>
+        </el-table>
+        <div v-if="arDt.s.receipts?.length" style="margin-top:12px">
+          <b class="small">回款记录</b>
+          <div v-for="(r, i) in arDt.s.receipts" :key="i" class="small mono">
+            {{ r.receiptDate }} · ¥{{ fmtMoney(r.amount) }} · {{ r.referenceNo || '无流水号' }}<span v-if="r.extReceiptNo">（回调 {{ r.extReceiptNo }}）</span>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -451,6 +478,7 @@ async function loadLedger() {
   }
 }
 const ar = reactive({ loading: false, rows: [] })
+const arDt = reactive({ visible: false, s: null })
 const arCr = reactive({ visible: false, saving: false, customerId: null, periodTo: null, creditDays: undefined, adjustment: undefined, adjustmentNote: '' })
 async function loadAr() {
   ar.loading = true
@@ -537,7 +565,10 @@ watch([selectedNo, followUp, syncFilter], () => {
 })
 const startOfToday = startOfBusinessDay()
 const canVoid = (s) => ['SENT', 'DISPUTED', 'CONFIRMED', 'INVOICED'].includes(s.status)
-onMounted(() => { load(); rd.load() })
+onMounted(() => {
+  if (route.query.tab === 'ar' && canAr.value) { activeTab.value = 'ar'; loadAr() }
+  load(); rd.load()
+})
 const narrow = ref(window.innerWidth <= 768)
 const onResize = () => { narrow.value = window.innerWidth <= 768 }
 onMounted(() => window.addEventListener('resize', onResize))

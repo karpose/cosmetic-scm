@@ -52,6 +52,7 @@ public class ReportService {
     private final RetainService retains;
     private final PurchaseService purchases;
     private final com.cosmetic.scm.settlement.SettlementService settlement;
+    private final com.cosmetic.scm.settlement.ArSettlementService arSettlement;
     private final com.cosmetic.scm.sourcing.SupplierPriceService supplierPrices;
     private final com.cosmetic.scm.analytics.SupplierPerformanceService supplierPerformance;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnService supplierReturns;
@@ -80,6 +81,7 @@ public class ReportService {
         m.put("equipment", this::equipmentList);
         m.put("audit", () -> auditLogs(from, to));
         m.put("statements", this::statements);
+        m.put("ar-statements", this::arStatements);
         m.put("invoice-ledger", () -> invoiceLedger(from, to));
         m.put("supplier-prices", this::supplierPriceList);
         m.put("supplier-performance", () -> supplierPerformanceReport(from, to));
@@ -91,9 +93,12 @@ public class ReportService {
 
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to) {
-        // 金额只给采购和财务看，其它报表所有内部岗位都能导
+        // 金额只给采购和财务看，应收报表给销售、财务和管理员看，其它报表所有内部岗位都能导
         if (("statements".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与发票数据");
+        }
+        if ("ar-statements".equals(key) && !arReportAllowed()) {
+            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出客户应收对账数据");
         }
         Supplier<Table> source = registry(from, to).get(key);
         if (source == null) {
@@ -120,6 +125,12 @@ public class ReportService {
                 "承运商", "运单号", "物流登记人", "物流登记时间", "签收登记人", "签收登记时间", "签收备注", "签收来源", "实际签收日期", "回单或凭证编号"), rows);
     }
 
+    private static boolean arReportAllowed() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream().anyMatch(a ->
+                "ROLE_ADMIN".equals(a.getAuthority()) || "ROLE_SALES".equals(a.getAuthority()) || "ROLE_FINANCE".equals(a.getAuthority()));
+    }
+
     private Table statements() {
         List<List<Object>> rows = new ArrayList<>();
         settlement.listAll().forEach(t -> rows.add(row(t.statementNo(), t.supplierName(), t.periodTo(), t.statusLabel(), t.goodsAmount(), t.taxAmount(), t.adjustment(), t.adjustmentNote(),
@@ -127,6 +138,18 @@ public class ReportService {
                 t.creditDays(), t.dueDate(), t.overdueDays(), t.totalAmount().signum() < 0 ? "供应商退款" : "付款")));
         return new Table("对账单", List.of("对账单", "供应商", "对账截止", "状态", "含税货款", "其中税额", "调整", "调整原因", "合计", "发票号", "发票日期",
                 "已结（退款为负）", "未结（退款为负）", "制单", "审批", "账期（天）", "到期日", "逾期天数", "收付方向"), rows);
+    }
+
+    private Table arStatements() {
+        List<List<Object>> rows = new ArrayList<>();
+        arSettlement.listAll().forEach(t -> rows.add(row(t.statementNo(), t.customerCode(), t.customerName(), t.customerTaxId(),
+                t.periodTo(), t.creditDays(), t.dueDate(), t.overdueDays(), t.statusLabel(),
+                t.goodsAmount(), t.taxAmount(), t.adjustment(), t.totalAmount(), t.receivedAmount(), t.unreceived(),
+                t.invoiceNo(), t.invoiceDate(), t.extVoucherNo(), t.createdBy(), t.approvedBy())));
+        return new Table("客户应收对账单", List.of("应收单号", "客户编码", "客户名称", "客户税号",
+                "对账截止", "账期（天）", "到期日", "逾期天数", "状态",
+                "含税货款", "销项税额", "调整金额", "应收合计", "已回款", "待回款",
+                "销项发票号", "开票日期", "外部凭证号", "制单", "审批"), rows);
     }
 
     private Table invoiceLedger(LocalDate from, LocalDate to) {

@@ -167,6 +167,16 @@ public class ArSettlementService {
         return views(statements.findTop300ByOrderByIdDesc());
     }
 
+    @Transactional(readOnly = true)
+    public List<ArStatementView> listAll() {
+        return views(statements.findAllByOrderByIdDesc());
+    }
+
+    @Transactional(readOnly = true)
+    public List<ArStatementView> listForCustomer(Long customerId) {
+        return views(statements.findByCustomerIdOrderByIdDesc(customerId));
+    }
+
     @Transactional
     public ArStatementView create(ArCreateReq req) {
         Partner customer = partners.lockById(req.customerId()).orElseThrow(() -> BizException.notFound("客户"));

@@ -77,6 +77,7 @@ public class DashboardService {
     private final com.cosmetic.scm.supplierreturn.SupplierReturnRepository supplierReturns;
     private final SupplierReturnService supplierReturnService;
     private final com.cosmetic.scm.settlement.SupplierStatementRepository statementRepo;
+    private final com.cosmetic.scm.settlement.CustomerStatementRepository customerStatementRepo;
     private final BatchRepository batches;
     private final MfgOrderRepository mfgOrders;
     private final SalesOrderRepository salesOrders;
@@ -336,6 +337,24 @@ public class DashboardService {
         for (SupplierStatement s : statementRepo.findByStatusAndInvoiceReviewVersionGreaterThanOrderById(StatementStatus.CONFIRMED, 0)) {
             todos.add(new Todo("STATEMENT_INVOICE_FIX", "对账发票待更正", "warn", lookup.partner(s.getSupplierId()).getName(), s.getStatementNo(),
                     "请跟进供应商重提发票，或由采购代登记", "/settlement?no=" + s.getStatementNo()));
+        }
+        for (com.cosmetic.scm.settlement.CustomerStatement ar : customerStatementRepo.findByStatusInOrderById(List.of("APPROVED"))) {
+            if (ar.outstandingAmount().signum() <= 0) {
+                continue;
+            }
+            String cname = lookup.partner(ar.getCustomerId()).getName();
+            LocalDate due = ar.getDueDate();
+            long lateDays = SettlementRule.overdueDays(due, today, false);
+            if (lateDays > 0) {
+                todos.add(new Todo("AR_COLLECT", "客户回款已逾期", "bad", cname, ar.getStatementNo(),
+                        "到期日 " + due + "，已逾期 " + lateDays + " 天", "/settlement?tab=ar"));
+            } else if (today.equals(due)) {
+                todos.add(new Todo("AR_COLLECT", "客户回款今日到期", "warn", cname, ar.getStatementNo(),
+                        "请核对并登记客户回款", "/settlement?tab=ar"));
+            } else if (due != null && !due.isAfter(today.plusDays(7))) {
+                todos.add(new Todo("AR_COLLECT", "客户回款即将到期", "info", cname, ar.getStatementNo(),
+                        "到期日 " + due, "/settlement?tab=ar"));
+            }
         }
         long channelFailed = integration.failedCount();
         if (channelFailed > 0) {

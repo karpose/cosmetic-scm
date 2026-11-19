@@ -164,5 +164,8 @@ class ArSettlementTest {
                         .content(json.writeValueAsString(cb)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.duplicate").value(true));
+
+        read(fin, "/api/reports/ar-statements").andExpect(status().isOk());
+        read(login("qa1"), "/api/reports/ar-statements").andExpect(status().isForbidden());
     }
 }

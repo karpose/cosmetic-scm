@@ -17,6 +17,10 @@ public interface CustomerStatementRepository extends JpaRepository<CustomerState
 
     List<CustomerStatement> findTop300ByOrderByIdDesc();
 
+    List<CustomerStatement> findAllByOrderByIdDesc();
+
+    List<CustomerStatement> findByCustomerIdOrderByIdDesc(Long customerId);
+
     Optional<CustomerStatement> findByStatementNo(String statementNo);
 
     List<CustomerStatement> findByStatusInOrderById(Collection<String> statuses);
