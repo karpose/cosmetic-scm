@@ -346,5 +346,40 @@ class FinanceIntegrationTest {
         String finLogs = read(login("finance1"), "/api/channel-orders/logs").andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         assertThat(finLogs).contains("BANK-PAY-001");
+
+        // 6. 进项发票台账查询、按月/税率汇总、导出权限与税号核验
+        JsonNode ledger = body(read(login("finance1"), "/api/statements/invoice-ledger?supplierId=" + supplierId).andExpect(status().isOk()));
+        assertThat(ledger.get("count").asInt()).isGreaterThanOrEqualTo(2);
+        assertThat(ledger.get("totalAmount").decimalValue()).isEqualByComparingTo("130.00");
+        assertThat(ledger.get("byMonth").size()).isGreaterThanOrEqualTo(1);
+        assertThat(ledger.get("byTaxRate").size()).isEqualTo(1);
+        read(login("finance1"), "/api/reports/invoice-ledger").andExpect(status().isOk());
+        read(login("viewer1"), "/api/reports/invoice-ledger").andExpect(status().isForbidden());
+        read(login("qa1"), "/api/statements/invoice-ledger").andExpect(status().isForbidden());
+
+        // 税号不一致拦截测试
+        String buyer = login("purchase1");
+        String sup = login("fin_39");
+        JsonNode po = body(call(buyer, "/api/purchase-orders", Map.of(
+                "supplierId", supplierId,
+                "lines", List.of(Map.of("itemId", item("RM-GLY-002"), "qty", 1, "unitPrice", 20, "taxRate", 13))
+        )).andExpect(status().isOk()));
+        JsonNode recv = body(call(buyer, "/api/purchase-orders/" + po.get("id").asLong() + "/receipts", Map.of(
+                "lines", List.of(Map.of("poLineId", po.get("lines").get(0).get("id").asLong(), "qty", 1, "extBatchNo", "EXT-TAX-CHK", "warehouseId", warehouseId()))
+        )).andExpect(status().isOk()));
+        Batch tb = batches.findByBatchNo(recv.get("batchNos").get(0).asText()).orElseThrow();
+        tb.setStatus(BatchStatus.RELEASED);
+        batches.save(tb);
+        long stTaxId = body(call(buyer, "/api/statements", Map.of("supplierId", supplierId, "periodTo", d(0).toString())).andExpect(status().isOk())).get("id").asLong();
+        call(sup, "/api/portal/supplier/statements/" + stTaxId + "/confirm", Map.of()).andExpect(status().isOk());
+        call(buyer, "/api/statements/" + stTaxId + "/invoices", Map.of("invoices", List.of(Map.of(
+                "invoiceNo", "INV-TAX-BAD", "invoiceType", "BLUE", "invoiceDate", d(0).toString(),
+                "taxRate", 13, "amount", 20, "sellerTaxId", "91000000000000000X"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("销方税号")));
+        call(buyer, "/api/statements/" + stTaxId + "/invoices", Map.of("invoices", List.of(Map.of(
+                "invoiceNo", "INV-TAX-OK", "invoiceType", "BLUE", "invoiceDate", d(0).toString(),
+                "taxRate", 13, "amount", 20, "sellerTaxId", "91310000MA1FL0099X"))))
+                .andExpect(status().isOk());
     }
 }

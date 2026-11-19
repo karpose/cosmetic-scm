@@ -6,13 +6,63 @@
         <p>只结算检验放行的来料批次，按采购单价算金额，支持账期到期日计算、多税率拆分汇总、一单多票/红字发票及退货冲减退款登记。这里只做业务台账登记，不代替财务记账。</p>
       </div>
       <div class="toolbar">
-        <ExportButton report="statements" />
+        <ExportButton :report="activeTab === 'ledger' ? 'invoice-ledger' : 'statements'" />
         <el-button v-if="canFinance" @click="exportVouchers">导出应付凭证</el-button>
         <el-button v-if="canBuy" type="primary" @click="openCreate">生成对账单</el-button>
       </div>
     </div>
 
-    <el-card shadow="never" body-style="padding:0 0 8px">
+    <el-tabs v-if="!selectedNo" v-model="activeTab" class="seg" @tab-change="onTabChange">
+      <el-tab-pane label="对账单" name="statements" />
+      <el-tab-pane label="进项发票台账" name="ledger" />
+    </el-tabs>
+
+    <el-card v-if="activeTab === 'ledger' && !selectedNo" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-date-picker v-model="lg.from" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" clearable @change="loadLedger" />
+          <el-date-picker v-model="lg.to" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" clearable @change="loadLedger" />
+          <el-select v-model="lg.invoiceType" placeholder="全部票种" clearable @change="loadLedger">
+            <el-option value="BLUE" label="蓝字发票" />
+            <el-option value="RED" label="红字发票" />
+          </el-select>
+          <el-button @click="loadLedger">查询</el-button>
+        </div>
+        <div v-if="lg.data" class="muted small" style="margin-top:8px">
+          共 <b class="mono">{{ lg.data.count }}</b> 张发票 · 含税合计 <b class="mono">¥{{ fmtMoney(lg.data.totalAmount) }}</b> · 不含税 <b class="mono">¥{{ fmtMoney(lg.data.totalNetAmount) }}</b> · 进项税额 <b class="mono">¥{{ fmtMoney(lg.data.totalTaxAmount) }}</b>
+          <span v-for="tb in lg.data.byTaxRate" :key="tb.taxRate" class="mono" style="margin-left:10px">
+            [{{ fmtQty(tb.taxRate) }}%: 税额 ¥{{ fmtMoney(tb.taxAmount) }}]
+          </span>
+        </div>
+      </template>
+      <el-table :data="lg.data?.rows || []" v-loading="lg.loading" empty-text="暂无符合条件的进项发票">
+        <el-table-column prop="invoiceDate" label="开票日期" width="115" />
+        <el-table-column label="发票号" min-width="150">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.invoiceType === 'RED' ? 'danger' : 'primary'" disable-transitions>{{ row.invoiceTypeLabel }}</el-tag>
+            <span class="mono" style="margin-left:6px">{{ row.invoiceNo }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="供应商 / 税号" min-width="190">
+          <template #default="{ row }">
+            {{ row.supplierName }}
+            <div class="muted small mono">{{ row.supplierTaxId || '未维护税号' }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="关联对账单" width="160">
+          <template #default="{ row }">
+            <span class="mono">{{ row.statementNo }}</span>
+            <div class="muted small">{{ row.statementStatusLabel }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="税率" width="75" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.taxRate) }}%</span></template></el-table-column>
+        <el-table-column label="不含税" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.netAmount) }}</span></template></el-table-column>
+        <el-table-column label="税额" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.taxAmount) }}</span></template></el-table-column>
+        <el-table-column label="含税金额" width="115" align="right"><template #default="{ row }"><span class="mono" :class="{ late: Number(row.amount) < 0 }">{{ fmtMoney(row.amount) }}</span></template></el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card v-else shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div v-if="selectedNo" class="filters">
           <span class="mono">{{ selectedNo }}</span>
@@ -193,7 +243,10 @@
     <el-dialog v-model="iv.visible" :title="`${iv.s?.invoiceCorrectionPending ? '代更正发票' : '代登记发票'}：${iv.s?.statementNo || ''}`" width="620px" :close-on-click-modal="false">
       <el-form label-position="top" @submit.prevent>
         <el-alert v-if="iv.s?.invoiceCorrectionPending" type="warning" :closable="false" :title="`退回原因：${iv.s.invoiceReturns[0].reason}`" />
-        <p class="muted small" style="margin-top:0">支持一单多票及蓝字/红字发票组合，所有发票含税金额合计必须等于对账单合计 <b class="mono">¥{{ fmtMoney(iv.s?.totalAmount) }}</b>。</p>
+        <p class="muted small" style="margin-top:0">
+          支持一单多票及蓝字/红字发票组合，所有发票含税金额合计必须等于对账单合计 <b class="mono">¥{{ fmtMoney(iv.s?.totalAmount) }}</b>。
+          <span v-if="iv.s?.supplierTaxId"> 供应商档案税号：<b class="mono">{{ iv.s.supplierTaxId }}</b>。</span>
+        </p>
         <div v-for="(item, idx) in iv.items" :key="idx" class="form-grid" style="margin-bottom:8px;align-items:end">
           <el-form-item label="发票号">
             <el-input :id="idx === 0 ? 'si-no' : `si-no-${idx}`" v-model="item.invoiceNo" maxlength="60" placeholder="发票号码" />
@@ -212,6 +265,9 @@
           </el-form-item>
           <el-form-item label="含税金额（红字填负数）">
             <el-input-number :id="idx === 0 ? 'si-amount' : `si-amount-${idx}`" v-model="item.amount" :precision="2" :controls="false" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="销方税号核验（选填）">
+            <el-input v-model="item.sellerTaxId" maxlength="40" placeholder="填写将与供应商档案税号比对" />
           </el-form-item>
           <el-button v-if="iv.items.length > 1" text type="danger" @click="iv.items.splice(idx, 1)">删除</el-button>
         </div>
@@ -321,6 +377,21 @@ const rd = useRefData()
 const canBuy = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
 const canFinance = computed(() => auth.hasAny('ADMIN', 'FINANCE'))
 
+const activeTab = ref('statements')
+const lg = reactive({ loading: false, from: null, to: null, invoiceType: '', data: null })
+async function loadLedger() {
+  lg.loading = true
+  try {
+    lg.data = await http.get('/statements/invoice-ledger', {
+      params: { from: lg.from || undefined, to: lg.to || undefined, invoiceType: lg.invoiceType || undefined }
+    })
+  } finally {
+    lg.loading = false
+  }
+}
+function onTabChange(name) {
+  if (name === 'ledger' && !lg.data) loadLedger()
+}
 const rows = ref([])
 const filterBy = ref('')
 const followUp = ref('')

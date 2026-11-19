@@ -78,6 +78,7 @@ public class ReportService {
         m.put("equipment", this::equipmentList);
         m.put("audit", () -> auditLogs(from, to));
         m.put("statements", this::statements);
+        m.put("invoice-ledger", () -> invoiceLedger(from, to));
         m.put("supplier-returns", this::supplierReturns);
         m.put("stability", this::stabilityResults);
         m.put("inspections", () -> inspectionResults(from, to));
@@ -87,8 +88,8 @@ public class ReportService {
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to) {
         // 金额只给采购和财务看，其它报表所有内部岗位都能导
-        if ("statements".equals(key) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
-            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出对账单");
+        if (("statements".equals(key) || "invoice-ledger".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
+            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与发票数据");
         }
         Supplier<Table> source = registry(from, to).get(key);
         if (source == null) {
@@ -122,6 +123,17 @@ public class ReportService {
                 t.creditDays(), t.dueDate(), t.overdueDays(), t.totalAmount().signum() < 0 ? "供应商退款" : "付款")));
         return new Table("对账单", List.of("对账单", "供应商", "对账截止", "状态", "含税货款", "其中税额", "调整", "调整原因", "合计", "发票号", "发票日期",
                 "已结（退款为负）", "未结（退款为负）", "制单", "审批", "账期（天）", "到期日", "逾期天数", "收付方向"), rows);
+    }
+
+    private Table invoiceLedger(LocalDate from, LocalDate to) {
+        List<List<Object>> rows = new ArrayList<>();
+        settlement.invoiceLedger(from, to, null, null).rows().forEach(r -> rows.add(row(
+                r.invoiceMonth(), r.invoiceDate(), r.invoiceNo(), r.invoiceTypeLabel(),
+                r.supplierName(), r.supplierTaxId(), r.financeCode(), r.statementNo(), r.statementStatusLabel(),
+                r.taxRate(), r.netAmount(), r.taxAmount(), r.amount(), r.note(), r.createdBy())));
+        return new Table("进项发票台账", List.of("开票月份", "开票日期", "发票号", "票种",
+                "供应商", "销方税号", "财务客商编码", "关联对账单", "对账单状态",
+                "税率（%）", "不含税金额", "税额", "含税金额", "备注", "登记人"), rows);
     }
 
     private Table stock() {

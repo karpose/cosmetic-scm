@@ -11,4 +11,6 @@ public interface SupplierStatementInvoiceRepository extends JpaRepository<Suppli
 
     List<SupplierStatementInvoice> findByStatementIdAndInvoiceReturnIdIsNull(Long statementId);
 
+    List<SupplierStatementInvoice> findByInvoiceReturnIdIsNullOrderByInvoiceDateDescIdDesc();
+
 }

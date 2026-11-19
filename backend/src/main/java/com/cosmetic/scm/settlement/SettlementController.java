@@ -12,6 +12,7 @@ import com.cosmetic.scm.settlement.SettlementService.CancelReq;
 import com.cosmetic.scm.settlement.SettlementService.CreateReq;
 import com.cosmetic.scm.settlement.SettlementService.FinanceSyncReq;
 import com.cosmetic.scm.settlement.SettlementService.FollowUp;
+import com.cosmetic.scm.settlement.SettlementService.InvoiceLedgerView;
 import com.cosmetic.scm.settlement.SettlementService.InvoiceReq;
 import com.cosmetic.scm.settlement.SettlementService.PayReq;
 import com.cosmetic.scm.settlement.SettlementService.PreviewView;
@@ -110,6 +111,15 @@ public class SettlementController {
     @PreAuthorize(FINANCE)
     public StatementView updateFinanceSync(@PathVariable Long id, @Valid @RequestBody FinanceSyncReq req) {
         return settlement.updateFinanceSync(id, req);
+    }
+
+    @GetMapping("/invoice-ledger")
+    @PreAuthorize(READ)
+    public InvoiceLedgerView invoiceLedger(@RequestParam(required = false) LocalDate from,
+                                           @RequestParam(required = false) LocalDate to,
+                                           @RequestParam(required = false) Long supplierId,
+                                           @RequestParam(required = false) String invoiceType) {
+        return settlement.invoiceLedger(from, to, supplierId, invoiceType);
     }
 
     @GetMapping("/finance-vouchers")

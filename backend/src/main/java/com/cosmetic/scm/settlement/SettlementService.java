@@ -115,7 +115,11 @@ public class SettlementService {
                                  @DecimalMin(value = "0", message = "税率不能为负") @DecimalMax(value = "100", message = "税率不能超过 100")
                                  @Digits(integer = 3, fraction = 2, message = "税率最多 2 位小数") BigDecimal taxRate,
                                  @NotNull(message = "请填写发票金额") @Digits(integer = 14, fraction = 2, message = "发票金额最多 2 位小数") BigDecimal amount,
-                                 @Size(max = 300) String note) {
+                                 @Size(max = 300) String note,
+                                 @Size(max = 40) String sellerTaxId) {
+        public InvoiceItemReq(String invoiceNo, String invoiceType, LocalDate invoiceDate, BigDecimal taxRate, BigDecimal amount, String note) {
+            this(invoiceNo, invoiceType, invoiceDate, taxRate, amount, note, null);
+        }
     }
 
     public record BatchInvoiceReq(@NotEmpty(message = "请至少填写一张发票") @Valid List<InvoiceItemReq> invoices) {
@@ -173,7 +177,21 @@ public class SettlementService {
                               String extPaymentNo, String createdBy, LocalDateTime createdAt) {
     }
 
-    public record StatementView(Long id, String statementNo, Long supplierId, String supplierName, LocalDate periodTo,
+    public record InvoiceLedgerRow(Long id, String invoiceNo, String invoiceType, String invoiceTypeLabel, LocalDate invoiceDate,
+                                   String invoiceMonth, BigDecimal taxRate, BigDecimal amount, BigDecimal netAmount, BigDecimal taxAmount,
+                                   String note, String statementNo, StatementStatus statementStatus, String statementStatusLabel,
+                                   Long supplierId, String supplierCode, String supplierName, String supplierTaxId, String financeCode,
+                                   String createdBy, LocalDateTime createdAt) {
+    }
+
+    public record InvoiceMonthSummary(String month, int invoiceCount, BigDecimal amount, BigDecimal netAmount, BigDecimal taxAmount) {
+    }
+
+    public record InvoiceLedgerView(List<InvoiceLedgerRow> rows, List<InvoiceMonthSummary> byMonth, List<TaxBreakdown> byTaxRate,
+                                    BigDecimal totalAmount, BigDecimal totalNetAmount, BigDecimal totalTaxAmount, int count) {
+    }
+
+    public record StatementView(Long id, String statementNo, Long supplierId, String supplierName, String supplierTaxId, LocalDate periodTo,
                                 int creditDays, LocalDate dueDate, boolean overdue, long overdueDays,
                                 StatementStatus status, String statusLabel, BigDecimal goodsAmount, BigDecimal taxAmount,
                                 BigDecimal adjustment, String adjustmentNote, BigDecimal totalAmount, String disputeNote,
@@ -240,6 +258,67 @@ public class SettlementService {
     @Transactional(readOnly = true)
     public List<StatementView> listAll() {
         return views(statements.findAllByOrderByIdDesc());
+    }
+
+    /** 进项发票台账：汇总所有有效（未退回且所属对账单未作废）的蓝字/红字发票，支持按日期、供应商、票种筛选及按月/税率汇总。 */
+    @Transactional(readOnly = true)
+    public InvoiceLedgerView invoiceLedger(LocalDate from, LocalDate to, Long supplierId, String invoiceType) {
+        String typeFilter = invoiceType == null || invoiceType.isBlank() ? null : invoiceType.trim().toUpperCase();
+        List<SupplierStatementInvoice> all = statementInvoices.findByInvoiceReturnIdIsNullOrderByInvoiceDateDescIdDesc();
+        if (all.isEmpty()) {
+            return new InvoiceLedgerView(List.of(), List.of(), List.of(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, 0);
+        }
+        Map<Long, SupplierStatement> stMap = new HashMap<>();
+        statements.findAllById(all.stream().map(SupplierStatementInvoice::getStatementId).distinct().toList())
+                .forEach(s -> stMap.put(s.getId(), s));
+        Map<Long, Partner> pm = lookup.partnerMap();
+        List<InvoiceLedgerRow> rows = new ArrayList<>();
+        List<TaxLineInput> taxInputs = new ArrayList<>();
+        Map<String, List<InvoiceLedgerRow>> byMonthMap = new LinkedHashMap<>();
+        for (SupplierStatementInvoice inv : all) {
+            SupplierStatement st = stMap.get(inv.getStatementId());
+            if (st == null || st.getStatus() == StatementStatus.CANCELLED) {
+                continue;
+            }
+            if (from != null && inv.getInvoiceDate() != null && inv.getInvoiceDate().isBefore(from)) {
+                continue;
+            }
+            if (to != null && inv.getInvoiceDate() != null && inv.getInvoiceDate().isAfter(to)) {
+                continue;
+            }
+            if (supplierId != null && !supplierId.equals(inv.getSupplierId())) {
+                continue;
+            }
+            String type = "RED".equalsIgnoreCase(inv.getInvoiceType()) ? "RED" : "BLUE";
+            if (typeFilter != null && !typeFilter.equals(type)) {
+                continue;
+            }
+            Partner p = pm.get(inv.getSupplierId());
+            BigDecimal amt = inv.getAmount() == null ? BigDecimal.ZERO : inv.getAmount();
+            BigDecimal tax = inv.getTaxAmount() == null ? BigDecimal.ZERO : inv.getTaxAmount();
+            BigDecimal net = amt.subtract(tax);
+            String month = inv.getInvoiceDate() == null ? "-" : inv.getInvoiceDate().toString().substring(0, 7);
+            InvoiceLedgerRow r = new InvoiceLedgerRow(
+                    inv.getId(), inv.getInvoiceNo(), type, "RED".equals(type) ? "红字发票" : "蓝字发票",
+                    inv.getInvoiceDate(), month, inv.getTaxRate(), amt, net, tax, inv.getNote(),
+                    st.getStatementNo(), st.getStatus(), st.statusLabel(),
+                    inv.getSupplierId(), p == null ? null : p.getCode(), p == null ? "-" : p.getName(),
+                    p == null ? null : p.getTaxId(), p == null ? null : p.getFinanceCode(),
+                    inv.getCreatedBy(), inv.getCreatedAt());
+            rows.add(r);
+            taxInputs.add(new TaxLineInput(inv.getTaxRate(), amt, tax));
+            byMonthMap.computeIfAbsent(month, ignored -> new ArrayList<>()).add(r);
+        }
+        List<InvoiceMonthSummary> byMonth = byMonthMap.entrySet().stream()
+                .map(e -> {
+                    BigDecimal mAmt = e.getValue().stream().map(InvoiceLedgerRow::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
+                    BigDecimal mTax = e.getValue().stream().map(InvoiceLedgerRow::taxAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+                    return new InvoiceMonthSummary(e.getKey(), e.getValue().size(), mAmt, mAmt.subtract(mTax), mTax);
+                }).toList();
+        BigDecimal totalAmt = rows.stream().map(InvoiceLedgerRow::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalTax = rows.stream().map(InvoiceLedgerRow::taxAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        return new InvoiceLedgerView(rows, byMonth, SettlementRule.breakdownByTaxRate(taxInputs),
+                totalAmt, totalAmt.subtract(totalTax), totalTax, rows.size());
     }
 
     @Transactional(readOnly = true)
@@ -582,7 +661,14 @@ public class SettlementService {
         } catch (IllegalArgumentException ex) {
             throw new BizException(ex.getMessage());
         }
+        Partner supplier = lookup.partner(st.getSupplierId());
+        String expectedTaxId = supplier.getTaxId() == null || supplier.getTaxId().isBlank() ? null : supplier.getTaxId().trim();
         for (InvoiceItemReq item : items) {
+            if (item.sellerTaxId() != null && !item.sellerTaxId().isBlank() && expectedTaxId != null
+                    && !expectedTaxId.equalsIgnoreCase(item.sellerTaxId().trim())) {
+                throw new BizException("发票 " + item.invoiceNo().trim() + " 销方税号（" + item.sellerTaxId().trim()
+                        + "）与供应商档案税号（" + expectedTaxId + "）不一致，请核对发票或更新往来单位财务档案");
+            }
             String no = item.invoiceNo().trim();
             List<String> owners = statements.findInvoiceOwners(st.getSupplierId(), st.getId(), StatementStatus.CANCELLED,
                     SettlementRule.invoiceKey(no), PageRequest.of(0, 1));
@@ -795,7 +881,8 @@ public class SettlementService {
             boolean settledOrCancelled = s.getStatus() == StatementStatus.PAID || s.getStatus() == StatementStatus.CANCELLED;
             long overdueDays = SettlementRule.overdueDays(dueDate, today, settledOrCancelled);
             com.cosmetic.scm.domain.FinanceSyncStatus syncStatus = s.effectiveFinanceSyncStatus();
-            return new StatementView(s.getId(), s.getStatementNo(), s.getSupplierId(), lookup.partner(s.getSupplierId()).getName(), s.getPeriodTo(),
+            Partner sp = lookup.partner(s.getSupplierId());
+            return new StatementView(s.getId(), s.getStatementNo(), s.getSupplierId(), sp.getName(), sp.getTaxId(), s.getPeriodTo(),
                     s.getCreditDays(), dueDate, overdueDays > 0, overdueDays,
                     s.getStatus(), s.statusLabel(), s.getGoodsAmount(), s.getTaxAmount(), s.getAdjustment(), s.getAdjustmentNote(), s.getTotalAmount(), s.getDisputeNote(),
                     s.getCancelReason(), s.getConfirmedBy(), s.getConfirmedAt(), s.getInvoiceNo(), s.getInvoiceDate(), s.getInvoiceAmount(),
