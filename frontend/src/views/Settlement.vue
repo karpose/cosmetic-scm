@@ -6,15 +6,18 @@
         <p>只结算检验放行的来料批次，按采购单价算金额，支持账期到期日计算、多税率拆分汇总、一单多票/红字发票及退货冲减退款登记。这里只做业务台账登记，不代替财务记账。</p>
       </div>
       <div class="toolbar">
-        <ExportButton :report="activeTab === 'ledger' ? 'invoice-ledger' : 'statements'" />
-        <el-button v-if="canFinance" @click="exportVouchers">导出应付凭证</el-button>
-        <el-button v-if="canBuy" type="primary" @click="openCreate">生成对账单</el-button>
+        <ExportButton v-if="activeTab !== 'ar'" :report="activeTab === 'ledger' ? 'invoice-ledger' : 'statements'" />
+        <el-button v-if="canFinance && activeTab !== 'ar'" @click="exportVouchers">导出应付凭证</el-button>
+        <el-button v-if="canFinance && activeTab === 'ar'" @click="exportArVouchers">导出应收凭证</el-button>
+        <el-button v-if="canBuy && activeTab !== 'ar'" type="primary" @click="openCreate">生成对账单</el-button>
+        <el-button v-if="canAr && activeTab === 'ar'" type="primary" @click="openArCreate">生成客户应收单</el-button>
       </div>
     </div>
 
     <el-tabs v-if="!selectedNo" v-model="activeTab" class="seg" @tab-change="onTabChange">
       <el-tab-pane label="对账单" name="statements" />
       <el-tab-pane label="进项发票台账" name="ledger" />
+      <el-tab-pane v-if="canAr" label="客户应收对账" name="ar" />
     </el-tabs>
 
     <el-card v-if="activeTab === 'ledger' && !selectedNo" shadow="never" body-style="padding:0 0 8px">
@@ -59,6 +62,39 @@
         <el-table-column label="不含税" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.netAmount) }}</span></template></el-table-column>
         <el-table-column label="税额" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.taxAmount) }}</span></template></el-table-column>
         <el-table-column label="含税金额" width="115" align="right"><template #default="{ row }"><span class="mono" :class="{ late: Number(row.amount) < 0 }">{{ fmtMoney(row.amount) }}</span></template></el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card v-else-if="activeTab === 'ar' && !selectedNo" shadow="never" body-style="padding:0 0 8px">
+      <el-table :data="ar.rows" v-loading="ar.loading" empty-text="暂无客户应收对账单">
+        <el-table-column label="应收单号" width="175">
+          <template #default="{ row }">
+            <span class="mono">{{ row.statementNo }}</span>
+            <div class="muted small mono">截止 {{ row.periodTo }} · 账期 {{ row.creditDays }}天</div>
+            <div class="small mono" :class="{ late: row.overdue }">到期 {{ row.dueDate }} <el-tag v-if="row.overdue" size="small" type="danger" disable-transitions>逾期 {{ row.overdueDays }} 天</el-tag></div>
+          </template>
+        </el-table-column>
+        <el-table-column label="客户" min-width="160">
+          <template #default="{ row }">{{ row.customerName }}<div class="muted small mono">{{ row.customerTaxId || '未维护税号' }}</div></template>
+        </el-table-column>
+        <el-table-column label="合计" width="115" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.totalAmount) }}</span></template></el-table-column>
+        <el-table-column label="待收" width="115" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.unreceived) }}</span></template></el-table-column>
+        <el-table-column label="销项发票" width="150">
+          <template #default="{ row }"><span class="mono">{{ row.invoiceNo || '-' }}</span><div v-if="row.invoiceDate" class="muted small mono">{{ row.invoiceDate }}</div></template>
+        </el-table-column>
+        <el-table-column label="状态" min-width="140">
+          <template #default="{ row }">
+            <StatusTag :status="row.status" :label="row.statusLabel" />
+            <div v-if="row.extVoucherNo" class="small mono" style="margin-top:2px"><el-tag size="small" type="success" disable-transitions>凭证 {{ row.extVoucherNo }}</el-tag></div>
+          </template>
+        </el-table-column>
+        <el-table-column label="" width="210" :fixed="narrow ? false : 'right'">
+          <template #default="{ row }">
+            <el-button v-if="row.status === 'DRAFT' && canFinance" size="small" @click="arInvoice(row)">登记销项票</el-button>
+            <el-button v-if="row.status === 'INVOICED' && canFinance" size="small" type="primary" @click="arApprove(row)">审批</el-button>
+            <el-button v-if="row.status === 'APPROVED' && canFinance" size="small" type="primary" @click="arReceive(row)">登记回款</el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </el-card>
 
@@ -353,6 +389,24 @@
         <el-button type="primary" :loading="fs.saving" @click="submitFinanceSync">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="arCr.visible" title="生成客户应收对账单" width="500px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="客户">
+          <el-select v-model="arCr.customerId" filterable placeholder="选择客户" style="width:100%">
+            <el-option v-for="c in rd.customers.value" :key="c.id" :value="c.id" :label="c.name" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="对账截止日期"><el-date-picker v-model="arCr.periodTo" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d > startOfToday" /></el-form-item>
+        <el-form-item label="信用账期（天，留空按客户默认）"><el-input-number v-model="arCr.creditDays" :min="0" :max="365" :precision="0" :controls="false" style="width:100%" /></el-form-item>
+        <el-form-item label="调整金额（选填）"><el-input-number v-model="arCr.adjustment" :precision="2" :controls="false" style="width:100%" /></el-form-item>
+        <el-form-item label="调整原因"><el-input v-model="arCr.adjustmentNote" maxlength="300" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="arCr.visible = false">取消</el-button>
+        <el-button type="primary" :loading="arCr.saving" @click="submitArCreate">生成应收单</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -382,6 +436,7 @@ const route = useRoute()
 const rd = useRefData()
 const canBuy = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
 const canFinance = computed(() => auth.hasAny('ADMIN', 'FINANCE'))
+const canAr = computed(() => auth.hasAny('ADMIN', 'SALES', 'FINANCE'))
 
 const activeTab = ref('statements')
 const lg = reactive({ loading: false, from: null, to: null, invoiceType: '', data: null })
@@ -395,8 +450,62 @@ async function loadLedger() {
     lg.loading = false
   }
 }
+const ar = reactive({ loading: false, rows: [] })
+const arCr = reactive({ visible: false, saving: false, customerId: null, periodTo: null, creditDays: undefined, adjustment: undefined, adjustmentNote: '' })
+async function loadAr() {
+  ar.loading = true
+  try { ar.rows = await http.get('/ar-statements') } finally { ar.loading = false }
+}
 function onTabChange(name) {
   if (name === 'ledger' && !lg.data) loadLedger()
+  if (name === 'ar') loadAr()
+}
+async function openArCreate() {
+  await rd.ready()
+  Object.assign(arCr, { visible: true, saving: false, customerId: null, periodTo: today(), creditDays: undefined, adjustment: undefined, adjustmentNote: '' })
+}
+async function submitArCreate() {
+  if (!arCr.customerId || !arCr.periodTo) return ElMessage.warning('请选择客户和截止日期')
+  arCr.saving = true
+  try {
+    const s = await http.post('/ar-statements', { customerId: arCr.customerId, periodTo: arCr.periodTo, creditDays: arCr.creditDays ?? null, adjustment: arCr.adjustment || 0, adjustmentNote: arCr.adjustmentNote })
+    ElMessage.success(`应收对账单 ${s.statementNo} 已生成`)
+    arCr.visible = false
+    loadAr()
+  } finally { arCr.saving = false }
+}
+async function arInvoice(row) {
+  let invoiceNo
+  try { invoiceNo = (await ElMessageBox.prompt('请填写销项发票号', `登记销项票：${row.statementNo}`, { inputValidator: (v) => !!v?.trim() || '请填写发票号' })).value } catch { return }
+  await http.post(`/ar-statements/${row.id}/invoice`, { invoiceNo, invoiceDate: today() })
+  ElMessage.success('销项发票已登记')
+  loadAr()
+}
+async function arApprove(row) {
+  let password
+  try { password = (await ElMessageBox.prompt('请输入财务签批密码', `审批应收单：${row.statementNo}`, { inputType: 'password', inputValidator: (v) => !!v || '请输入密码' })).value } catch { return }
+  await http.post(`/ar-statements/${row.id}/approve`, { password })
+  ElMessage.success('应收对账单已审批')
+  loadAr()
+}
+async function arReceive(row) {
+  let amt
+  try { amt = (await ElMessageBox.prompt(`待收 ¥${fmtMoney(row.unreceived)}，请输入本次回款金额`, `登记回款：${row.statementNo}`, { inputValue: String(row.unreceived) })).value } catch { return }
+  await http.post(`/ar-statements/${row.id}/receive`, { receiptDate: today(), amount: Number(amt) })
+  ElMessage.success('回款已登记')
+  loadAr()
+}
+async function exportArVouchers() {
+  const data = await http.get('/ar-statements/finance-vouchers')
+  if (!data.length) return ElMessage.info('暂无已审批的应收凭证可导出')
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `ar-vouchers-${today()}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success(`已导出 ${data.length} 张应收凭证`)
 }
 const rows = ref([])
 const filterBy = ref('')
