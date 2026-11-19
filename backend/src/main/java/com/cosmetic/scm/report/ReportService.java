@@ -52,6 +52,7 @@ public class ReportService {
     private final RetainService retains;
     private final PurchaseService purchases;
     private final com.cosmetic.scm.settlement.SettlementService settlement;
+    private final com.cosmetic.scm.sourcing.SupplierPriceService supplierPrices;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnService supplierReturns;
     private final EquipmentService equipment;
     private final AuditService audit;
@@ -79,6 +80,7 @@ public class ReportService {
         m.put("audit", () -> auditLogs(from, to));
         m.put("statements", this::statements);
         m.put("invoice-ledger", () -> invoiceLedger(from, to));
+        m.put("supplier-prices", this::supplierPriceList);
         m.put("supplier-returns", this::supplierReturns);
         m.put("stability", this::stabilityResults);
         m.put("inspections", () -> inspectionResults(from, to));
@@ -88,7 +90,7 @@ public class ReportService {
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to) {
         // 金额只给采购和财务看，其它报表所有内部岗位都能导
-        if (("statements".equals(key) || "invoice-ledger".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
+        if (("statements".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与发票数据");
         }
         Supplier<Table> source = registry(from, to).get(key);
@@ -134,6 +136,16 @@ public class ReportService {
         return new Table("进项发票台账", List.of("开票月份", "开票日期", "发票号", "票种",
                 "供应商", "销方税号", "财务客商编码", "关联对账单", "对账单状态",
                 "税率（%）", "不含税金额", "税额", "含税金额", "备注", "登记人"), rows);
+    }
+
+    private Table supplierPriceList() {
+        List<List<Object>> rows = new ArrayList<>();
+        supplierPrices.list(null, null, false).forEach(p -> rows.add(row(
+                p.supplierCode(), p.supplierName(), p.itemCode(), p.itemName(), p.unit(),
+                p.unitPrice(), p.taxRate(), p.validFrom(), p.validTo(),
+                !p.active() ? "已停用" : p.effectiveToday() ? "生效中" : "未生效/过期", p.note(), p.updatedBy(), p.updatedAt())));
+        return new Table("供应商协议价", List.of("供应商编码", "供应商", "物料编码", "物料名称", "单位",
+                "含税协议价", "税率（%）", "生效日期", "失效日期", "状态", "备注", "维护人", "更新时间"), rows);
     }
 
     private Table stock() {

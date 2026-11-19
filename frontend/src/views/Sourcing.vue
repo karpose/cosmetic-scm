@@ -155,7 +155,8 @@
         <el-form v-else label-position="top" @submit.prevent>
           <el-alert v-if="needReason" type="warning" :closable="false" show-icon title="有物料不足 3 家报价、没有选最低价，或有报价却不定标，要写明定标原因" />
           <el-form-item label="定标原因"><el-input id="aw-reason" v-model="aw.reason" type="textarea" :rows="2" maxlength="300" show-word-limit /></el-form-item>
-          <el-form-item label="签批密码"><el-input id="aw-password" v-model="aw.password" type="password" show-password autocomplete="current-password" /></el-form-item>
+          <el-checkbox v-model="aw.saveToPriceList" style="margin-bottom:8px">同步将中标价沉淀为供应商协议价</el-checkbox>
+        <el-form-item label="签批密码"><el-input id="aw-password" v-model="aw.password" type="password" show-password autocomplete="current-password" /></el-form-item>
           <p v-if="aw.rfq.createdBy === auth.user?.username" class="late small">这张询价是您发起的，定标要由另一位有权限的同事签批。</p>
         </el-form>
       </template>
@@ -281,7 +282,7 @@ async function submitAward() {
   if (!aw.password) return ElMessage.warning('请输入签批密码')
   aw.saving = true
   try {
-    await http.post(`/rfqs/${aw.rfq.id}/award`, { lines, reason: aw.reason, password: aw.password, roundNo: aw.rfq.roundNo })
+    await http.post(`/rfqs/${aw.rfq.id}/award`, { lines, reason: aw.reason, saveToPriceList: aw.saveToPriceList, password: aw.password, roundNo: aw.rfq.roundNo })
     ElMessage.success('已定标，采购单已生成')
     aw.visible = false
     load()

@@ -71,6 +71,19 @@ public class SupplierPriceService {
                 .toList();
     }
 
+    /** 已启用且在未来 days 天内到期（或已过期仍未停用）的协议价，供总览待办预警续签。 */
+    @Transactional(readOnly = true)
+    public List<PriceView> expiringSoon(int days) {
+        LocalDate today = time.today();
+        LocalDate threshold = today.plusDays(Math.max(0, days));
+        Map<Long, Partner> pm = lookup.partnerMap();
+        Map<Long, Item> im = lookup.itemMap();
+        return prices.findAllByOrderByIdDesc().stream()
+                .filter(p -> p.isActive() && p.getValidTo() != null && !p.getValidTo().isAfter(threshold))
+                .map(p -> toView(p, pm.get(p.getSupplierId()), im.get(p.getItemId()), today))
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public Optional<SupplierPrice> effectivePrice(Long supplierId, Long itemId, LocalDate onDate) {
         LocalDate date = onDate != null ? onDate : time.today();

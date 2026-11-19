@@ -200,6 +200,9 @@
     </el-dialog>
     <!-- 供应商协议价管理 -->
     <el-dialog v-model="pl.visible" title="供应商协议价 / 价目表" width="840px">
+      <div class="toolbar" style="margin-bottom:10px;justify-content:flex-end">
+        <ExportButton report="supplier-prices" />
+      </div>
       <div v-if="canCreate" class="form-grid" style="margin-bottom:12px;align-items:end">
         <el-select v-model="pl.form.supplierId" placeholder="供应商" filterable>
           <el-option v-for="p in rd.suppliers.value" :key="p.id" :value="p.id" :label="p.name" />

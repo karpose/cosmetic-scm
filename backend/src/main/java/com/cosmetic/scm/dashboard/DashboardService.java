@@ -68,6 +68,7 @@ public class DashboardService {
     private final com.cosmetic.scm.plm.StabilityService stability;
     private final com.cosmetic.scm.plm.StabilityChangeService stabilityChanges;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
+    private final com.cosmetic.scm.sourcing.SupplierPriceService supplierPrices;
     private final com.cosmetic.scm.plm.NpdService npd;
     private final com.cosmetic.scm.plm.DocControlService docControl;
     private final com.cosmetic.scm.plm.ChangeService changeControl;
@@ -273,6 +274,14 @@ public class DashboardService {
         }
         for (com.cosmetic.scm.quality.QualitySpecService.SpecView s : qualitySpecs.waitingSignature()) {
             todos.add(new Todo("SPEC_REVIEW", "质量标准待签批", "warn", s.itemName(), s.specNo(), "V" + s.versionNo() + "：" + s.changeNote(), "/specs"));
+        }
+        if (com.cosmetic.scm.security.PriceAccess.allowed()) {
+            for (com.cosmetic.scm.sourcing.SupplierPriceService.PriceView p : supplierPrices.expiringSoon(15)) {
+                boolean expired = p.validTo().isBefore(today);
+                todos.add(new Todo("PRICE_EXPIRING", expired ? "供应商协议价已过期" : "供应商协议价即将到期",
+                        expired ? "bad" : "warn", p.supplierName() + " · " + p.itemName(),
+                        p.supplierCode() + "/" + p.itemCode(), "有效期至 " + p.validTo(), "/purchase"));
+            }
         }
         // 稳定性：错过取样时间这个点就补不回来了，提前 7 天提醒
         for (com.cosmetic.scm.plm.StabilityService.DuePull p : stability.due(today.plusDays(7))) {

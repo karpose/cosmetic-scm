@@ -137,5 +137,20 @@ class SupplierPriceTest {
                 "lines", List.of(Map.of("itemId", itemId, "qty", 3))
         )).andExpect(status().isOk()));
         assertThat(afterDeactivatePo.get("lines").get(0).get("unitPrice").isNull()).isTrue();
+
+        // 4. 即将到期协议价进入采购/财务总览待办（非价格角色不可见），且支持 Excel 导出
+        call(buyer, "/api/supplier-prices", Map.of(
+                "supplierId", p.getId(), "itemId", itemId, "unitPrice", new BigDecimal("19.00"),
+                "taxRate", new BigDecimal("13.00"), "validFrom", d(-10).toString(), "validTo", d(5).toString(), "note", "快到期协议"
+        )).andExpect(status().isOk());
+        String buyerDash = read(buyer, "/api/dashboard").andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(buyerDash).contains("PRICE_EXPIRING").contains("SUP-PRICE-40");
+        String viewerDash = read(login("viewer1"), "/api/dashboard").andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(viewerDash).doesNotContain("PRICE_EXPIRING");
+
+        read(finance, "/api/reports/supplier-prices").andExpect(status().isOk());
+        read(login("viewer1"), "/api/reports/supplier-prices").andExpect(status().isForbidden());
     }
 }
