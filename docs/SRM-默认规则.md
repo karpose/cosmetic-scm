@@ -57,4 +57,6 @@
 - **受托厂门户（OEM Portal）委外对账协同**：受托生产企业账号可在门户查看本单位委外对账单（`GET /api/portal/oem/statements`），支持在线确认对账（`confirm`）、提交异议（`dispute`）及登记/更正委外加工费发票（`invoices`），与内部采购/财务审批流完全打通。
 - **协议价闭环增强**：询价定标（`RfqService.award`）可一键将中标价沉淀为有效协议价（`saveToContractPrice`）；总览待办自动对 30 天内到期协议价发出预警（`PRICE_EXPIRING`，按价格权限隔离）；支持通过 `/api/reports/supplier-prices` 导出全量协议价 Excel。
 - **客户应收对账与回款核销（V42 AR）**：在 `so_line` 扩展销售单价与税率，新增 `customer_statement` / `customer_statement_line` / `customer_receipt` 三表；支持按客户已出库销售单生成应收对账单（`/api/ar-statements`）、登记销项发票、财务签批与回款核销；外部财务系统可通过 `GET /api/integration/finance/ar-vouchers`、`POST /api/integration/finance/ar-vouchers/{statementNo}/ack` 与 `POST /api/integration/finance/receipts` 拉取应收凭证并按外部回款单号幂等核销。
-- **供应商绩效考核台账**：`GET /api/analytics/supplier-performance` 与 Excel 导出（`supplier-performance`）按时间区间汇总各供应商的来料合格率（权重 50）、准时交货率（权重 30）与协作扣分项（收货异议/退供，权重 20），给出综合评分与 A/B/C/D 等级，不暴露任何价格或金额，可供质量与采购共用复审。
+- **供应商绩效考核台账**：`GET /api/analytics/supplier-performance` 与 Excel 导出（`supplier-performance`）按时间区间汇总各供应商的来料合格率（权重 50）、准时交货率（权重 30）与协作扣分项（收货异议/退供，权重 20），给出综合评分与 A/B/C/D 等级，不暴露任何价格或金额，可供质量与采购共用复审；经营看板（`Analytics.vue`）直接提供绩效台账筛选与导出入口。
+- **销售出库单价录入与经销商门户对账**：销售出库单支持按权限（管理员/销售/财务）录入含税单价与税率（留空取客户默认税率）直接衔接客户应收对账；总览待办自动对 7 天内到期及已逾期客户回款发出提醒（`AR_COLLECT`，正文不含金额）；经销商门户（`/api/portal/dealer/ar-statements`）开放本客户应收对账单与回款进度查询。
+- **应付 / 应收账龄分析（AP & AR Aging）**：`GET /api/statements/aging?side=AP|AR` 与 Excel 导出（`ap-aging` / `ar-aging`）按往来单位汇总已审批未结清余额在未到期、1–30 天、31–60 天、61–90 天与 90 天以上五个区间的分布，在结算页“账龄分析”页签提供切换与一键导出。

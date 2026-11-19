@@ -43,6 +43,7 @@ public class SettlementController {
     private static final String FINANCE = "hasAnyRole('ADMIN','FINANCE')";
 
     private final SettlementService settlement;
+    private final AgingAnalysisService aging;
     private final FinanceIntegrationService financeIntegration;
 
     @GetMapping
@@ -126,6 +127,12 @@ public class SettlementController {
                                            @RequestParam(required = false) Long supplierId,
                                            @RequestParam(required = false) String invoiceType) {
         return settlement.invoiceLedger(from, to, supplierId, invoiceType);
+    }
+
+    @GetMapping("/aging")
+    @PreAuthorize("hasAnyRole('ADMIN','PURCHASE','SALES','FINANCE')")
+    public AgingAnalysisService.AgingReport aging(@RequestParam(defaultValue = "AP") String side) {
+        return "AR".equalsIgnoreCase(side) ? aging.arAging() : aging.apAging();
     }
 
     @GetMapping("/finance-vouchers")

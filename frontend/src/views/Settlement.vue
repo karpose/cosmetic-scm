@@ -6,10 +6,10 @@
         <p>只结算检验放行的来料批次，按采购单价算金额，支持账期到期日计算、多税率拆分汇总、一单多票/红字发票及退货冲减退款登记。这里只做业务台账登记，不代替财务记账。</p>
       </div>
       <div class="toolbar">
-        <ExportButton :report="activeTab === 'ledger' ? 'invoice-ledger' : activeTab === 'ar' ? 'ar-statements' : 'statements'" />
-        <el-button v-if="canFinance && activeTab !== 'ar'" @click="exportVouchers">导出应付凭证</el-button>
+        <ExportButton :report="activeTab === 'ledger' ? 'invoice-ledger' : activeTab === 'ar' ? 'ar-statements' : activeTab === 'aging' ? (ag.side === 'AR' ? 'ar-aging' : 'ap-aging') : 'statements'" />
+        <el-button v-if="canFinance && activeTab === 'statements'" @click="exportVouchers">导出应付凭证</el-button>
         <el-button v-if="canFinance && activeTab === 'ar'" @click="exportArVouchers">导出应收凭证</el-button>
-        <el-button v-if="canBuy && activeTab !== 'ar'" type="primary" @click="openCreate">生成对账单</el-button>
+        <el-button v-if="canBuy && activeTab === 'statements'" type="primary" @click="openCreate">生成对账单</el-button>
         <el-button v-if="canAr && activeTab === 'ar'" type="primary" @click="openArCreate">生成客户应收单</el-button>
       </div>
     </div>
@@ -18,6 +18,7 @@
       <el-tab-pane label="对账单" name="statements" />
       <el-tab-pane label="进项发票台账" name="ledger" />
       <el-tab-pane v-if="canAr" label="客户应收对账" name="ar" />
+      <el-tab-pane label="账龄分析" name="aging" />
     </el-tabs>
 
     <el-card v-if="activeTab === 'ledger' && !selectedNo" shadow="never" body-style="padding:0 0 8px">
@@ -95,6 +96,33 @@
             <el-button v-if="row.status === 'APPROVED' && canFinance" size="small" type="primary" @click="arReceive(row)">登记回款</el-button>
           </template>
         </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card v-else-if="activeTab === 'aging' && !selectedNo" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-radio-group v-model="ag.side" size="small" @change="loadAging">
+            <el-radio-button value="AP">应付账龄（供应商/受托厂）</el-radio-button>
+            <el-radio-button v-if="canAr" value="AR">应收账龄（客户）</el-radio-button>
+          </el-radio-group>
+          <el-button size="small" @click="loadAging">刷新</el-button>
+        </div>
+        <div v-if="ag.data" class="muted small" style="margin-top:8px">
+          统计日 <b class="mono">{{ ag.data.asOf }}</b> · 未结合计 <b class="mono">¥{{ fmtMoney(ag.data.total) }}</b> · 未到期 <b class="mono">¥{{ fmtMoney(ag.data.notDue) }}</b> · 1-30天 <b class="mono">¥{{ fmtMoney(ag.data.days1to30) }}</b> · 31-60天 <b class="mono">¥{{ fmtMoney(ag.data.days31to60) }}</b> · 61-90天 <b class="mono">¥{{ fmtMoney(ag.data.days61to90) }}</b> · 90天以上 <b class="mono late">¥{{ fmtMoney(ag.data.over90) }}</b>
+        </div>
+      </template>
+      <el-table :data="ag.data?.rows || []" v-loading="ag.loading" empty-text="当前没有已审批未结清余额">
+        <el-table-column label="往来单位" min-width="170">
+          <template #default="{ row }">{{ row.partnerName }}<div class="muted small mono">{{ row.partnerCode }}</div></template>
+        </el-table-column>
+        <el-table-column prop="openCount" label="未结单数" width="85" align="right" />
+        <el-table-column label="未到期" width="115" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.notDue) }}</span></template></el-table-column>
+        <el-table-column label="1-30天" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.days1to30) }}</span></template></el-table-column>
+        <el-table-column label="31-60天" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.days31to60) }}</span></template></el-table-column>
+        <el-table-column label="61-90天" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.days61to90) }}</span></template></el-table-column>
+        <el-table-column label="90天以上" width="115" align="right"><template #default="{ row }"><span class="mono" :class="{ late: Number(row.over90) > 0 }">{{ fmtMoney(row.over90) }}</span></template></el-table-column>
+        <el-table-column label="合计" width="120" align="right"><template #default="{ row }"><b class="mono">{{ fmtMoney(row.total) }}</b></template></el-table-column>
       </el-table>
     </el-card>
 
@@ -484,9 +512,15 @@ async function loadAr() {
   ar.loading = true
   try { ar.rows = await http.get('/ar-statements') } finally { ar.loading = false }
 }
+const ag = reactive({ loading: false, side: 'AP', data: null })
+async function loadAging() {
+  ag.loading = true
+  try { ag.data = await http.get('/statements/aging', { params: { side: ag.side } }) } finally { ag.loading = false }
+}
 function onTabChange(name) {
   if (name === 'ledger' && !lg.data) loadLedger()
   if (name === 'ar') loadAr()
+  if (name === 'aging') loadAging()
 }
 async function openArCreate() {
   await rd.ready()

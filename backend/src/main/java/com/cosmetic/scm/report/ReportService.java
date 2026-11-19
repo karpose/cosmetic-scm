@@ -53,6 +53,7 @@ public class ReportService {
     private final PurchaseService purchases;
     private final com.cosmetic.scm.settlement.SettlementService settlement;
     private final com.cosmetic.scm.settlement.ArSettlementService arSettlement;
+    private final com.cosmetic.scm.settlement.AgingAnalysisService agingAnalysis;
     private final com.cosmetic.scm.sourcing.SupplierPriceService supplierPrices;
     private final com.cosmetic.scm.analytics.SupplierPerformanceService supplierPerformance;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnService supplierReturns;
@@ -82,6 +83,8 @@ public class ReportService {
         m.put("audit", () -> auditLogs(from, to));
         m.put("statements", this::statements);
         m.put("ar-statements", this::arStatements);
+        m.put("ap-aging", () -> agingTable(agingAnalysis.apAging(), "应付账龄分析"));
+        m.put("ar-aging", () -> agingTable(agingAnalysis.arAging(), "应收账龄分析"));
         m.put("invoice-ledger", () -> invoiceLedger(from, to));
         m.put("supplier-prices", this::supplierPriceList);
         m.put("supplier-performance", () -> supplierPerformanceReport(from, to));
@@ -94,10 +97,10 @@ public class ReportService {
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to) {
         // 金额只给采购和财务看，应收报表给销售、财务和管理员看，其它报表所有内部岗位都能导
-        if (("statements".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
+        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与发票数据");
         }
-        if ("ar-statements".equals(key) && !arReportAllowed()) {
+        if (("ar-statements".equals(key) || "ar-aging".equals(key)) && !arReportAllowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出客户应收对账数据");
         }
         Supplier<Table> source = registry(from, to).get(key);
@@ -150,6 +153,16 @@ public class ReportService {
                 "对账截止", "账期（天）", "到期日", "逾期天数", "状态",
                 "含税货款", "销项税额", "调整金额", "应收合计", "已回款", "待回款",
                 "销项发票号", "开票日期", "外部凭证号", "制单", "审批"), rows);
+    }
+
+    private Table agingTable(com.cosmetic.scm.settlement.AgingAnalysisService.AgingReport rep, String title) {
+        List<List<Object>> rows = new ArrayList<>();
+        rep.rows().forEach(r -> rows.add(row(r.partnerCode(), r.partnerName(), r.openCount(),
+                r.notDue(), r.days1to30(), r.days31to60(), r.days61to90(), r.over90(), r.total())));
+        rows.add(row("合计", "统计日 " + rep.asOf(), rep.rows().stream().mapToInt(r -> r.openCount()).sum(),
+                rep.notDue(), rep.days1to30(), rep.days31to60(), rep.days61to90(), rep.over90(), rep.total()));
+        return new Table(title, List.of("往来单位编码", "往来单位名称", "未结单数",
+                "未到期", "逾期 1-30 天", "逾期 31-60 天", "逾期 61-90 天", "逾期 90 天以上", "未结合计"), rows);
     }
 
     private Table invoiceLedger(LocalDate from, LocalDate to) {
