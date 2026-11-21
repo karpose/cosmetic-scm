@@ -5,7 +5,65 @@
         <h2>一物一码</h2>
         <p>为成品批次按件生成随机防伪溯源码，导出 CSV 交给印刷厂做二维码（链接指向消费者扫码页）。消费者扫码能看到产品、批号和效期；召回或冻结中的批次会提示停止使用，同一个码被多次查询会提示谨防仿冒。</p>
       </div>
+      <div class="toolbar">
+        <ExportButton report="serial-anomalies" label="导出异常扫码" />
+        <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
+      </div>
     </div>
+
+    <div v-if="anomaly" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="muted small">累计生成防伪码</div>
+        <div class="kpi-val mono">{{ fmtQty(anomaly.totalGenerated) }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">已激活码 / 总扫码</div>
+        <div class="kpi-val mono">{{ fmtQty(anomaly.totalScanned) }} <span class="muted small">/ {{ fmtQty(anomaly.totalScans) }}</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">防伪码扫码激活率</div>
+        <div class="kpi-val mono">{{ anomaly.scanActivationRatePct != null ? `${anomaly.scanActivationRatePct}%` : '—' }}</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: anomaly.suspiciousCodeCount > 0 }">
+        <div class="muted small">疑似异常高频码（≥ {{ anomaly.threshold }} 次）</div>
+        <div class="kpi-val mono">{{ anomaly.suspiciousCodeCount }} <span class="muted small">（涉及 {{ anomaly.suspiciousBatchCount }} 批次）</span></div>
+      </div>
+    </div>
+
+    <el-card v-if="anomaly" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <b>防伪异常扫码预警</b>
+          <span class="muted small">单码累计扫码阈值</span>
+          <el-select v-model="minScans" size="small" style="width:110px" @change="loadAnomalies">
+            <el-option :value="2" label="≥ 2 次" />
+            <el-option :value="3" label="≥ 3 次" />
+            <el-option :value="5" label="≥ 5 次" />
+            <el-option :value="10" label="≥ 10 次" />
+          </el-select>
+          <span class="muted small">按扫码次数降序展示前 100 个疑似仿冒/窜货高频码</span>
+        </div>
+      </template>
+      <el-table :data="anomaly.topAnomalies" size="small" empty-text="当前阈值下未发现高频重复扫码异常" max-height="280">
+        <el-table-column label="防伪码" width="160">
+          <template #default="{ row }"><span class="mono"><b>{{ row.displayCode }}</b></span></template>
+        </el-table-column>
+        <el-table-column label="批号 / 产品" min-width="200">
+          <template #default="{ row }"><BatchNo :no="row.batchNo" /> · {{ row.itemName }}</template>
+        </el-table-column>
+        <el-table-column prop="batchStatusLabel" label="批次状态" width="100" />
+        <el-table-column label="累计扫码" width="100" align="right">
+          <template #default="{ row }"><el-tag type="danger" size="small" disable-transitions>{{ row.scanCount }} 次</el-tag></template>
+        </el-table-column>
+        <el-table-column label="首次扫码" width="150"><template #default="{ row }"><span class="mono small">{{ fmtTime(row.firstScanAt) }}</span></template></el-table-column>
+        <el-table-column label="最近扫码" width="150"><template #default="{ row }"><span class="mono small">{{ fmtTime(row.lastScanAt) }}</span></template></el-table-column>
+        <el-table-column label="" width="110" fixed="right">
+          <template #default="{ row }">
+            <router-link :to="{ name: 'verify', params: { code: row.code } }" target="_blank" class="small">查看扫码页</router-link>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
 
     <el-card shadow="never" body-style="padding:14px 18px">
       <form class="ask" @submit.prevent="lookup">
@@ -73,6 +131,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import http, { LONG_TIMEOUT } from '../api'
 import BatchNo from '../components/BatchNo.vue'
+import ExportButton from '../components/ExportButton.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import { useAuth } from '../stores/auth'
@@ -83,6 +142,8 @@ import { textMatch, usePaged } from '../utils/table'
 
 const auth = useAuth()
 const list = ref([])
+const anomaly = ref(null)
+const minScans = ref(3)
 const only = ref('')
 const q = ref('')
 const found = ref(null)
@@ -91,8 +152,18 @@ const exporting = ref(null)
 const canGenerate = computed(() => auth.hasAny('ADMIN', 'PRODUCTION', 'QA', 'QSO'))
 const canGenerateFor = (row) => ['已放行', '待上市放行'].includes(row.statusLabel)
 
-const loader = useLoader(async () => { list.value = await http.get('/serials/batches') })
+const loader = useLoader(async () => {
+  const [b, a] = await Promise.all([
+    http.get('/serials/batches'),
+    http.get('/serials/anomalies', { params: { minScans: minScans.value } })
+  ])
+  list.value = b
+  anomaly.value = a
+})
 const load = () => loader.run()
+async function loadAnomalies() {
+  anomaly.value = await http.get('/serials/anomalies', { params: { minScans: minScans.value } })
+}
 const t = usePaged(list, { match: textMatch('batchNo', 'itemName'), extra: (r) => !only.value || r.generated > 0 })
 
 const g = reactive({ visible: false, saving: false, row: null, qty: 100 })
@@ -150,6 +221,10 @@ onMounted(load)
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 20px; font-weight: 600; }
 .ask { display: grid; grid-template-columns: minmax(0, 420px) auto; gap: 8px; }
 .found { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 12px; padding: 10px 14px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); }
 </style>

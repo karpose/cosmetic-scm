@@ -5,7 +5,11 @@
         <h2>上线检查</h2>
         <p>按上线切换规程（SOP-09）实时检查还缺什么。“必须处理”不解决主线走不通，比如没有质量安全负责人账号就没人能放行；“建议处理”不影响运行，但会影响数据质量或提醒。这里只是系统能查到的部分，盘点和备案资料的核对还要人工完成。</p>
       </div>
-      <el-button :loading="loader.loading.value" @click="load">重新检查</el-button>
+      <div class="toolbar">
+        <ExportButton report="golive-checklist" />
+        <el-button @click="$router.push('/golive-print')">打印签字报告</el-button>
+        <el-button :loading="loader.loading.value" @click="load">重新检查</el-button>
+      </div>
     </div>
 
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
@@ -33,6 +37,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { CircleCheckFilled, CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
 import http from '../api'
+import ExportButton from '../components/ExportButton.vue'
 import LoadError from '../components/LoadError.vue'
 import { useLoader } from '../utils/loader'
 

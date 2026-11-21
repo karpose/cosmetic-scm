@@ -5,11 +5,38 @@
         <h2>电商对接</h2>
         <p>电商 ERP 把平台订单推送到这里，系统按先到期先出和客户效期标准直接出库；出库失败（缺货、SKU 对不上）的订单留在这里，补货后可重试。具体 ERP 选定后只需写一层报文转换，接口见“接入说明”。</p>
       </div>
-      <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
+      <div class="toolbar">
+        <el-radio-group v-model="healthDays" size="small" @change="loadHealth">
+          <el-radio-button :value="7">近 7 天</el-radio-button>
+          <el-radio-button :value="30">近 30 天</el-radio-button>
+        </el-radio-group>
+        <ExportButton report="integration-logs" label="导出对接日志" />
+        <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
+      </div>
+    </div>
+
+    <div v-if="health" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="muted small">近 {{ health.days }} 天接口调用</div>
+        <div class="kpi-val mono">{{ health.totalCalls }} <span class="muted small">（成功 {{ health.successCalls }} / 失败 {{ health.failedCalls }}）</span></div>
+      </div>
+      <div class="kpi-card" :class="{ warn: health.successRatePct != null && health.successRatePct < 95 }">
+        <div class="muted small">接口同步成功率</div>
+        <div class="kpi-val mono">{{ health.successRatePct != null ? `${health.successRatePct}%` : '—' }}</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: health.failedOrdersBacklog > 0 }">
+        <div class="muted small">待重试失败订单积压</div>
+        <div class="kpi-val mono">{{ health.failedOrdersBacklog }} <span class="muted small">（待处理 {{ health.receivedOrdersBacklog }}）</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">活跃对接平台</div>
+        <div class="kpi-val mono">{{ health.byPlatform.length }}</div>
+      </div>
     </div>
 
     <el-tabs v-model="tab" class="seg">
       <el-tab-pane :label="`电商订单${failedCount ? `（${failedCount} 失败）` : ''}`" name="orders" />
+      <el-tab-pane label="健康度与失败复盘" name="health" />
       <el-tab-pane label="对接日志" name="logs" />
       <el-tab-pane label="接入说明" name="docs" />
     </el-tabs>
@@ -53,6 +80,32 @@
       </el-table>
       <ListPager v-model:page="t.page.value" v-model:size="t.size.value" :total="t.total.value" />
     </el-card>
+
+    <div v-else-if="tab === 'health' && health" class="health-grid">
+      <el-card shadow="never" body-style="padding:0">
+        <template #header><b>各平台近 {{ health.days }} 天同步健康度</b></template>
+        <el-table :data="health.byPlatform" size="small" empty-text="该时间窗口内无对接记录">
+          <el-table-column prop="platform" label="平台" width="110" />
+          <el-table-column prop="totalCalls" label="总调用" width="80" align="right" />
+          <el-table-column prop="successCalls" label="成功" width="75" align="right" />
+          <el-table-column prop="failedCalls" label="失败" width="75" align="right" />
+          <el-table-column label="成功率" width="90" align="right">
+            <template #default="{ row }"><el-tag :type="row.successRatePct == null ? 'info' : row.successRatePct >= 95 ? 'success' : 'danger'" size="small" disable-transitions>{{ row.successRatePct != null ? `${row.successRatePct}%` : '—' }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="最近调用" width="150"><template #default="{ row }"><span class="mono small">{{ fmtTime(row.lastCallAt) }}</span></template></el-table-column>
+        </el-table>
+      </el-card>
+      <el-card shadow="never" body-style="padding:0">
+        <template #header><b>高频失败原因归类（Top 20）</b></template>
+        <el-table :data="health.topFailures" size="small" empty-text="近窗口内无失败调用">
+          <el-table-column prop="platform" label="平台" width="100" />
+          <el-table-column prop="action" label="动作" width="110" />
+          <el-table-column prop="message" label="失败原因" min-width="200" show-overflow-tooltip />
+          <el-table-column prop="count" label="次数" width="75" align="right" />
+          <el-table-column label="最近发生" width="150"><template #default="{ row }"><span class="mono small">{{ fmtTime(row.lastAt) }}</span></template></el-table-column>
+        </el-table>
+      </el-card>
+    </div>
 
     <el-card v-else-if="tab === 'logs'" shadow="never" body-style="padding:0">
       <template #header>
@@ -118,6 +171,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
+import ExportButton from '../components/ExportButton.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
@@ -130,6 +184,8 @@ const auth = useAuth()
 const tab = ref('orders')
 const orders = ref([])
 const logs = ref([])
+const health = ref(null)
+const healthDays = ref(30)
 const state = ref('')
 const logScope = ref('')
 const busy = ref(null)
@@ -143,11 +199,19 @@ const filteredLogs = computed(() => logs.value.filter((l) => {
 const base = `${location.origin}/api/integration`
 
 const loader = useLoader(async () => {
-  const [o, l] = await Promise.all([http.get('/channel-orders'), http.get('/channel-orders/logs')])
+  const [o, l, h] = await Promise.all([
+    http.get('/channel-orders'),
+    http.get('/channel-orders/logs'),
+    http.get('/channel-orders/health', { params: { days: healthDays.value } })
+  ])
   orders.value = o
   logs.value = l
+  health.value = h
 })
 const load = () => loader.run()
+async function loadHealth() {
+  health.value = await http.get('/channel-orders/health', { params: { days: healthDays.value } })
+}
 const t = usePaged(orders, {
   match: textMatch('platformOrderNo', 'customerName', 'platform', (r) => r.lines.map((l) => l.sku).join(' ')),
   extra: (r) => !state.value || r.status === state.value
@@ -196,6 +260,11 @@ onMounted(load)
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 20px; font-weight: 600; }
+.health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; }
 .err { color: var(--el-color-danger); }
 .docs { display: grid; gap: 14px; }
 .doc { padding: 16px 20px; }

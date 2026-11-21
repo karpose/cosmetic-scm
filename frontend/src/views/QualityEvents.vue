@@ -7,8 +7,28 @@
       </div>
       <div class="toolbar">
         <ExportButton v-if="tab === 'complaints'" report="complaints" />
+        <ExportButton v-if="tab === 'analytics'" report="quality-events-summary" label="导出分析汇总" />
         <el-button v-if="tab === 'complaints' && canLog" type="primary" @click="openComplaint">登记投诉</el-button>
         <el-button v-if="tab === 'recalls' && isQso" type="danger" @click="openRecall()">发起召回</el-button>
+      </div>
+    </div>
+
+    <div v-if="evReport" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="muted small">近一年客诉 / 闭环率</div>
+        <div class="kpi-val mono">{{ evReport.totalComplaints }} <span class="muted small">（{{ evReport.closeRatePct != null ? `${evReport.closeRatePct}%` : '—' }}）</span></div>
+      </div>
+      <div class="kpi-card" :class="{ warn: evReport.adverseOverdue > 0 }">
+        <div class="muted small">不良反应按时上报率</div>
+        <div class="kpi-val mono">{{ evReport.adverseOnTimeRatePct != null ? `${evReport.adverseOnTimeRatePct}%` : '—' }} <span class="muted small">（超期 {{ evReport.adverseOverdue }}）</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">召回平均通知完成率</div>
+        <div class="kpi-val mono">{{ evReport.avgRecallNotifyRatePct != null ? `${evReport.avgRecallNotifyRatePct}%` : '—' }} <span class="muted small">（共 {{ evReport.recallTotal }} 次）</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">召回平均实际回收率</div>
+        <div class="kpi-val mono">{{ evReport.avgRecallRecoveryRatePct != null ? `${evReport.avgRecallRecoveryRatePct}%` : '—' }}</div>
       </div>
     </div>
 
@@ -126,6 +146,50 @@
           </el-table>
           <ListPager v-model:page="rt.page.value" v-model:size="rt.size.value" :total="rt.total.value" />
         </el-card>
+      </el-tab-pane>
+
+      <!-- ================= 深度分析 ================= -->
+      <el-tab-pane label="客诉与召回分析" name="analytics">
+        <div v-if="evReport" class="ana-grid">
+          <el-card shadow="never" body-style="padding:0">
+            <template #header><b>按投诉类别分布（{{ evReport.from }} ~ {{ evReport.to }}）</b></template>
+            <el-table :data="evReport.byCategory" size="small" empty-text="暂无投诉记录">
+              <el-table-column prop="label" label="类别" />
+              <el-table-column prop="count" label="件数" width="75" align="right" />
+              <el-table-column prop="seriousCount" label="严重" width="70" align="right" />
+              <el-table-column prop="openCount" label="处理中" width="75" align="right" />
+              <el-table-column label="占比" width="80" align="right"><template #default="{ row }"><span class="mono">{{ row.sharePct != null ? `${row.sharePct}%` : '—' }}</span></template></el-table-column>
+            </el-table>
+          </el-card>
+          <el-card shadow="never" body-style="padding:0">
+            <template #header><b>按来源渠道分布</b></template>
+            <el-table :data="evReport.byChannel" size="small" empty-text="暂无投诉记录">
+              <el-table-column prop="label" label="渠道" />
+              <el-table-column prop="count" label="件数" width="75" align="right" />
+              <el-table-column prop="adverseCount" label="不良反应" width="85" align="right" />
+              <el-table-column label="占比" width="80" align="right"><template #default="{ row }"><span class="mono">{{ row.sharePct != null ? `${row.sharePct}%` : '—' }}</span></template></el-table-column>
+            </el-table>
+          </el-card>
+          <el-card shadow="never" body-style="padding:0">
+            <template #header><b>按成品分布</b></template>
+            <el-table :data="evReport.byItem" size="small" empty-text="暂无投诉记录">
+              <el-table-column prop="label" label="成品" min-width="140" />
+              <el-table-column prop="count" label="件数" width="75" align="right" />
+              <el-table-column prop="adverseCount" label="不良反应" width="85" align="right" />
+              <el-table-column prop="seriousCount" label="严重" width="70" align="right" />
+            </el-table>
+          </el-card>
+          <el-card shadow="never" body-style="padding:0" style="grid-column:1 / -1">
+            <template #header><b>召回通知与回收效率复盘</b></template>
+            <el-table :data="evReport.recalls" size="small" empty-text="统计区间内无召回记录">
+              <el-table-column prop="recallNo" label="召回单" width="140" />
+              <el-table-column label="产品 / 批号" min-width="180"><template #default="{ row }">{{ row.itemName }} · <BatchNo :no="row.batchNo" /></template></el-table-column>
+              <el-table-column prop="statusLabel" label="状态" width="90" />
+              <el-table-column label="客户通知率" width="130" align="right"><template #default="{ row }"><span class="mono">{{ row.notifiedCount }}/{{ row.customerCount }}（{{ row.notifyRatePct != null ? `${row.notifyRatePct}%` : '—' }}）</span></template></el-table-column>
+              <el-table-column label="实际回收率" width="160" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.recoveredQty) }}/{{ fmtQty(row.outstandingQty) }}（{{ row.recoveryRatePct != null ? `${row.recoveryRatePct}%` : '—' }}）</span></template></el-table-column>
+            </el-table>
+          </el-card>
+        </div>
       </el-tab-pane>
     </el-tabs>
 
@@ -295,9 +359,10 @@ const auth = useAuth()
 const route = useRoute()
 const router = useRouter()
 const rd = useRefData()
-const tab = ref(route.query.tab === 'recalls' ? 'recalls' : 'complaints')
+const tab = ref(route.query.tab === 'recalls' ? 'recalls' : route.query.tab === 'analytics' ? 'analytics' : 'complaints')
 const complaints = ref([])
 const recalls = ref([])
+const evReport = ref(null)
 const fgBatches = ref([])
 
 const isQa = computed(() => auth.hasAny('QA', 'QSO'))
@@ -307,9 +372,14 @@ const canNotify = computed(() => auth.hasAny('QA', 'QSO', 'SALES'))
 const canReturn = computed(() => auth.hasAny('ADMIN', 'SALES', 'WAREHOUSE'))
 
 const loader = useLoader(async () => {
-  const [cs, rs] = await Promise.all([http.get('/complaints'), http.get('/recalls')])
+  const [cs, rs, rep] = await Promise.all([
+    http.get('/complaints'),
+    http.get('/recalls'),
+    http.get('/analytics/quality-events')
+  ])
   complaints.value = cs
   recalls.value = rs
+  evReport.value = rep
   if (dr.recall) dr.recall = rs.find((r) => r.id === dr.recall.id) || null
 })
 const load = () => loader.run()
@@ -479,6 +549,11 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 20px; font-weight: 600; }
+.ana-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
 .detail { display: grid; gap: 6px; padding: 4px 56px 8px; line-height: 1.6; }
 .prog { display: grid; grid-template-columns: 32px 1fr auto; gap: 8px; align-items: center; }
 .impact { padding: 12px 16px; margin-bottom: 14px; display: grid; gap: 4px; border-radius: 14px; }
