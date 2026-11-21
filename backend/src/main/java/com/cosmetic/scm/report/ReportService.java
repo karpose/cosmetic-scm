@@ -58,6 +58,10 @@ public class ReportService {
     private final com.cosmetic.scm.salesreturn.ReturnService salesReturns;
     private final com.cosmetic.scm.plm.ChangeService changeControl;
     private final com.cosmetic.scm.plm.ArtworkService artworks;
+    private final com.cosmetic.scm.plm.ComplianceService compliance;
+    private final com.cosmetic.scm.master.RegulatoryService regulatory;
+    private final com.cosmetic.scm.quality.QualityService quality;
+    private final com.cosmetic.scm.dealer.DealerService dealers;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
     private final SupplierAuditService audits;
     private final RetainService retains;
@@ -126,6 +130,11 @@ public class ReportService {
         m.put("sales-returns", this::salesReturnsReport);
         m.put("changes", this::changesReport);
         m.put("artworks", this::artworksReport);
+        m.put("compliance-status", this::complianceStatusReport);
+        m.put("regulatory-violations", this::regulatoryViolationsReport);
+        m.put("stability-coverage", this::stabilityCoverageReport);
+        m.put("release-decisions", this::releaseDecisionsReport);
+        m.put("dealer-orders", this::dealerOrdersReport);
         m.put("inspections", () -> inspectionResults(from, to));
         return m;
     }
@@ -568,6 +577,49 @@ public class ReportService {
                 a.createdBy(), a.createdAt(), a.approvedBy(), a.approvedAt())));
         return new Table("标签设计稿台账", List.of("设计稿编号", "版本", "包材编码", "包材名称", "成品编码", "成品名称",
                 "对应配方", "状态", "配方变更失效", "关联变更", "变更说明", "提交人", "提交时间", "批准人", "批准时间"), rows);
+    }
+
+    private Table complianceStatusReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        compliance.statuses().forEach(p -> rows.add(row(
+                p.fgCode(), p.fgName(), p.versionNo() == null ? null : "V" + p.versionNo(),
+                p.safety(), p.efficacy(), p.label(), p.complete() ? "齐套" : "未齐套")));
+        return new Table("产品合规齐套台账", List.of("成品编码", "成品名称", "生效配方", "安全评估", "功效宣称依据", "标签审核", "齐套状态"), rows);
+    }
+
+    private Table regulatoryViolationsReport() {
+        var cmp = regulatory.compare();
+        List<List<Object>> rows = new ArrayList<>();
+        cmp.violations().forEach(v -> rows.add(row("配方冲突", v.fgCode(), v.fgName(), v.itemCode(), null, v.message())));
+        cmp.gaps().forEach(g -> rows.add(row("物料差异", g.code(), g.name(), g.inci(), g.state(), g.detail())));
+        return new Table("法规目录冲突与差异清单", List.of("类型", "编码", "名称", "关联物料/INCI", "差异分类", "问题描述"), rows);
+    }
+
+    private Table stabilityCoverageReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        stability.coverage().forEach(p -> rows.add(row(
+                p.fgCode(), p.fgName(), p.versionNo() == null ? null : "V" + p.versionNo(),
+                p.shelfMonths(), p.supportedMonths(), p.state())));
+        return new Table("成品保质期稳定性依据覆盖表", List.of("成品编码", "成品名称", "生效配方", "标的保质期(月)", "已签批支持(月)", "覆盖状态"), rows);
+    }
+
+    private Table releaseDecisionsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        quality.listAllDecisions().forEach(d -> rows.add(row(
+                d.batchNo(), d.itemName(), d.stageLabel(), d.decisionLabel(), d.reportNo(),
+                d.signedByName(), d.signedAt(), d.retainQty(), d.retainLocation(), d.retainUntil(), d.note())));
+        return new Table("质量检验与上市放行签批台账", List.of("批号", "物料/成品", "放行环节", "签批结论", "检验报告号",
+                "签批人", "签批时间", "留样数量", "留样地点", "留样保存至", "签批说明"), rows);
+    }
+
+    private Table dealerOrdersReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        dealers.listAll().forEach(o -> o.lines().forEach(l -> rows.add(row(
+                o.orderNo(), o.createdAt(), o.customerName(), o.minShelfPct(), o.requestedDate(),
+                o.statusLabel(), l.itemCode(), l.itemName(), l.qty(), l.unit(), o.soNo(),
+                o.reviewedBy(), o.reviewedAt(), o.reviewNote(), o.note()))));
+        return new Table("经销商订货履约明细", List.of("订货单号", "下单时间", "经销商", "效期要求(%)", "期望到货日",
+                "状态", "成品编码", "成品名称", "订购数量", "单位", "生成出库单", "审核人", "审核时间", "审核说明", "备注"), rows);
     }
 
     private Table auditLogs(LocalDate from, LocalDate to, String q, String action) {

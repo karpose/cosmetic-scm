@@ -30,6 +30,11 @@ public class DealerOrderController {
         return dealer.list();
     }
 
+    @GetMapping("/summary")
+    public DealerService.DealerSummary summary() {
+        return dealer.summary();
+    }
+
     @PostMapping("/{id}/approve")
     @PreAuthorize("hasAnyRole('ADMIN','SALES')")
     public OrderView approve(@PathVariable Long id, @Valid @RequestBody ApproveReq req) {

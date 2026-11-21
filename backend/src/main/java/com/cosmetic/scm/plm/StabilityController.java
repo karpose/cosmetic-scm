@@ -31,10 +31,34 @@ public class StabilityController {
 
     private final StabilityService stability;
     private final StabilityChangeService changes;
+    private final com.cosmetic.scm.common.TimeProvider time;
+
+    public record StabilitySummary(long totalStudies, long activeStudies, long waitingConclusion, long waitingSignature,
+                                   long due7dPulls, long overduePulls, long totalProducts, long coveredProducts,
+                                   long gapProducts, Double coverageRatePct) {
+    }
 
     @GetMapping("/studies")
     public List<StudyRow> list() {
         return stability.list();
+    }
+
+    @GetMapping("/summary")
+    public StabilitySummary summary() {
+        java.time.LocalDate today = time.today();
+        List<StudyRow> all = stability.list();
+        long active = all.stream().filter(s -> s.status() == com.cosmetic.scm.domain.StudyStatus.ACTIVE).count();
+        long waitConc = stability.waitingConclusion().size();
+        long waitSig = stability.waitingSignature().size();
+        List<StabilityService.DuePull> dueList = stability.due(today.plusDays(7));
+        long overdue = dueList.stream().filter(p -> p.dueDate().isBefore(today)).count();
+        List<ProductCoverage> cov = stability.coverage();
+        long totalProd = cov.size();
+        long covered = cov.stream().filter(p -> "OK".equals(p.state())).count();
+        long gap = totalProd - covered;
+        Double rate = totalProd == 0 ? null : Math.round(covered * 1000.0 / totalProd) / 10.0;
+        return new StabilitySummary(all.size(), active, waitConc, waitSig, dueList.size(), overdue,
+                totalProd, covered, gap, rate);
     }
 
     @GetMapping("/studies/{id}")

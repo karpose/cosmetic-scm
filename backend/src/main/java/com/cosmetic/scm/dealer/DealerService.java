@@ -221,9 +221,30 @@ public class DealerService {
 
     // ---------- 品牌方审核 ----------
 
+    public record DealerSummary(long totalOrders, long submittedCount, long approvedCount, long rejectedCount,
+                                long cancelledCount, Double approveRatePct) {
+    }
+
     @Transactional(readOnly = true)
     public List<OrderView> list() {
         return toViews(orders.findTop300ByOrderByIdDesc());
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderView> listAll() {
+        return toViews(orders.findAllByOrderByIdDesc());
+    }
+
+    @Transactional(readOnly = true)
+    public DealerSummary summary() {
+        List<DealerOrder> all = orders.findAllByOrderByIdDesc();
+        long submitted = all.stream().filter(o -> o.getStatus() == DealerOrderStatus.SUBMITTED).count();
+        long approved = all.stream().filter(o -> o.getStatus() == DealerOrderStatus.APPROVED).count();
+        long rejected = all.stream().filter(o -> o.getStatus() == DealerOrderStatus.REJECTED).count();
+        long cancelled = all.stream().filter(o -> o.getStatus() == DealerOrderStatus.CANCELLED).count();
+        long reviewed = approved + rejected;
+        Double rate = reviewed == 0 ? null : Math.round(approved * 1000.0 / reviewed) / 10.0;
+        return new DealerSummary(all.size(), submitted, approved, rejected, cancelled, rate);
     }
 
     @Transactional(readOnly = true)
