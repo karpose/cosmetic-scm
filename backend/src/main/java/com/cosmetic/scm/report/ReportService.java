@@ -66,6 +66,7 @@ public class ReportService {
     private final com.cosmetic.scm.inventory.StockOpsService stockOps;
     private final com.cosmetic.scm.security.UserService userService;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
+    private final com.cosmetic.scm.planning.PlanningService planning;
     private final SupplierAuditService audits;
     private final RetainService retains;
     private final PurchaseService purchases;
@@ -142,6 +143,9 @@ public class ReportService {
         m.put("quality-specs", this::qualitySpecsReport);
         m.put("inventory-ops", this::inventoryOpsReport);
         m.put("users", this::usersReport);
+        m.put("items", this::itemsReport);
+        m.put("partners", this::partnersReport);
+        m.put("planning-fg", this::planningFgReport);
         m.put("inspections", () -> inspectionResults(from, to));
         return m;
     }
@@ -675,6 +679,48 @@ public class ReportService {
                 String.join("、", u.roles()), u.partnerName(), u.email(),
                 u.lockedUntil(), u.passwordChangeRequired())));
         return new Table("账号与权限台账", List.of("账号", "姓名", "状态", "角色", "所属门户单位", "邮箱", "锁定截止", "密码状态"), rows);
+    }
+
+    private Table itemsReport() {
+        boolean showPrice = com.cosmetic.scm.security.PriceAccess.allowed();
+        List<List<Object>> rows = new ArrayList<>();
+        master.listItems().forEach(i -> rows.add(row(
+                i.getCode(), i.getName(), i.getItemType().getLabel(), i.getUnit(),
+                i.isActive() ? "启用" : "停用", i.getInci(), i.getCasNo(), i.getLimitPct(),
+                i.isBanned() ? "禁用" : "否", i.getShelfMonths(), i.getFilingNo(), i.getNetG(),
+                showPrice ? i.getStdCost() : null, showPrice ? i.getListPrice() : null)));
+        return new Table("物料主数据台账", List.of("编码", "名称", "类型", "单位", "状态", "INCI", "CAS号", "限用上限(%)",
+                "禁用", "保质期(月)", "备案/注册号", "净含量(g)", "标准成本(元)", "指导价(元)"), rows);
+    }
+
+    private Table partnersReport() {
+        boolean showCredit = arReportAllowed();
+        List<List<Object>> rows = new ArrayList<>();
+        master.listPartners().forEach(p -> rows.add(row(
+                p.code(), p.name(), p.kindLabel(), p.qualified() ? "合格" : "未批准",
+                p.criticalSupplier() ? "是" : "否", p.usable() ? "可下单" : "受限",
+                p.licenseNo(), p.licenseExpiry(),
+                "EXPIRED".equals(p.licenseState()) ? "已过期" : "EXPIRING".equals(p.licenseState()) ? "临期" : "OK".equals(p.licenseState()) ? "有效" : "未登记",
+                p.licenseDaysLeft(), p.channel(), p.minShelfPct(), p.defaultCreditDays(),
+                showCredit ? p.creditLimit() : null, p.contact(), p.address(), p.taxId(), p.financeCode())));
+        return new Table("往来单位与资质台账", List.of("编码", "名称", "类别", "合格名录", "关键供应商", "下单状态",
+                "资质编号", "资质有效期", "资质状态", "剩余天数", "渠道", "效期要求(%)", "默认账期(天)",
+                "信用额度(元)", "联系人", "地址", "税号", "财务客商编码"), rows);
+    }
+
+    private Table planningFgReport() {
+        boolean showPrice = com.cosmetic.scm.security.PriceAccess.allowed();
+        List<List<Object>> rows = new ArrayList<>();
+        planning.finishedGoods(new com.cosmetic.scm.planning.PlanningService.PlanParams(90, 30, 15, 60, false)).forEach(r -> rows.add(row(
+                r.code(), r.name(), r.unit(), r.shipped(), r.dailyDemand(),
+                r.available(), r.nearExpiry(), r.pendingRelease(), r.wip(), r.projected(),
+                r.safetyStock(), r.reorderPoint(), r.daysOfSupply(),
+                r.belowReorderPoint() ? "是" : "否", r.suggested(), r.factoryName(),
+                showPrice ? r.unitCost() : null, showPrice ? r.listPrice() : null)));
+        return new Table("成品补货建议", List.of("成品编码", "成品名称", "单位", "近90天出库", "日均需求",
+                "可用库存", "其中临期", "待上市放行", "在制生产", "预计可用",
+                "安全库存", "再订货点", "可售天数", "低于再订货点", "建议补产", "建议生产方",
+                "单位成本(元)", "指导价(元)"), rows);
     }
 
     private Table auditLogs(LocalDate from, LocalDate to, String q, String action) {

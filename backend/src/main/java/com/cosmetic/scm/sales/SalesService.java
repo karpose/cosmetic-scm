@@ -108,6 +108,65 @@ public class SalesService {
         }
     }
 
+    public record ChannelStat(String channel, int orderCount, BigDecimal totalQty, BigDecimal totalAmount) {
+    }
+
+    public record SalesSummary(
+            int windowDays, LocalDate from, LocalDate to,
+            int totalOrdersAll, int ordersInWindow, BigDecimal unitsInWindow,
+            int activeCustomersInWindow, BigDecimal amountInWindow,
+            List<ChannelStat> byChannel) {
+    }
+
+    @Transactional(readOnly = true)
+    public SalesSummary summary(int days) {
+        int windowDays = Math.max(1, Math.min(365, days));
+        LocalDate to = time.today();
+        LocalDate from = to.minusDays(windowDays - 1L);
+        int totalOrdersAll = (int) orders.count();
+        List<SalesOrder> inWindow = orders.findByOrderDateGreaterThanEqual(from);
+        boolean showPrice = salesPriceAllowed();
+        if (inWindow.isEmpty()) {
+            return new SalesSummary(windowDays, from, to, totalOrdersAll, 0, BigDecimal.ZERO, 0,
+                    showPrice ? BigDecimal.ZERO : null, List.of());
+        }
+        List<Long> ids = inWindow.stream().map(SalesOrder::getId).toList();
+        Map<Long, List<SoLine>> linesBySo = lines.findBySoIdIn(ids).stream()
+                .collect(Collectors.groupingBy(SoLine::getSoId));
+        Map<Long, Partner> pm = lookup.partnerMap();
+        Set<Long> customers = new HashSet<>();
+        BigDecimal totalUnits = BigDecimal.ZERO;
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        Map<String, int[]> chOrders = new java.util.LinkedHashMap<>();
+        Map<String, BigDecimal> chQty = new java.util.LinkedHashMap<>();
+        Map<String, BigDecimal> chAmt = new java.util.LinkedHashMap<>();
+        for (SalesOrder so : inWindow) {
+            customers.add(so.getCustomerId());
+            Partner c = pm.get(so.getCustomerId());
+            String channel = c != null && c.getChannel() != null && !c.getChannel().isBlank() ? c.getChannel().trim() : "未分渠道";
+            chOrders.computeIfAbsent(channel, k -> new int[1])[0]++;
+            for (SoLine l : linesBySo.getOrDefault(so.getId(), List.of())) {
+                totalUnits = totalUnits.add(l.getQty());
+                chQty.merge(channel, l.getQty(), BigDecimal::add);
+                if (showPrice && l.getUnitPrice() != null) {
+                    BigDecimal amt = l.getQty().multiply(l.getUnitPrice()).setScale(2, RoundingMode.HALF_UP);
+                    totalAmount = totalAmount.add(amt);
+                    chAmt.merge(channel, amt, BigDecimal::add);
+                }
+            }
+        }
+        List<ChannelStat> byChannel = chOrders.keySet().stream()
+                .map(ch -> new ChannelStat(
+                        ch,
+                        chOrders.get(ch)[0],
+                        chQty.getOrDefault(ch, BigDecimal.ZERO),
+                        showPrice ? chAmt.getOrDefault(ch, BigDecimal.ZERO) : null))
+                .sorted((a, b) -> b.totalQty().compareTo(a.totalQty()))
+                .toList();
+        return new SalesSummary(windowDays, from, to, totalOrdersAll, inWindow.size(), totalUnits,
+                customers.size(), showPrice ? totalAmount : null, byChannel);
+    }
+
     @Transactional(readOnly = true)
     public List<SoView> list() {
         return views(orders.findTop300ByOrderByIdDesc());
