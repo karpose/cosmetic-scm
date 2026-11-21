@@ -2,6 +2,7 @@ package com.cosmetic.scm.plm;
 
 import java.util.List;
 
+import com.cosmetic.scm.domain.StabilityStudyStatus;
 import com.cosmetic.scm.plm.StabilityService.ApproveReq;
 import com.cosmetic.scm.plm.StabilityService.ConcludeReq;
 import com.cosmetic.scm.plm.StabilityService.CreateReq;
@@ -47,7 +48,7 @@ public class StabilityController {
     public StabilitySummary summary() {
         java.time.LocalDate today = time.today();
         List<StudyRow> all = stability.list();
-        long active = all.stream().filter(s -> s.status() == com.cosmetic.scm.domain.StudyStatus.ACTIVE).count();
+        long active = all.stream().filter(s -> s.status() == StabilityStudyStatus.ACTIVE).count();
         long waitConc = stability.waitingConclusion().size();
         long waitSig = stability.waitingSignature().size();
         List<StabilityService.DuePull> dueList = stability.due(today.plusDays(7));

@@ -15,7 +15,7 @@ import lombok.RequiredArgsConstructor;
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.domain.ReturnDisposition;
 import com.cosmetic.scm.inventory.InventoryService;
-import com.cosmetic.scm.inventory.InventoryService.StockView;
+import com.cosmetic.scm.inventory.InventoryService.StockRow;
 import com.cosmetic.scm.master.MasterService;
 import com.cosmetic.scm.salesreturn.ReturnService;
 import com.cosmetic.scm.salesreturn.ReturnService.LineView;
@@ -61,7 +61,7 @@ public class ExpiryRiskAndReturnsService {
         LocalDate today = time.today();
         boolean canSeePrice = PriceAccess.allowed();
         Map<Long, BigDecimal> costs = canSeePrice ? master.unitCosts() : Map.of();
-        List<StockView> stock = inventory.listStock(null, null, null, false);
+        List<StockRow> stock = inventory.listStock(null, null, null, false);
 
         long expiredCount = 0;
         BigDecimal expiredVal = BigDecimal.ZERO;
@@ -73,7 +73,7 @@ public class ExpiryRiskAndReturnsService {
         BigDecimal due90Val = BigDecimal.ZERO;
 
         List<ExpiryRiskRow> riskRows = new ArrayList<>();
-        for (StockView s : stock) {
+        for (StockRow s : stock) {
             if (s.qty() == null || s.qty().signum() <= 0) {
                 continue;
             }

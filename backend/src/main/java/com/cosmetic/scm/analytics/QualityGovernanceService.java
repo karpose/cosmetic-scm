@@ -19,8 +19,8 @@ import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.complaint.ComplaintService;
 import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.CapaStatus;
+import com.cosmetic.scm.domain.CaseStatus;
 import com.cosmetic.scm.domain.DeviationLevel;
-import com.cosmetic.scm.domain.DeviationStatus;
 import com.cosmetic.scm.domain.DocStatus;
 import com.cosmetic.scm.domain.EquipmentStatus;
 import com.cosmetic.scm.domain.FormulaStatus;
@@ -162,7 +162,7 @@ public class QualityGovernanceService {
                     || (d.moNo() != null && moNos.contains(d.moNo()));
             if (!match) continue;
             devCount++;
-            if (d.status() == DeviationStatus.OPEN) devOpen++;
+            if (d.status() == CaseStatus.OPEN) devOpen++;
             if (d.level() != DeviationLevel.MINOR) devMajor++;
         }
 
@@ -268,8 +268,8 @@ public class QualityGovernanceService {
     public QmsSummary qmsSummary() {
         var devs = deviations.listAll();
         int devTotal = devs.size();
-        int devOpen = (int) devs.stream().filter(d -> d.status() == DeviationStatus.OPEN).count();
-        int devOver = (int) devs.stream().filter(d -> d.status() == DeviationStatus.OPEN && d.overdue()).count();
+        int devOpen = (int) devs.stream().filter(d -> d.status() == CaseStatus.OPEN).count();
+        int devOver = (int) devs.stream().filter(d -> d.status() == CaseStatus.OPEN && d.overdue()).count();
         int devClosed = devTotal - devOpen;
 
         var capas = deviations.listAllCapas();
