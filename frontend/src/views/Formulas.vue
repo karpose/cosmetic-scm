@@ -7,6 +7,7 @@
       </div>
       <div class="toolbar">
         <ExportButton v-if="tab === 'versions'" report="plm-readiness" label="导出合规就绪度" />
+        <ExportButton v-if="tab === 'versions'" report="pqr" label="导出年度质量回顾" />
         <ExportButton v-if="tab === 'where-used'" report="where-used" label="导出反查清单" />
         <el-button v-if="tab === 'filings' && canFile" type="primary" @click="openFiling()">登记备案</el-button>
       </div>
@@ -25,6 +26,7 @@
                 <span class="toolbar">
                   <el-button v-if="p.versions.length >= 2" size="small" @click="openCompare(p)">版本对比</el-button>
                   <el-button size="small" @click="openPif(p.fgItemId)">打印 PIF 档案</el-button>
+                  <el-button size="small" @click="openPqr(p.fgItemId)">打印 PQR</el-button>
                   <el-button v-if="canEdit && !p.inProgress" size="small" @click="openDraft(p)">发起配方变更</el-button>
                 </span>
               </div>
@@ -483,6 +485,7 @@ async function saveRouting() {
 
 // ---------- 配方版本对比 / PIF / 原料反查 ----------
 const openPif = (fgItemId) => window.open(`/pif-report?fg=${fgItemId}`, '_blank')
+const openPqr = (fgItemId) => window.open(`/pqr-print?fg=${fgItemId}`, '_blank')
 const cmp = reactive({ visible: false, loading: false, p: null, fromId: null, toId: null, data: null })
 function openCompare(p) {
   cmp.p = p

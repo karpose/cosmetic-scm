@@ -288,6 +288,30 @@
           </el-table>
         </el-card>
       </div>
+
+      <!-- 库存 ABC 价值分类（仅价格权限角色可见） -->
+      <el-card v-if="canPrice" shadow="never" body-style="padding:0 0 8px">
+        <template #header>
+          <div class="ch">
+            <b>库存 ABC 价值分类</b>
+            <div class="toolbar">
+              <span v-if="abc.data" class="muted small">
+                A类 {{ abc.data.aCount }} 项（¥{{ fmtMoney(abc.data.aValue) }}）· B类 {{ abc.data.bCount }} 项（¥{{ fmtMoney(abc.data.bValue) }}）· C类 {{ abc.data.cCount }} 项（¥{{ fmtMoney(abc.data.cValue) }}）
+              </span>
+              <ExportButton report="inventory-abc" />
+            </div>
+          </div>
+        </template>
+        <el-table :data="(abc.data?.rows || []).slice(0, 20)" v-loading="abc.loading" size="small" empty-text="暂无带成本的在库库存">
+          <el-table-column label="分级" width="75" align="center">
+            <template #default="{ row }"><el-tag size="small" :type="row.abcClass === 'A' ? 'danger' : row.abcClass === 'B' ? 'warning' : 'info'" disable-transitions>{{ row.abcClass }} 类</el-tag></template>
+          </el-table-column>
+          <el-table-column label="物料" min-width="170"><template #default="{ row }">{{ row.itemName }}<div class="muted small mono">{{ row.itemCode }} · {{ row.itemType }}</div></template></el-table-column>
+          <el-table-column label="在库数量" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }} {{ row.unit }}</span></template></el-table-column>
+          <el-table-column label="库存金额" width="120" align="right"><template #default="{ row }"><b class="mono">¥{{ fmtMoney(row.value) }}</b></template></el-table-column>
+          <el-table-column label="占比 / 累计" width="130" align="right"><template #default="{ row }"><span class="mono">{{ row.sharePct }}% / {{ row.cumulativePct }}%</span></template></el-table-column>
+        </el-table>
+      </el-card>
     </template>
 
     <div v-show="tip.show" class="tip glass" :style="{ left: `${tip.x}px`, top: `${tip.y}px` }">{{ tip.text }}</div>
@@ -391,18 +415,20 @@ async function loadBatchCosts() {
 const mg = reactive({ loading: false, dim: 'item', data: null })
 const cf = reactive({ loading: false, data: null })
 const iv = reactive({ loading: false, data: null })
+const abc = reactive({ loading: false, data: null })
 async function loadFinanceInsights() {
   if (!canPrice.value) return
-  mg.loading = cf.loading = iv.loading = true
+  mg.loading = cf.loading = iv.loading = abc.loading = true
   try {
-    const [m, c, v] = await Promise.all([
+    const [m, c, v, a] = await Promise.all([
       http.get('/analytics/margins'),
       http.get('/analytics/cashflow-forecast'),
-      http.get('/analytics/inventory-variance')
+      http.get('/analytics/inventory-variance'),
+      http.get('/analytics/inventory-abc')
     ])
-    mg.data = m; cf.data = c; iv.data = v
+    mg.data = m; cf.data = c; iv.data = v; abc.data = a
   } finally {
-    mg.loading = cf.loading = iv.loading = false
+    mg.loading = cf.loading = iv.loading = abc.loading = false
   }
 }
 

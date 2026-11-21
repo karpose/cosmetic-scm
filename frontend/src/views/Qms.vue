@@ -7,12 +7,22 @@
       </div>
       <div class="toolbar">
         <ExportButton :report="EXPORTS[tab]" />
+        <ExportButton report="qms-summary" label="导出健康度" />
         <el-button v-if="tab === 'deviations' && canReport" type="primary" @click="openDeviation">登记偏差</el-button>
         <el-button v-if="tab === 'capas' && isQa" type="primary" @click="openCapa(null)">新建 CAPA</el-button>
         <el-button v-if="tab === 'audits' && isQa" type="primary" @click="openAudit()">登记审核</el-button>
         <el-button v-if="tab === 'equipment' && canEquip" type="primary" @click="openEquip">新增设备</el-button>
       </div>
     </div>
+
+    <el-card v-if="qmsSum" shadow="never" body-style="padding:10px 16px" style="margin-bottom:12px">
+      <div class="toolbar small">
+        <span>偏差闭环率 <b class="mono">{{ qmsSum.deviationCloseRatePct != null ? `${qmsSum.deviationCloseRatePct}%` : '—' }}</b>（超期 <b class="mono" :class="{ bad: qmsSum.overdueDeviations > 0 }">{{ qmsSum.overdueDeviations }}</b>）</span>
+        <span>CAPA 验证率 <b class="mono">{{ qmsSum.capaVerifyRatePct != null ? `${qmsSum.capaVerifyRatePct}%` : '—' }}</b>（超期 <b class="mono" :class="{ bad: qmsSum.overdueCapas > 0 }">{{ qmsSum.overdueCapas }}</b>）</span>
+        <span>合格供方 <b class="mono">{{ qmsSum.qualifiedPartners }}/{{ qmsSum.auditPartnersTotal }}</b>（审核超期 <b class="mono" :class="{ bad: qmsSum.auditOverdueCount > 0 }">{{ qmsSum.auditOverdueCount }}</b>）</span>
+        <span>在用设备 <b class="mono">{{ qmsSum.equipmentInUse }}/{{ qmsSum.equipmentTotal }}</b>（校准过期 <b class="mono" :class="{ bad: qmsSum.equipmentCalOverdue > 0 }">{{ qmsSum.equipmentCalOverdue }}</b>）</span>
+      </div>
+    </el-card>
 
     <el-tabs v-model="tab" class="seg">
       <!-- ================= 偏差 ================= -->
@@ -409,6 +419,7 @@ const audits = ref([])
 const partners = ref([])
 const retains = ref([])
 const equipment = ref([])
+const qmsSum = ref(null)
 const canEquip = computed(() => auth.hasAny('ADMIN', 'PRODUCTION', 'QA', 'QSO'))
 const et = usePaged(equipment, { match: textMatch('code', 'name', 'location') })
 const equipDueCount = computed(() => equipment.value.filter((e) => e.status === 'IN_USE' && (e.dueState === 'OVERDUE' || e.dueState === 'DUE')).length)
@@ -424,8 +435,8 @@ const openCapaCount = computed(() => capas.value.filter((c) => c.status !== 'VER
 const capasOf = (d) => capas.value.filter((c) => c.deviationId === d.id)
 
 const loader = useLoader(async () => {
-  const [a, b, c, d, e, f] = await Promise.all([
-    http.get('/qms/deviations'), http.get('/qms/capas'), http.get('/qms/audits'), http.get('/qms/audit-partners'), http.get('/qms/retains'), http.get('/equipment')
+  const [a, b, c, d, e, f, s] = await Promise.all([
+    http.get('/qms/deviations'), http.get('/qms/capas'), http.get('/qms/audits'), http.get('/qms/audit-partners'), http.get('/qms/retains'), http.get('/equipment'), http.get('/qms/summary')
   ])
   equipment.value = f
   deviations.value = a
@@ -433,6 +444,7 @@ const loader = useLoader(async () => {
   audits.value = c
   partners.value = d
   retains.value = e
+  qmsSum.value = s
 })
 const load = () => loader.run()
 
