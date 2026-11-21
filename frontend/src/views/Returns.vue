@@ -5,10 +5,62 @@
         <h2>销售退货</h2>
         <p>客户退回的成品先进入退货隔离区，不参与先到期先出分配；再由质量人员逐行签批“转可售”或“报废”。召回回收的货也在这里登记并关联召回单，计入召回进度，且只能报废。</p>
       </div>
-      <el-button v-if="canCreate" type="primary" @click="openCreate()">登记退货</el-button>
+      <div class="toolbar">
+        <ExportButton report="sales-returns" />
+        <el-button v-if="canCreate" type="primary" @click="openCreate()">登记退货</el-button>
+      </div>
     </div>
 
-    <el-card shadow="never" body-style="padding:0 0 8px">
+    <div v-if="retReport" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="muted small">近一年退货单 / 总退货量</div>
+        <div class="kpi-val mono">{{ retReport.totalReturns }} <span class="muted small">（{{ fmtQty(retReport.totalQty) }} 件）</span></div>
+      </div>
+      <div class="kpi-card" :class="{ warn: retReport.pendingLines > 0 }">
+        <div class="muted small">隔离区待处置</div>
+        <div class="kpi-val mono">{{ retReport.pendingLines }} 行 <span class="muted small">（{{ fmtQty(retReport.pendingQty) }} 件）</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">已处置转可售率</div>
+        <div class="kpi-val mono">{{ retReport.restockRatePct != null ? `${retReport.restockRatePct}%` : '—' }} <span class="muted small">（{{ fmtQty(retReport.restockQty) }} 件）</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">报废率 / 召回回收单</div>
+        <div class="kpi-val mono">{{ retReport.scrapRatePct != null ? `${retReport.scrapRatePct}%` : '—' }} <span class="muted small">（召回 {{ retReport.recallReturns }} 单）</span></div>
+      </div>
+    </div>
+
+    <el-tabs v-model="tab" class="seg">
+      <el-tab-pane label="退货明细" name="list" />
+      <el-tab-pane label="退货处置复盘" name="analytics" />
+    </el-tabs>
+
+    <div v-if="tab === 'analytics' && retReport" class="ana-grid">
+      <el-card shadow="never" body-style="padding:0">
+        <template #header><b>按客户退货排行（{{ retReport.from }} ~ {{ retReport.to }}）</b></template>
+        <el-table :data="retReport.byCustomer" size="small" empty-text="统计区间内无退货">
+          <el-table-column prop="name" label="客户" min-width="140" />
+          <el-table-column prop="returnCount" label="单数" width="70" align="right" />
+          <el-table-column label="退货量" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.totalQty) }}</span></template></el-table-column>
+          <el-table-column label="转可售" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.restockQty) }}</span></template></el-table-column>
+          <el-table-column label="报废" width="85" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.scrapQty) }}</span></template></el-table-column>
+          <el-table-column label="转可售率" width="90" align="right"><template #default="{ row }"><span class="mono">{{ row.restockRatePct != null ? `${row.restockRatePct}%` : '—' }}</span></template></el-table-column>
+        </el-table>
+      </el-card>
+      <el-card shadow="never" body-style="padding:0">
+        <template #header><b>按成品退货排行</b></template>
+        <el-table :data="retReport.byItem" size="small" empty-text="统计区间内无退货">
+          <el-table-column prop="name" label="成品" min-width="140" />
+          <el-table-column prop="returnCount" label="单数" width="70" align="right" />
+          <el-table-column label="退货量" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.totalQty) }}</span></template></el-table-column>
+          <el-table-column label="转可售" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.restockQty) }}</span></template></el-table-column>
+          <el-table-column label="报废" width="85" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.scrapQty) }}</span></template></el-table-column>
+          <el-table-column label="转可售率" width="90" align="right"><template #default="{ row }"><span class="mono">{{ row.restockRatePct != null ? `${row.restockRatePct}%` : '—' }}</span></template></el-table-column>
+        </el-table>
+      </el-card>
+    </div>
+
+    <el-card v-else shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="filters">
           <el-radio-group v-model="state" size="small">
@@ -140,6 +192,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
+import ExportButton from '../components/ExportButton.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
@@ -154,16 +207,23 @@ const auth = useAuth()
 const route = useRoute()
 const router = useRouter()
 const rd = useRefData()
+const tab = ref('list')
 const list = ref([])
 const recalls = ref([])
+const retReport = ref(null)
 const state = ref('')
 const canCreate = computed(() => auth.hasAny('ADMIN', 'SALES', 'WAREHOUSE'))
 const canDispose = computed(() => auth.hasAny('QA', 'QSO'))
 
 const loader = useLoader(async () => {
-  const [rs, rc] = await Promise.all([http.get('/sales-returns'), http.get('/recalls')])
+  const [rs, rc, rep] = await Promise.all([
+    http.get('/sales-returns'),
+    http.get('/recalls'),
+    http.get('/analytics/sales-returns')
+  ])
   list.value = rs
   recalls.value = rc
+  retReport.value = rep
 })
 const load = () => loader.run()
 const t = usePaged(list, {
@@ -266,5 +326,10 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 20px; font-weight: 600; }
+.ana-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 14px; }
 .rl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 3px 0; }
 </style>

@@ -6,8 +6,28 @@
         <p>印刷包材的设计稿按包材分版本，对应提交时的生效配方。质量安全负责人对照成分表逐项评审、上传设计稿后才能批准（不能是提交人）；配方变了，已批准的设计稿要重新评审。</p>
       </div>
       <div class="toolbar">
+        <ExportButton report="artworks" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="canEdit" type="primary" @click="openCreate">提交设计稿</el-button>
+      </div>
+    </div>
+
+    <div v-if="summary" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="muted small">现行已批准设计稿</div>
+        <div class="kpi-val mono">{{ summary.approvedCount }} <span class="muted small">/ 共 {{ summary.totalArtworks }} 版</span></div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.pendingCount > 0 }">
+        <div class="muted small">设计稿待签批</div>
+        <div class="kpi-val mono">{{ summary.pendingCount }}</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.staleCount > 0 }">
+        <div class="muted small">配方变更失效待重评</div>
+        <div class="kpi-val mono">{{ summary.staleCount }}</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.pendingProofCount > 0 }">
+        <div class="muted small">包材打样待签样</div>
+        <div class="kpi-val mono">{{ summary.pendingProofCount }}</div>
       </div>
     </div>
 
@@ -168,6 +188,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
+import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
@@ -187,11 +208,13 @@ const isQuality = computed(() => auth.hasAny('QA', 'QSO'))
 const canProof = computed(() => auth.hasAny('MASTER_DATA', 'PURCHASE', 'QA', 'QSO'))
 const artworks = ref([])
 const checklist = ref([])
+const summary = ref(null)
 const currentOnly = ref(true)
 const loader = useLoader(async () => {
-  const o = await http.get('/artworks')
+  const [o, sum] = await Promise.all([http.get('/artworks'), http.get('/artworks/summary')])
   artworks.value = o.artworks
   checklist.value = o.checklist
+  summary.value = sum
 })
 const load = () => loader.run()
 const shown = computed(() => currentOnly.value ? artworks.value.filter((x) => x.status === 'APPROVED' || x.status === 'PENDING') : artworks.value)
@@ -339,6 +362,10 @@ async function reject() {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 20px; font-weight: 600; }
 .late { color: var(--el-color-danger); }
 .summary-line { margin: 0 0 6px; line-height: 1.8; }
 .sub-head { margin: 14px 0 6px; }
