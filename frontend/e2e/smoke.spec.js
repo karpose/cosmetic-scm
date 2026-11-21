@@ -1823,9 +1823,13 @@ test('新品立项：申请、管理员批准、关联成品、记录试制；�
   test.setTimeout(240_000)
   await login(page, 'qa1')
   await page.goto('/npd')
+  const projectRow = (name) => page.locator('.el-table__row').filter({
+    hasText: name,
+    has: page.getByRole('button', { name: '详情', exact: true })
+  })
   // 示例：面膜待批准，面霜开发中
-  await expect(page.locator('.el-table__row').filter({ hasText: '舒缓修护面膜' }).getByText('待立项审批')).toBeVisible()
-  await expect(page.locator('.el-table__row').filter({ hasText: 'FG-CRM-002' }).getByText('开发中')).toBeVisible()
+  await expect(projectRow('舒缓修护面膜').getByText('待立项审批')).toBeVisible()
+  await expect(projectRow('FG-CRM-002').getByText('开发中')).toBeVisible()
 
   await page.getByRole('button', { name: '申请立项' }).click()
   const cr = dialog(page, '申请立项')
@@ -1842,14 +1846,14 @@ test('新品立项：申请、管理员批准、关联成品、记录试制；�
 
   await login(page, 'admin', 'Admin@123456')
   await page.goto('/npd')
-  await page.locator('.el-table__row').filter({ hasText: 'E2E 新品精华' }).getByRole('button', { name: '详情' }).click()
+  await projectRow('E2E 新品精华').getByRole('button', { name: '详情' }).click()
   await dt.getByRole('button', { name: '批准立项' }).click()
   await toast(page, '已批准立项')
   await expect(dt.getByText('开发中')).toBeVisible()
 
   await login(page, 'qa1')
   await page.goto('/npd')
-  await page.locator('.el-table__row').filter({ hasText: 'E2E 新品精华' }).getByRole('button', { name: '详情' }).click()
+  await projectRow('E2E 新品精华').getByRole('button', { name: '详情' }).click()
   await expect(dt.getByText('先在主数据建好成品')).toBeVisible()
   await dt.locator('.link-row .el-select').click()
   await page.keyboard.type('精华液')
