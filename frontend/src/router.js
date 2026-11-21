@@ -9,6 +9,7 @@ const routes = [
   { path: '/batch-record', name: 'batch-record', component: () => import('./views/BatchRecordPrint.vue'), meta: { title: '批生产记录' } },
   { path: '/stability-report', name: 'stability-report', component: () => import('./views/StabilityReportPrint.vue'), meta: { title: '稳定性试验报告' } },
   { path: '/statement-print', name: 'statement-print', component: () => import('./views/StatementPrint.vue'), meta: { title: '对账单打印' } },
+  { path: '/pif-report', name: 'pif-report', component: () => import('./views/PifReportPrint.vue'), meta: { title: '产品信息档案 (PIF)' } },
   { path: '/labels', name: 'labels', component: () => import('./views/Labels.vue'), meta: { title: '批次标签' } },
   // 消费者扫码页：不需要登录，二维码里的地址是 /v/防伪码
   { path: '/v/:code?', name: 'verify', component: () => import('./views/Verify.vue'), meta: { public: true, title: '正品查询' } },
