@@ -5,7 +5,29 @@
         <h2>质量放行</h2>
         <p>物料须检验放行后才能发料；成品在受托厂出厂放行之后，还须由品牌方质量安全负责人审核签批才可上市销售。每次签批都要再次输入本人密码，并记录签批人、时间和理由。</p>
       </div>
-      <el-button :loading="loading" @click="load">刷新</el-button>
+      <div class="toolbar">
+        <ExportButton report="release-decisions" label="导出签批台账" />
+        <el-button :loading="loading" @click="load">刷新</el-button>
+      </div>
+    </div>
+
+    <div v-if="summary" class="kpi-grid">
+      <div class="kpi-card" :class="{ warn: summary.quarantineCount + summary.pendingReleaseCount > 0 }">
+        <div class="muted small">物料待检 / 成品待放行</div>
+        <div class="kpi-val mono">{{ summary.quarantineCount }} <span class="muted small">/ {{ summary.pendingReleaseCount }}</span></div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.frozenCount > 0 }">
+        <div class="muted small">当前冻结批次</div>
+        <div class="kpi-val mono">{{ summary.frozenCount }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">近 30 天来料检验合格率</div>
+        <div class="kpi-val mono">{{ summary.material30dPassRatePct != null ? `${summary.material30dPassRatePct}%` : '—' }} <span class="muted small">（拒收 {{ summary.material30dRejected }}）</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">近 30 天成品上市放行率</div>
+        <div class="kpi-val mono">{{ summary.market30dPassRatePct != null ? `${summary.market30dPassRatePct}%` : '—' }} <span class="muted small">（不予 {{ summary.market30dRejected }}）</span></div>
+      </div>
     </div>
 
     <el-card shadow="never" body-style="padding:0">
@@ -180,6 +202,7 @@ import { ElMessage } from 'element-plus'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
 import AttachmentList from '../components/AttachmentList.vue'
+import ExportButton from '../components/ExportButton.vue'
 import InspectionPanel from '../components/InspectionPanel.vue'
 import { useAuth } from '../stores/auth'
 import { fmtDate, fmtQty, fmtTime } from '../utils/format'
@@ -188,6 +211,7 @@ import { latestOnly } from '../utils/latest'
 const auth = useAuth()
 const loading = ref(false)
 const q = reactive({ quarantine: [], pendingRelease: [], frozen: [], recent: [] })
+const summary = ref(null)
 const canQc = computed(() => auth.hasAny('QA', 'QSO'))
 const canRelease = computed(() => auth.hasAny('QSO'))
 
@@ -231,7 +255,9 @@ function openInspect(batch) {
 async function load() {
   loading.value = true
   try {
-    Object.assign(q, await http.get('/quality/queue'))
+    const [queueData, sum] = await Promise.all([http.get('/quality/queue'), http.get('/quality/summary')])
+    Object.assign(q, queueData)
+    summary.value = sum
   } finally {
     loading.value = false
   }
@@ -300,6 +326,10 @@ onMounted(load)
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 20px; font-weight: 600; }
 .checks { display: grid; gap: 4px; }
 .proof-line { flex-basis: 100%; }
 .proof-line .late { color: var(--el-color-danger); }

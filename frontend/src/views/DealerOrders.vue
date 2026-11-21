@@ -5,6 +5,29 @@
         <h2>经销商订单</h2>
         <p>经销商在订货门户提交的订单。审核通过时系统按先到期先出、并按该经销商的效期接收标准分配批次，直接生成销售出库单；库存不够时不能通过。</p>
       </div>
+      <div class="toolbar">
+        <ExportButton report="dealer-orders" label="导出订货台账" />
+        <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
+      </div>
+    </div>
+
+    <div v-if="summary" class="kpi-grid">
+      <div class="kpi-card" :class="{ warn: summary.submittedCount > 0 }">
+        <div class="muted small">待审核订单</div>
+        <div class="kpi-val mono">{{ summary.submittedCount }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">已审核发货 / 累计订单</div>
+        <div class="kpi-val mono">{{ summary.approvedCount }} <span class="muted small">/ {{ summary.totalOrders }}</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">订单审核通过率</div>
+        <div class="kpi-val mono">{{ summary.approveRatePct != null ? `${summary.approveRatePct}%` : '—' }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">已驳回 / 已撤回</div>
+        <div class="kpi-val mono">{{ summary.rejectedCount }} <span class="muted small">/ {{ summary.cancelledCount }}</span></div>
+      </div>
     </div>
 
     <el-card shadow="never" body-style="padding:0 0 8px">
@@ -72,6 +95,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
+import ExportButton from '../components/ExportButton.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
@@ -84,9 +108,14 @@ import { textMatch, usePaged } from '../utils/table'
 const auth = useAuth()
 const rd = useRefData()
 const list = ref([])
+const summary = ref(null)
 const state = ref('SUBMITTED')
 const canReview = computed(() => auth.hasAny('ADMIN', 'SALES'))
-const loader = useLoader(async () => { list.value = await http.get('/dealer-orders') })
+const loader = useLoader(async () => {
+  const [rows, sum] = await Promise.all([http.get('/dealer-orders'), http.get('/dealer-orders/summary')])
+  list.value = rows
+  summary.value = sum
+})
 const load = () => loader.run()
 const t = usePaged(list, {
   match: textMatch('orderNo', 'customerName', 'note', (r) => r.lines.map((l) => l.itemName).join(' ')),
@@ -141,6 +170,10 @@ onMounted(() => Promise.all([load(), rd.load()]))
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 20px; font-weight: 600; }
 .plan { padding: 12px 16px; border-radius: 14px; }
 .pl { margin-top: 8px; line-height: 2; }
 .pick { margin-right: 10px; }

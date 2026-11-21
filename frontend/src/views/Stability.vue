@@ -7,8 +7,28 @@
       </div>
       <div class="toolbar">
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
+        <ExportButton report="stability-coverage" label="导出保质期覆盖" />
         <ExportButton report="stability" />
         <el-button v-if="canCreate" type="primary" @click="openCreate()">登记试验</el-button>
+      </div>
+    </div>
+
+    <div v-if="summary" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="muted small">进行中稳定性试验</div>
+        <div class="kpi-val mono">{{ summary.activeStudies }} <span class="muted small">/ 共 {{ summary.totalStudies }} 项</span></div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.overduePulls > 0 }">
+        <div class="muted small">近 7 天取样 / 已超期</div>
+        <div class="kpi-val mono">{{ summary.due7dPulls }} <span class="muted small">（超期 {{ summary.overduePulls }}）</span></div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.waitingConclusion + summary.waitingSignature > 0 }">
+        <div class="muted small">待写结论 / 待签批</div>
+        <div class="kpi-val mono">{{ summary.waitingConclusion }} <span class="muted small">/ {{ summary.waitingSignature }}</span></div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.gapProducts > 0 }">
+        <div class="muted small">保质期依据覆盖率</div>
+        <div class="kpi-val mono">{{ summary.coverageRatePct != null ? `${summary.coverageRatePct}%` : '—' }} <span class="muted small">（缺口 {{ summary.gapProducts }}）</span></div>
       </div>
     </div>
 
@@ -401,11 +421,18 @@ const isQso = computed(() => auth.hasAny('QSO'))
 const studies = ref([])
 const products = ref([])
 const versions = ref([])
+const summary = ref(null)
 const loader = useLoader(async () => {
-  const [s, p, v] = await Promise.all([http.get('/stability/studies'), http.get('/stability/products'), http.get('/plm/formulas')])
+  const [s, p, v, sum] = await Promise.all([
+    http.get('/stability/studies'),
+    http.get('/stability/products'),
+    http.get('/plm/formulas'),
+    http.get('/stability/summary')
+  ])
   studies.value = s
   products.value = p
   versions.value = v
+  summary.value = sum
 })
 const load = () => loader.run()
 const st = usePaged(studies, { match: textMatch('studyNo', 'fgName', 'fgCode', 'batchNo', 'condition') })
@@ -703,6 +730,10 @@ async function noteAction(action, title, hint) {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 20px; font-weight: 600; }
 .late { color: var(--el-color-danger); }
 .summary-line { margin: 0 0 10px; line-height: 1.8; }
 .sub-head { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
