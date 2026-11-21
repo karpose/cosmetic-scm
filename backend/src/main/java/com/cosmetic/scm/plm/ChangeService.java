@@ -119,9 +119,56 @@ public class ChangeService {
                 .map(c -> new Option(c.getId(), c.getChangeNo(), c.getTitle(), c.getChangeType().getLabel())).toList());
     }
 
+    public record TypeCount(String type, String label, long count, long openCount, long highRiskCount) {
+    }
+
+    public record ChangeSummary(long totalChanges, long openChanges, long submittedCount, long assessedCount,
+                                long approvedCount, long closedCount, long highRiskOpenCount,
+                                long totalActions, long doneActions, long overdueActions,
+                                Double actionCompleteRatePct, Double closeRatePct,
+                                List<TypeCount> byType) {
+    }
+
     @Transactional(readOnly = true)
     public List<ChangeRow> list() {
         return rows(changes.findTop300ByOrderByIdDesc());
+    }
+
+    @Transactional(readOnly = true)
+    public List<ChangeRow> listAll() {
+        return rows(changes.findAllByOrderByIdDesc());
+    }
+
+    @Transactional(readOnly = true)
+    public ChangeSummary summary() {
+        List<ChangeRow> all = listAll();
+        long total = all.size();
+        long submitted = all.stream().filter(c -> c.status() == ChangeStatus.SUBMITTED).count();
+        long assessed = all.stream().filter(c -> c.status() == ChangeStatus.ASSESSED).count();
+        long approved = all.stream().filter(c -> c.status() == ChangeStatus.APPROVED).count();
+        long closed = all.stream().filter(c -> c.status() == ChangeStatus.CLOSED).count();
+        long open = submitted + assessed + approved;
+        long highRiskOpen = all.stream().filter(c -> (c.status() == ChangeStatus.SUBMITTED || c.status() == ChangeStatus.ASSESSED || c.status() == ChangeStatus.APPROVED)
+                && c.risk() == RiskLevel.HIGH).count();
+        long totalActions = all.stream().mapToLong(ChangeRow::actionsTotal).sum();
+        long openActions = all.stream().mapToLong(ChangeRow::actionsOpen).sum();
+        long doneActions = totalActions - openActions;
+        long overdueActions = all.stream().mapToLong(ChangeRow::actionsOverdue).sum();
+        Double actionRate = totalActions == 0 ? null : Math.round(doneActions * 1000.0 / totalActions) / 10.0;
+        long effectiveTotal = open + closed;
+        Double closeRate = effectiveTotal == 0 ? null : Math.round(closed * 1000.0 / effectiveTotal) / 10.0;
+        Map<ChangeType, List<ChangeRow>> grouped = all.stream().collect(Collectors.groupingBy(ChangeRow::changeType, java.util.LinkedHashMap::new, Collectors.toList()));
+        List<TypeCount> byType = grouped.entrySet().stream()
+                .map(e -> {
+                    List<ChangeRow> list = e.getValue();
+                    long op = list.stream().filter(c -> c.status() == ChangeStatus.SUBMITTED || c.status() == ChangeStatus.ASSESSED || c.status() == ChangeStatus.APPROVED).count();
+                    long hr = list.stream().filter(c -> c.risk() == RiskLevel.HIGH).count();
+                    return new TypeCount(e.getKey().name(), e.getKey().getLabel(), list.size(), op, hr);
+                })
+                .sorted(java.util.Comparator.comparingLong(TypeCount::count).reversed())
+                .toList();
+        return new ChangeSummary(total, open, submitted, assessed, approved, closed, highRiskOpen,
+                totalActions, doneActions, overdueActions, actionRate, closeRate, byType);
     }
 
     @Transactional(readOnly = true)

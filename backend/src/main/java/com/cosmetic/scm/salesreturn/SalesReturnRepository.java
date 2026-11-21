@@ -8,6 +8,8 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
 
     List<SalesReturn> findTop300ByOrderByIdDesc();
 
+    List<SalesReturn> findAllByOrderByIdDesc();
+
     List<SalesReturn> findByRecallId(Long recallId);
 
     List<SalesReturn> findByCustomerId(Long customerId);

@@ -54,6 +54,10 @@ public class ReportService {
     private final com.cosmetic.scm.serial.SerialService serials;
     private final com.cosmetic.scm.integration.IntegrationService integration;
     private final com.cosmetic.scm.golive.GoLiveService golive;
+    private final com.cosmetic.scm.analytics.ExpiryRiskAndReturnsService expiryReturns;
+    private final com.cosmetic.scm.salesreturn.ReturnService salesReturns;
+    private final com.cosmetic.scm.plm.ChangeService changeControl;
+    private final com.cosmetic.scm.plm.ArtworkService artworks;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
     private final SupplierAuditService audits;
     private final RetainService retains;
@@ -118,6 +122,10 @@ public class ReportService {
         m.put("quality-events-summary", () -> qualityEventsSummaryReport(from, to));
         m.put("integration-logs", () -> integrationLogsReport(from, to));
         m.put("golive-checklist", this::goliveChecklistReport);
+        m.put("expiry-risk", this::expiryRiskReport);
+        m.put("sales-returns", this::salesReturnsReport);
+        m.put("changes", this::changesReport);
+        m.put("artworks", this::artworksReport);
         m.put("inspections", () -> inspectionResults(from, to));
         return m;
     }
@@ -517,6 +525,49 @@ public class ReportService {
                 "BLOCK".equals(c.state()) ? "必须处理" : "WARN".equals(c.state()) ? "建议处理" : "通过",
                 c.detail())));
         return new Table("上线前检查报告", List.of("分组", "检查项", "状态", "说明"), rows);
+    }
+
+    private Table expiryRiskReport() {
+        var rep = expiryReturns.expiryRisk();
+        List<List<Object>> rows = new ArrayList<>();
+        rep.riskRows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.batchNo(), r.itemCode(), r.itemName(), r.itemType(), r.warehouseName(),
+                r.qty(), r.unit(), r.statusLabel(), r.mfgDate(), r.expDate(), r.daysLeft(),
+                r.shelfRatio() == null ? null : Math.round(r.shelfRatio() * 1000.0) / 10.0,
+                r.unitCost(), r.value())));
+        return new Table("库存效期风险清单", List.of("风险等级", "批号", "物料编码", "物料名称", "类型", "仓库",
+                "结存数量", "单位", "批次状态", "生产日期", "有效期至", "剩余天数", "剩余效期(%)", "单位成本（元）", "风险货值（元）"), rows);
+    }
+
+    private Table salesReturnsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        salesReturns.listAll().forEach(r -> r.lines().forEach(l -> rows.add(row(
+                r.returnNo(), r.returnDate(), r.customerName(), r.warehouseName(), r.recallNo(),
+                l.batchNo(), l.itemName(), l.qty(), l.unit(), l.dispositionLabel(),
+                l.targetWarehouseName(), l.disposedByName(), l.disposedAt(), l.dispositionNote(), r.reason()))));
+        return new Table("销售退货明细", List.of("退货单", "退货日期", "客户", "隔离仓", "关联召回",
+                "批号", "成品", "数量", "单位", "处置结论", "转入仓", "签批人", "处置时间", "处置说明", "退货原因"), rows);
+    }
+
+    private Table changesReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        changeControl.listAll().forEach(c -> rows.add(row(
+                c.changeNo(), c.changeTypeLabel(), c.title(), c.scope(), c.riskLabel(), c.statusLabel(),
+                c.actionsTotal(), c.actionsOpen(), c.actionsOverdue(), c.createdBy(), c.createdAt(),
+                c.assessedBy(), c.approvedBy(), c.closedBy(), c.closedAt(), c.reason())));
+        return new Table("变更控制台账", List.of("变更编号", "变更类型", "标题", "影响范围", "风险等级", "状态",
+                "行动总数", "未完行动", "超期行动", "申请人", "申请时间", "评估人", "批准人", "关闭人", "关闭时间", "变更原因"), rows);
+    }
+
+    private Table artworksReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        artworks.listAll().forEach(a -> rows.add(row(
+                a.artworkNo(), a.versionNo(), a.pkCode(), a.pkName(), a.fgCode(), a.fgName(),
+                a.formulaVersionNo() == null ? null : "V" + a.formulaVersionNo(), a.statusLabel(),
+                a.stale() ? "是（需重评）" : "否", a.changeNo(), a.changeNote(),
+                a.createdBy(), a.createdAt(), a.approvedBy(), a.approvedAt())));
+        return new Table("标签设计稿台账", List.of("设计稿编号", "版本", "包材编码", "包材名称", "成品编码", "成品名称",
+                "对应配方", "状态", "配方变更失效", "关联变更", "变更说明", "提交人", "提交时间", "批准人", "批准时间"), rows);
     }
 
     private Table auditLogs(LocalDate from, LocalDate to, String q, String action) {

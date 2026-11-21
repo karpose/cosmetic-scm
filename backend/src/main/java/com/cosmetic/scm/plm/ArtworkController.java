@@ -23,9 +23,25 @@ public class ArtworkController {
     private final ArtworkService artworks;
     private final ArtworkProofService proofs;
 
+    public record ArtworkSummary(long totalArtworks, long approvedCount, long pendingCount, long staleCount,
+                                 long rejectedCount, long supersededCount, long pendingProofCount) {
+    }
+
     @GetMapping
     public ArtworkService.Overview list() {
         return artworks.list();
+    }
+
+    @GetMapping("/summary")
+    public ArtworkSummary summary() {
+        List<ArtworkService.ArtworkView> all = artworks.listAll();
+        long approved = all.stream().filter(a -> a.status() == com.cosmetic.scm.domain.ArtworkStatus.APPROVED).count();
+        long pending = all.stream().filter(a -> a.status() == com.cosmetic.scm.domain.ArtworkStatus.PENDING).count();
+        long stale = all.stream().filter(ArtworkService.ArtworkView::stale).count();
+        long rejected = all.stream().filter(a -> a.status() == com.cosmetic.scm.domain.ArtworkStatus.REJECTED).count();
+        long superseded = all.stream().filter(a -> a.status() == com.cosmetic.scm.domain.ArtworkStatus.SUPERSEDED).count();
+        long pendingProofs = proofs.pending().size();
+        return new ArtworkSummary(all.size(), approved, pending, stale, rejected, superseded, pendingProofs);
     }
 
     /** 包材现行的设计稿，没有时返回 204。放行包材时核对用。 */

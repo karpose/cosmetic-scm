@@ -108,6 +108,11 @@ public class ArtworkService {
     }
 
     @Transactional(readOnly = true)
+    public List<ArtworkView> listAll() {
+        return views(artworks.findAllByOrderByIdDesc());
+    }
+
+    @Transactional(readOnly = true)
     public List<ArtworkView> pending() {
         return views(artworks.findByStatusInOrderById(List.of(ArtworkStatus.PENDING)));
     }

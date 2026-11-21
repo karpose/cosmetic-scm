@@ -121,6 +121,11 @@ public class DocChangeController {
         return changes.list();
     }
 
+    @GetMapping("/changes/summary")
+    public ChangeService.ChangeSummary changeSummary() {
+        return changes.summary();
+    }
+
     @GetMapping("/changes/artwork-options")
     public ChangeService.FormulaOptions artworkOptions() {
         return changes.artworkOptions();

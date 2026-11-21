@@ -113,6 +113,11 @@ public class ReturnService {
     }
 
     @Transactional(readOnly = true)
+    public List<ReturnView> listAll() {
+        return toViews(returns.findAllByOrderByIdDesc());
+    }
+
+    @Transactional(readOnly = true)
     public long pendingLines() {
         return lines.countByDisposition(ReturnDisposition.PENDING);
     }

@@ -7,6 +7,8 @@ import lombok.RequiredArgsConstructor;
 
 import com.cosmetic.scm.analytics.AnalyticsService.Kpi;
 import com.cosmetic.scm.analytics.BatchCostingService.BatchCostRow;
+import com.cosmetic.scm.analytics.ExpiryRiskAndReturnsService.ExpiryRiskReport;
+import com.cosmetic.scm.analytics.ExpiryRiskAndReturnsService.SalesReturnReport;
 import com.cosmetic.scm.analytics.FinanceInsightsService.CashFlowReport;
 import com.cosmetic.scm.analytics.FinanceInsightsService.MarginReport;
 import com.cosmetic.scm.analytics.FinanceInsightsService.VarianceReport;
@@ -36,6 +38,7 @@ public class AnalyticsController {
     private final FinanceInsightsService financeInsights;
     private final QualityGovernanceService qualityGov;
     private final QualityEventAnalyticsService qualityEvents;
+    private final ExpiryRiskAndReturnsService expiryReturns;
     private final com.cosmetic.scm.common.ShortCache cache;
 
     @GetMapping("/kpi")
@@ -63,6 +66,18 @@ public class AnalyticsController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         return qualityEvents.report(from, to);
+    }
+
+    @GetMapping("/expiry-risk")
+    public ExpiryRiskReport expiryRisk() {
+        return expiryReturns.expiryRisk();
+    }
+
+    @GetMapping("/sales-returns")
+    public SalesReturnReport salesReturns(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return expiryReturns.salesReturnReport(from, to);
     }
 
     @GetMapping("/batch-costs")
