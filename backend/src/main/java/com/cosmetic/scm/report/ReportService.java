@@ -48,6 +48,8 @@ public class ReportService {
     private final DeviationService deviations;
     private final com.cosmetic.scm.plm.StabilityService stability;
     private final com.cosmetic.scm.plm.PlmInsightsService plmInsights;
+    private final com.cosmetic.scm.plm.DocControlService docControl;
+    private final com.cosmetic.scm.analytics.QualityGovernanceService qualityGov;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
     private final SupplierAuditService audits;
     private final RetainService retains;
@@ -104,6 +106,10 @@ public class ReportService {
         m.put("plm-readiness", this::plmReadiness);
         m.put("where-used", this::whereUsedReport);
         m.put("npd-readiness", this::npdReadinessReport);
+        m.put("pqr", () -> pqrReport(from, to));
+        m.put("controlled-docs", this::controlledDocsReport);
+        m.put("qms-summary", this::qmsSummaryReport);
+        m.put("inventory-abc", this::inventoryAbcReport);
         m.put("inspections", () -> inspectionResults(from, to));
         return m;
     }
@@ -111,7 +117,7 @@ public class ReportService {
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to) {
         // 金额只给采购和财务看，应收报表给销售、财务和管理员看，其它报表所有内部岗位都能导
-        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "batch-costs".equals(key) || "margins".equals(key) || "cashflow-forecast".equals(key) || "inventory-variance".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
+        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "batch-costs".equals(key) || "margins".equals(key) || "cashflow-forecast".equals(key) || "inventory-variance".equals(key) || "inventory-abc".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与成本数据");
         }
         if (("ar-statements".equals(key) || "ar-aging".equals(key) || "ar-invoice-ledger".equals(key) || "customer-credit".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
@@ -263,6 +269,51 @@ public class ReportService {
                 r.ready() ? "就绪" : String.join("、", r.missingItems()))));
         return new Table("新品上市就绪度", List.of("项目编号", "产品名称", "品类", "备案类型", "状态",
                 "计划上市日", "剩余天数", "成品编码", "成品名称", "通过项", "完成率(%)", "待补齐门禁"), rows);
+    }
+
+    private Table pqrReport(LocalDate from, LocalDate to) {
+        List<List<Object>> rows = new ArrayList<>();
+        qualityGov.pqrAll(from, to).forEach(r -> rows.add(row(
+                r.fgCode(), r.fgName(), r.filingNo(), r.from() + "~" + r.to(),
+                r.batchCount(), r.totalActualQty(), r.avgYieldPct(), r.fgPassRatePct(),
+                r.deviationCount(), r.majorOrCriticalDeviations(), r.complaintCount(), r.adverseCount(),
+                r.recallCount(), r.returnedQty(), r.effectiveVersionNo() == null ? null : "V" + r.effectiveVersionNo(),
+                r.formulaChangesInPeriod(), r.stabilitySupportedMonths())));
+        return new Table("产品年度质量回顾", List.of("成品编码", "成品名称", "备案号", "统计区间",
+                "完工批数", "总产量", "平均收率(%)", "放行合格率(%)",
+                "偏差数", "重大/严重偏差", "投诉数", "不良反应", "召回数", "退货数量",
+                "现行配方", "期内变更次数", "稳定性支持月数"), rows);
+    }
+
+    private Table controlledDocsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        docControl.list().forEach(d -> rows.add(row(
+                d.docCode(), d.title(), d.categoryLabel(), d.ownerDept(), d.statusLabel(),
+                d.currentRev() == null ? null : "V" + d.currentRev(), d.currentEffective(),
+                d.reviewDue(), d.reviewOverdue() ? "已超期" : "正常",
+                d.ackPending(), d.copiesOut(), d.copiesToRetrieve())));
+        return new Table("受控文件台账", List.of("文件编号", "名称", "类别", "归口部门", "状态",
+                "现行版本", "生效日期", "下次复审", "复审状态", "待确认人数", "在用纸质副本", "待收回副本"), rows);
+    }
+
+    private Table qmsSummaryReport() {
+        var s = qualityGov.qmsSummary();
+        List<List<Object>> rows = new ArrayList<>();
+        rows.add(row("偏差管理", s.totalDeviations(), s.openDeviations(), s.overdueDeviations(), s.closedDeviations(), s.deviationCloseRatePct()));
+        rows.add(row("CAPA 闭环", s.totalCapas(), s.openCapas(), s.overdueCapas(), s.verifiedCapas(), s.capaVerifyRatePct()));
+        rows.add(row("供应商审核", s.auditPartnersTotal(), s.auditDueCount(), s.auditOverdueCount(), s.qualifiedPartners(), null));
+        rows.add(row("设备校准", s.equipmentTotal(), s.equipmentCalDue(), s.equipmentCalOverdue(), s.equipmentInUse(), null));
+        return new Table("质量体系健康度", List.of("维度", "总数", "进行中/将到期", "已超期", "已闭环/在用", "闭环率(%)"), rows);
+    }
+
+    private Table inventoryAbcReport() {
+        var rep = qualityGov.inventoryAbc();
+        List<List<Object>> rows = new ArrayList<>();
+        rep.rows().forEach(r -> rows.add(row(
+                r.abcClass(), r.itemCode(), r.itemName(), r.itemType(), r.unit(),
+                r.qty(), r.unitCost(), r.value(), r.sharePct(), r.cumulativePct())));
+        return new Table("库存ABC价值分类", List.of("ABC分类", "物料编码", "物料名称", "类型", "单位",
+                "在库数量", "单位成本", "库存金额", "金额占比(%)", "累计占比(%)"), rows);
     }
 
     private Table invoiceLedger(LocalDate from, LocalDate to) {

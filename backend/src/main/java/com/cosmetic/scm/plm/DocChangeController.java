@@ -28,10 +28,16 @@ public class DocChangeController {
 
     private final DocControlService docs;
     private final ChangeService changes;
+    private final com.cosmetic.scm.analytics.QualityGovernanceService qualityGov;
 
     @GetMapping("/docs")
     public List<DocControlService.DocRow> docs() {
         return docs.list();
+    }
+
+    @GetMapping("/docs/summary")
+    public com.cosmetic.scm.analytics.QualityGovernanceService.DocsSummary docsSummary() {
+        return qualityGov.docsSummary();
     }
 
     @GetMapping("/docs/my-pending")
