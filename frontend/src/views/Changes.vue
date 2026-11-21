@@ -6,8 +6,28 @@
         <p>配方、工艺、原料或供应商、包材、标签、文件、设备的变更。质量人员评估风险和影响，质量安全负责人批准；行动全部完成后由质量安全负责人确认效果并关闭。申请人不能批准或关闭自己的变更。</p>
       </div>
       <div class="toolbar">
+        <ExportButton report="changes" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="canRaise" type="primary" @click="openCreate">提出变更</el-button>
+      </div>
+    </div>
+
+    <div v-if="summary" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="muted small">进行中变更（待评 / 待批 / 实施）</div>
+        <div class="kpi-val mono">{{ summary.openChanges }} <span class="muted small">（{{ summary.submittedCount }} / {{ summary.assessedCount }} / {{ summary.approvedCount }}）</span></div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.highRiskOpenCount > 0 }">
+        <div class="muted small">高风险进行中变更</div>
+        <div class="kpi-val mono">{{ summary.highRiskOpenCount }}</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.overdueActions > 0 }">
+        <div class="muted small">行动项完成率 / 超期数</div>
+        <div class="kpi-val mono">{{ summary.actionCompleteRatePct != null ? `${summary.actionCompleteRatePct}%` : '—' }} <span class="muted small">（超期 {{ summary.overdueActions }}）</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">变更闭环率（已闭环 {{ summary.closedCount }}）</div>
+        <div class="kpi-val mono">{{ summary.closeRatePct != null ? `${summary.closeRatePct}%` : '—' }}</div>
       </div>
     </div>
 
@@ -154,6 +174,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
+import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
@@ -171,8 +192,13 @@ const canRaise = computed(() => auth.hasAny('ADMIN', 'MASTER_DATA', 'PURCHASE', 
 const isQuality = computed(() => auth.hasAny('QA', 'QSO'))
 const isQso = computed(() => auth.hasAny('QSO'))
 const changes = ref([])
+const summary = ref(null)
 const openOnly = ref(true)
-const loader = useLoader(async () => { changes.value = await http.get('/changes') })
+const loader = useLoader(async () => {
+  const [cs, sum] = await Promise.all([http.get('/changes'), http.get('/changes/summary')])
+  changes.value = cs
+  summary.value = sum
+})
 const load = () => loader.run()
 const shown = computed(() => openOnly.value ? changes.value.filter((x) => ['SUBMITTED', 'ASSESSED', 'APPROVED'].includes(x.status)) : changes.value)
 const pg = usePaged(shown, { match: textMatch('changeNo', 'title', 'scope') })
@@ -273,6 +299,10 @@ async function submitAction() {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 20px; font-weight: 600; }
 .late { color: var(--el-color-danger); }
 .summary-line { margin: 0 0 8px; line-height: 1.8; }
 .sub-head { display: flex; justify-content: space-between; align-items: center; margin: 14px 0 6px; }

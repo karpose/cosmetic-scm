@@ -6,9 +6,30 @@
         <p>产品的安全评估、功效宣称依据和标签，都对应配方版本，配方变了要重新评估。法规目录决定配方、下单和询价能不能过校验。</p>
       </div>
       <div class="toolbar">
+        <ExportButton v-if="tab === 'products'" report="compliance-status" label="导出合规台账" />
+        <ExportButton v-else report="regulatory-violations" label="导出冲突清单" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="tab === 'products' && canRegister" type="primary" @click="openCreate()">登记资料</el-button>
         <el-button v-if="tab === 'regulatory' && canEditCatalog" type="primary" @click="importOpen = true">导入法规目录</el-button>
+      </div>
+    </div>
+
+    <div v-if="summary" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="muted small">成品合规齐套率</div>
+        <div class="kpi-val mono">{{ summary.completeRatePct != null ? `${summary.completeRatePct}%` : '—' }} <span class="muted small">（{{ summary.completeCount }}/{{ summary.totalWithFormula }}）</span></div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.staleCount > 0 }">
+        <div class="muted small">配方变更待重评 / 待签批</div>
+        <div class="kpi-val mono">{{ summary.staleCount }} <span class="muted small">/ {{ summary.pendingDocCount }}</span></div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.violationCount > 0 }">
+        <div class="muted small">生效配方法规冲突</div>
+        <div class="kpi-val mono">{{ summary.violationCount }} <span class="muted small">（物料差异 {{ summary.gapCount }}）</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">有效法规目录条目</div>
+        <div class="kpi-val mono">{{ summary.activeRuleCount }}</div>
       </div>
     </div>
 
@@ -167,6 +188,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
+import ExportButton from '../components/ExportButton.vue'
 import ImportDialog from '../components/ImportDialog.vue'
 import ListCapHint from '../components/ListCapHint.vue'
 import ListPager from '../components/ListPager.vue'
@@ -193,15 +215,24 @@ const products = ref([])
 const docs = ref([])
 const rules = ref([])
 const compare = ref(null)
+const summary = ref(null)
 const versions = ref([])
 const importOpen = ref(false)
 const loader = useLoader(async () => {
-  const [p, d, r, c, v] = await Promise.all([http.get('/compliance/products'), http.get('/compliance/docs'), http.get('/regulatory'), http.get('/regulatory/comparison'), http.get('/plm/formulas')])
+  const [p, d, r, c, v, s] = await Promise.all([
+    http.get('/compliance/products'),
+    http.get('/compliance/docs'),
+    http.get('/regulatory'),
+    http.get('/regulatory/comparison'),
+    http.get('/plm/formulas'),
+    http.get('/compliance/summary')
+  ])
   products.value = p
   docs.value = d
   rules.value = r
   compare.value = c
   versions.value = v
+  summary.value = s
 })
 const load = () => loader.run()
 const pt = usePaged(products, { match: textMatch('fgCode', 'fgName') })
@@ -291,6 +322,10 @@ async function retire(row) {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 20px; font-weight: 600; }
 .block { margin-top: 14px; }
 .late { color: var(--el-color-danger); }
 </style>

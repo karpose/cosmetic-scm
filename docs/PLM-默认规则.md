@@ -183,3 +183,21 @@
 - 质量标准：按批量自动算抽样数量（现在取样要求只是一段文字）、取样扣库存、按项目设不同的自检周期（现在一个标准一个上限）、供方报告和采购单或送货通知逐批对应、检验结果趋势图。
 - 稳定性：打印报告上的电子签名图样和公司抬头；方案修改不需要第二人批准（要的话改成和结果更正一样）。
 - 自动获取法规更新。
+
+## 配方对比、PIF 档案、原料反查与就绪度矩阵（V46 新增）
+
+| 能力 | 现在的做法 | 要改时看 |
+| --- | --- | --- |
+| 配方任意双版本对比 | `GET /api/plm/formulas/compare?fromVersionId=&toVersionId=` 输出增删改明细、浓度变化与是否触发重新备案；单件物料成本差异严格按价格权限隔离（仅管理员、采购、财务返回成本字段） | `PlmInsightsService.compareVersions`、`Formulas.vue` |
+| 产品信息档案（PIF） | `GET /api/plm/pif/{fgItemId}` 聚合单品生效配方、全成分表草稿、备案记录、安全评估/标签资料、现行包材设计稿、稳定性与配方版本历史；`/pif-report?fg=...` 提供 A4 正式打印与另存 PDF | `PlmInsightsService.pif`、`PifReportPrint.vue` |
+| 原料/包材反查（Where-Used） | `GET /api/plm/where-used/{itemId}` 与 `where-used` Excel 导出反向列出所有生效/在研配方中使用该原料的成品、单耗、浓度占比与合规校验结果 | `PlmInsightsService.whereUsed`、`Formulas.vue` |
+| 合规与新品就绪度矩阵 | `GET /api/plm/readiness`（`plm-readiness` 导出）汇总全线在售成品的合规放行就绪状态；`GET /api/npd/readiness`（`npd-readiness` 导出）汇总各新品项目 8 项上市门禁进度与距目标上市天数 | `PlmInsightsService.productReadiness`、`npdReadiness`、`Npd.vue` |
+
+## 年度质量回顾、受控文件治理、QMS 健康度与库存 ABC（V47 新增）
+
+| 能力 | 现在的做法 | 要改时看 |
+| --- | --- | --- |
+| 产品年度质量回顾（PQR） | `GET /api/analytics/pqr?fgItemId=&from=&to=` 与 `pqr` Excel 导出汇总成品近一年完工批数、收率、放行合格率、偏差/CAPA、投诉/不良反应、召回、退货、稳定性与配方变更；`/pqr-print?fg=...` 提供 A4 横向正式打印与另存 PDF | `QualityGovernanceService.pqr`、`PqrReportPrint.vue` |
+| 受控文件治理概览 | `GET /api/docs/summary` 与 `controlled-docs` Excel 导出汇总在用/待签批/复审到期/待确认人次与纸质副本回收状态，并在受控文件页顶部展示 | `QualityGovernanceService.docsSummary`、`Docs.vue` |
+| QMS 质量体系健康度 | `GET /api/qms/summary` 与 `qms-summary` Excel 导出汇总偏差闭环率、CAPA 验证率、供应商审核超期与设备校准超期指标，不涉及价格 | `QualityGovernanceService.qmsSummary`、`Qms.vue` |
+| 库存 ABC 价值分类 | `GET /api/analytics/inventory-abc` 与 `inventory-abc` Excel 导出按库存金额累计占比（70% / 90% / 100%）划分 A/B/C 三类，严格按价格权限隔离 | `QualityGovernanceService.inventoryAbc`、`Analytics.vue` |

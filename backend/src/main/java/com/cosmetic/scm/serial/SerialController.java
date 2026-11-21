@@ -6,6 +6,7 @@ import java.util.List;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
+import com.cosmetic.scm.serial.SerialService.AnomalySummary;
 import com.cosmetic.scm.serial.SerialService.BatchCodes;
 import com.cosmetic.scm.serial.SerialService.CodeView;
 import com.cosmetic.scm.serial.SerialService.GenerateReq;
@@ -20,9 +21,10 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 一物一码（系统内）：查看各批次生码情况、生成、导出给印刷厂、查某个码的扫码记录。 */
+/** 一物一码（系统内）：查看各批次生码情况、防伪异常扫码监控、生成、导出给印刷厂、查某个码的扫码记录。 */
 @RestController
 @RequestMapping("/api/serials")
 @RequiredArgsConstructor
@@ -33,6 +35,11 @@ public class SerialController {
     @GetMapping("/batches")
     public List<BatchCodes> batches() {
         return serials.batches();
+    }
+
+    @GetMapping("/anomalies")
+    public AnomalySummary anomalies(@RequestParam(required = false) Integer minScans) {
+        return serials.anomalySummary(minScans);
     }
 
     @PostMapping("/generate")

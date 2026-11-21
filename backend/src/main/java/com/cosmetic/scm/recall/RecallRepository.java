@@ -16,6 +16,8 @@ public interface RecallRepository extends JpaRepository<Recall, Long> {
 
     List<Recall> findTop300ByOrderByIdDesc();
 
+    List<Recall> findAllByOrderByIdDesc();
+
     List<Recall> findByStatus(CaseStatus status);
 
     List<Recall> findByBatchIdIn(Collection<Long> batchIds);

@@ -9,6 +9,8 @@ public interface QualityDecisionRepository extends JpaRepository<QualityDecision
 
     List<QualityDecision> findTop50ByOrderByIdDesc();
 
+    List<QualityDecision> findAllByOrderByIdDesc();
+
     List<QualityDecision> findByBatchIdOrderByIdDesc(Long batchId);
 
     List<QualityDecision> findBySignedAtGreaterThanEqual(LocalDateTime from);

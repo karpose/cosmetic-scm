@@ -6,6 +6,9 @@
         <p>配方修改走版本：发起变更 → 提交 → 质量安全负责人签批后生效。原料有变化时，要先完成这个版本的备案；只换包材不需要。还没发料的生产单改用新版本，已发料的保留当时的版本。</p>
       </div>
       <div class="toolbar">
+        <ExportButton v-if="tab === 'versions'" report="plm-readiness" label="导出合规就绪度" />
+        <ExportButton v-if="tab === 'versions'" report="pqr" label="导出年度质量回顾" />
+        <ExportButton v-if="tab === 'where-used'" report="where-used" label="导出反查清单" />
         <el-button v-if="tab === 'filings' && canFile" type="primary" @click="openFiling()">登记备案</el-button>
       </div>
     </div>
@@ -20,7 +23,12 @@
             <template #header>
               <div class="ph">
                 <span><b>{{ p.fgName }}</b> <span class="mono muted small">{{ p.fgCode }}</span></span>
-                <el-button v-if="canEdit && !p.inProgress" size="small" @click="openDraft(p)">发起配方变更</el-button>
+                <span class="toolbar">
+                  <el-button v-if="p.versions.length >= 2" size="small" @click="openCompare(p)">版本对比</el-button>
+                  <el-button size="small" @click="openPif(p.fgItemId)">打印 PIF 档案</el-button>
+                  <el-button size="small" @click="openPqr(p.fgItemId)">打印 PQR</el-button>
+                  <el-button v-if="canEdit && !p.inProgress" size="small" @click="openDraft(p)">发起配方变更</el-button>
+                </span>
               </div>
             </template>
             <div v-for="v in p.versions" :key="v.id" class="ver" :class="v.status">
@@ -137,6 +145,28 @@
           </template>
         </el-card>
       </el-tab-pane>
+
+      <!-- ================= 原料反查 ================= -->
+      <el-tab-pane label="原料反查" name="where-used">
+        <el-card shadow="never" body-style="padding:0 0 8px">
+          <template #header>
+            <div class="ph">
+              <el-select v-model="wu.itemId" filterable placeholder="选择原料或包材，反查全部关联成品" style="width:min(360px, 100%)" @change="loadWhereUsed">
+                <el-option v-for="m in rd.materials.value" :key="m.id" :value="m.id" :label="`${m.code} ${m.name}`" />
+              </el-select>
+              <span class="muted small">用于原料停供、涨价或限用浓度调整时快速评估受影响成品。</span>
+            </div>
+          </template>
+          <el-table :data="wu.rows" v-loading="wu.loading" empty-text="选择原料/包材查看受影响的成品配方">
+            <el-table-column label="受影响成品" min-width="170"><template #default="{ row }">{{ row.fgName }}<div class="muted small mono">{{ row.fgCode }} · {{ row.filingNo || '未备案' }}</div></template></el-table-column>
+            <el-table-column label="配方版本" width="120"><template #default="{ row }"><span class="mono">V{{ row.versionNo }}</span> <el-tag size="small" :type="STATUS[row.status]" disable-transitions>{{ row.statusLabel }}</el-tag></template></el-table-column>
+            <el-table-column label="每件单耗" width="120" align="right"><template #default="{ row }"><span class="mono">{{ qty(row.qtyPer) }} {{ row.unit }}</span></template></el-table-column>
+            <el-table-column label="浓度" width="95" align="right"><template #default="{ row }"><span class="mono">{{ row.concentrationPct != null ? `${row.concentrationPct}%` : '—' }}</span></template></el-table-column>
+            <el-table-column prop="supplyModeLabel" label="供料" width="95" />
+            <el-table-column label="合规校验" min-width="180"><template #default="{ row }"><span :class="{ bad: row.checkLevel === 'BANNED' || row.checkLevel === 'OVER_LIMIT' }">{{ row.checkMessage }}</span></template></el-table-column>
+          </el-table>
+        </el-card>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 配方草稿 -->
@@ -217,6 +247,30 @@
         <el-button type="primary" :loading="fc.saving" @click="completeFiling">登记完成</el-button>
       </template>
     </el-dialog>
+
+    <!-- 配方多版本对比 -->
+    <el-dialog v-model="cmp.visible" :title="`配方版本对比：${cmp.p?.fgName || ''}`" width="820px">
+      <div v-if="cmp.p" class="toolbar" style="margin-bottom:12px">
+        <el-select v-model="cmp.fromId" placeholder="基准版本" style="width:170px" @change="runCompare">
+          <el-option v-for="v in cmp.p.versions" :key="v.id" :value="v.id" :label="`V${v.versionNo}（${v.statusLabel}）`" />
+        </el-select>
+        <span>对比</span>
+        <el-select v-model="cmp.toId" placeholder="目标版本" style="width:170px" @change="runCompare">
+          <el-option v-for="v in cmp.p.versions" :key="v.id" :value="v.id" :label="`V${v.versionNo}（${v.statusLabel}）`" />
+        </el-select>
+        <el-tag v-if="cmp.data?.requiresRefiling" type="warning" size="small" disable-transitions>涉及原料变动，需重新备案</el-tag>
+        <span v-if="cmp.data?.costDelta != null" class="small mono">
+          物料成本：¥{{ cmp.data.fromMaterialCost }} → ¥{{ cmp.data.toMaterialCost }}（{{ Number(cmp.data.costDelta) >= 0 ? '+' : '' }}{{ cmp.data.costDelta }} / {{ cmp.data.costDeltaPct ?? 0 }}%）
+        </span>
+      </div>
+      <el-table :data="cmp.data?.lines || []" v-loading="cmp.loading" size="small" max-height="360">
+        <el-table-column label="变化" width="80"><template #default="{ row }"><el-tag size="small" :type="row.changeKind === 'ADDED' ? 'success' : row.changeKind === 'REMOVED' ? 'danger' : row.changeKind === 'CHANGED' ? 'warning' : 'info'" disable-transitions>{{ row.changeKindLabel }}</el-tag></template></el-table-column>
+        <el-table-column label="物料" min-width="160"><template #default="{ row }">{{ row.itemName }}<div class="muted small mono">{{ row.itemCode }}</div></template></el-table-column>
+        <el-table-column label="基准单耗" width="115" align="right"><template #default="{ row }"><span class="mono">{{ qty(row.fromQty) }}</span></template></el-table-column>
+        <el-table-column label="目标单耗" width="115" align="right"><template #default="{ row }"><span class="mono">{{ qty(row.toQty) }}</span></template></el-table-column>
+        <el-table-column label="浓度变化" width="150" align="right"><template #default="{ row }"><span class="mono">{{ row.fromPct != null || row.toPct != null ? `${row.fromPct ?? '—'}% → ${row.toPct ?? '—'}%` : '—' }}</span></template></el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
@@ -226,6 +280,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheckFilled, WarningFilled } from '@element-plus/icons-vue'
 import http from '../api'
+import ExportButton from '../components/ExportButton.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import { useAuth } from '../stores/auth'
@@ -426,6 +481,29 @@ async function saveRouting() {
   } finally {
     rt.saving = false
   }
+}
+
+// ---------- 配方版本对比 / PIF / 原料反查 ----------
+const openPif = (fgItemId) => window.open(`/pif-report?fg=${fgItemId}`, '_blank')
+const openPqr = (fgItemId) => window.open(`/pqr-print?fg=${fgItemId}`, '_blank')
+const cmp = reactive({ visible: false, loading: false, p: null, fromId: null, toId: null, data: null })
+function openCompare(p) {
+  cmp.p = p
+  cmp.toId = p.versions[0]?.id ?? null
+  cmp.fromId = p.versions[1]?.id ?? p.versions[0]?.id ?? null
+  cmp.visible = true
+  runCompare()
+}
+async function runCompare() {
+  if (!cmp.fromId || !cmp.toId) return
+  cmp.loading = true
+  try { cmp.data = await http.get('/plm/formulas/compare', { params: { fromVersionId: cmp.fromId, toVersionId: cmp.toId } }) } finally { cmp.loading = false }
+}
+const wu = reactive({ itemId: null, loading: false, rows: [] })
+async function loadWhereUsed() {
+  if (!wu.itemId) { wu.rows = []; return }
+  wu.loading = true
+  try { wu.rows = await http.get(`/plm/where-used/${wu.itemId}`) } finally { wu.loading = false }
 }
 
 onMounted(() => {

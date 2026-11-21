@@ -62,6 +62,7 @@ final class TodoRouting {
             Map.entry("RETURN", QUALITY),
             Map.entry("DEALER_ORDER", Set.of(Role.SALES)),
             Map.entry("CHANNEL_FAILED", Set.of(Role.SALES)),
+            Map.entry("SERIAL_ANOMALY", Set.of(Role.QA, Role.QSO, Role.SALES)),
             Map.entry("DEVIATION", QUALITY),
             Map.entry("CAPA", QUALITY),
             Map.entry("SUPPLIER_AUDIT", Set.of(Role.QA, Role.QSO, Role.PURCHASE)),

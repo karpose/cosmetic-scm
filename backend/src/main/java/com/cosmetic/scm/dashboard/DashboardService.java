@@ -90,6 +90,7 @@ public class DashboardService {
     private final OemReportRepository oemReports;
     private final DealerService dealers;
     private final IntegrationService integration;
+    private final com.cosmetic.scm.serial.SerialService serials;
     private final DeviationService deviations;
     private final SupplierAuditService supplierAudits;
     private final RetainService retains;
@@ -360,6 +361,11 @@ public class DashboardService {
         if (channelFailed > 0) {
             todos.add(new Todo("CHANNEL_FAILED", "电商订单出库失败", "bad", channelFailed + " 张电商订单", "—",
                     "查看失败原因，补货后重试", "/integration"));
+        }
+        long serialAnomalies = serials.suspiciousCount();
+        if (serialAnomalies > 0) {
+            todos.add(new Todo("SERIAL_ANOMALY", "疑似异常防伪扫码", "warn", serialAnomalies + " 个防伪码高频重复扫码", "—",
+                    "单码扫码达到 " + com.cosmetic.scm.serial.SerialService.DEFAULT_ANOMALY_THRESHOLD + " 次及以上，请核查仿冒或窜货风险", "/serials"));
         }
         if (pendingReturns > 0) {
             todos.add(new Todo("RETURN", "退货待处置", "warn", pendingReturns + " 行退货在隔离区", "—",

@@ -24,8 +24,10 @@ public class ReportController {
     @GetMapping("/{key}")
     public ResponseEntity<byte[]> export(@PathVariable String key,
                                          @RequestParam(required = false) java.time.LocalDate from,
-                                         @RequestParam(required = false) java.time.LocalDate to) {
-        ReportService.Export e = reports.export(key, from, to);
+                                         @RequestParam(required = false) java.time.LocalDate to,
+                                         @RequestParam(required = false) String q,
+                                         @RequestParam(required = false) String action) {
+        ReportService.Export e = reports.export(key, from, to, q, action);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
                 .header(HttpHeaders.CONTENT_DISPOSITION,

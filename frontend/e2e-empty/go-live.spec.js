@@ -609,7 +609,7 @@ test('退货和处置，投诉和召回，回收后关闭', async ({ page }) => 
 
   await login(page, 'sale_sun')
   await page.goto('/quality-events')
-  await page.getByRole('tab', { name: /召回/ }).click()
+  await page.getByRole('tab', { name: /^召回（/ }).click()
   await page.getByRole('button', { name: '详情' }).first().click()
   await drawer.getByRole('button', { name: '登记回收' }).click()
   const rec = dialog(page)
@@ -627,7 +627,7 @@ test('退货和处置，投诉和召回，回收后关闭', async ({ page }) => 
   await u.locator('.el-dialog__footer button').last().click()
   await toast(page, '有进行中的召回')
   await page.goto('/quality-events')
-  await page.getByRole('tab', { name: /召回/ }).click()
+  await page.getByRole('tab', { name: /^召回（/ }).click()
   await page.getByRole('button', { name: '详情' }).first().click()
   await drawer.locator('textarea').last().fill('在外 45 件已全部回收，批次报废')
   await drawer.locator('input[type=password]').fill(SIGN)

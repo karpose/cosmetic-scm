@@ -6,10 +6,21 @@
         <p>SOP、工艺规程、记录表格等。每次修订是一个新版本，要上传文件，由质量安全负责人签批（不能是起草人）。现行版本是已签批、已到生效日期的最新一版；按复审周期提醒。</p>
       </div>
       <div class="toolbar">
+        <ExportButton report="controlled-docs" label="导出台账" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="canEdit" type="primary" @click="openCreate">新建文件</el-button>
       </div>
     </div>
+
+    <el-card v-if="docSum" shadow="never" body-style="padding:10px 16px" style="margin-bottom:12px">
+      <div class="toolbar small">
+        <span>在用 <b class="mono">{{ docSum.activeDocs }}</b> 份</span>
+        <span>待签批 <b class="mono">{{ docSum.pendingApprovalCount }}</b></span>
+        <span>复审到期/超期 <b class="mono" :class="{ late: docSum.reviewOverdueCount > 0 }">{{ docSum.reviewDueCount }} / {{ docSum.reviewOverdueCount }}</b></span>
+        <span>待确认人次 <b class="mono" :class="{ late: docSum.ackOverdueDocs > 0 }">{{ docSum.ackPendingPeopleTotal }}</b></span>
+        <span>纸质副本在用/待收回 <b class="mono" :class="{ late: docSum.copiesRetrieveOverdueDocs > 0 }">{{ docSum.copiesOutTotal }} / {{ docSum.copiesToRetrieveTotal }}</b></span>
+      </div>
+    </el-card>
 
     <el-card v-if="mine.length" shadow="never" class="mine">
       <template #header><b>待我确认（{{ mine.length }}）</b> <span class="muted small">请阅读后在文件详情里确认</span></template>
@@ -186,6 +197,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
+import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
@@ -205,11 +217,13 @@ const roleLabel = (code) => roles.value.find((r) => r.code === code)?.label || c
 const mine = ref([])
 const isQso = computed(() => auth.hasAny('QSO'))
 const docs = ref([])
+const docSum = ref(null)
 const activeOnly = ref(true)
 const loader = useLoader(async () => {
-  const [d, m] = await Promise.all([http.get('/docs'), http.get('/docs/my-pending')])
+  const [d, m, s] = await Promise.all([http.get('/docs'), http.get('/docs/my-pending'), http.get('/docs/summary')])
   docs.value = d
   mine.value = m
+  docSum.value = s
 })
 const load = () => loader.run()
 const shown = computed(() => activeOnly.value ? docs.value.filter((x) => x.status === 'ACTIVE') : docs.value)

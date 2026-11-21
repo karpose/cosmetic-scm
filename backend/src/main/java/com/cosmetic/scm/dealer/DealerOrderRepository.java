@@ -15,6 +15,8 @@ public interface DealerOrderRepository extends JpaRepository<DealerOrder, Long> 
 
     List<DealerOrder> findTop300ByOrderByIdDesc();
 
+    List<DealerOrder> findAllByOrderByIdDesc();
+
     List<DealerOrder> findByCustomerIdOrderByIdDesc(Long customerId);
 
     List<DealerOrder> findByStatus(DealerOrderStatus status);

@@ -117,6 +117,12 @@ public class QualityService {
                             List<DecisionView> recent) {
     }
 
+    public record QualitySummary(long quarantineCount, long pendingReleaseCount, long frozenCount,
+                                 long decisions30dTotal, long material30dReleased, long material30dRejected,
+                                 Double material30dPassRatePct, long market30dReleased, long market30dRejected,
+                                 Double market30dPassRatePct) {
+    }
+
     @Transactional(readOnly = true)
     public QueueView queue() {
         return new QueueView(
@@ -124,6 +130,26 @@ public class QualityService {
                 inventory.toViews(batches.findByStatusInOrderByIdDesc(List.of(BatchStatus.PENDING_RELEASE))),
                 inventory.toViews(batches.findByStatusInOrderByIdDesc(List.of(BatchStatus.FROZEN))),
                 toViews(decisions.findTop50ByOrderByIdDesc()));
+    }
+
+    @Transactional(readOnly = true)
+    public List<DecisionView> listAllDecisions() {
+        return toViews(decisions.findAllByOrderByIdDesc());
+    }
+
+    @Transactional(readOnly = true)
+    public QualitySummary summary() {
+        long qCount = batches.countByStatus(BatchStatus.QUARANTINE);
+        long prCount = batches.countByStatus(BatchStatus.PENDING_RELEASE);
+        long frCount = batches.countByStatus(BatchStatus.FROZEN);
+        List<QualityDecision> recent30 = decisions.findBySignedAtGreaterThanEqual(time.now().minusDays(30));
+        long matRel = recent30.stream().filter(d -> d.getStage() == QcStage.MATERIAL_QC && d.getDecision() == Decision.RELEASED).count();
+        long matRej = recent30.stream().filter(d -> d.getStage() == QcStage.MATERIAL_QC && d.getDecision() == Decision.REJECTED).count();
+        long mktRel = recent30.stream().filter(d -> d.getStage() == QcStage.MARKET_RELEASE && d.getDecision() == Decision.RELEASED).count();
+        long mktRej = recent30.stream().filter(d -> d.getStage() == QcStage.MARKET_RELEASE && d.getDecision() == Decision.REJECTED).count();
+        Double matRate = (matRel + matRej) == 0 ? null : Math.round(matRel * 1000.0 / (matRel + matRej)) / 10.0;
+        Double mktRate = (mktRel + mktRej) == 0 ? null : Math.round(mktRel * 1000.0 / (mktRel + mktRej)) / 10.0;
+        return new QualitySummary(qCount, prCount, frCount, recent30.size(), matRel, matRej, matRate, mktRel, mktRej, mktRate);
     }
 
     @Transactional(readOnly = true)

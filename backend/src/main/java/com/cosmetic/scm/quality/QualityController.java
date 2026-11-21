@@ -38,6 +38,11 @@ public class QualityController {
         return quality.queue();
     }
 
+    @GetMapping("/summary")
+    public QualityService.QualitySummary summary() {
+        return quality.summary();
+    }
+
     @PostMapping("/batches/{id}/material-decision")
     @PreAuthorize("hasAnyRole('QA','QSO')")
     public BatchView materialDecision(@PathVariable Long id, @Valid @RequestBody MaterialDecisionReq req) {

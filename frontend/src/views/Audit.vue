@@ -5,7 +5,18 @@
         <h2>审计日志</h2>
         <p>每次新增、收货、发料、签批、出库、冻结和账号变更都会记录操作人、时间和原因。日志只增不改，系统不提供修改或删除入口。</p>
       </div>
-      <ExportButton report="audit" :params="range" />
+      <ExportButton report="audit" :params="exportParams" />
+    </div>
+    <div class="stat-bar">
+      <div class="stat-pill"><span class="muted small">当前范围记录</span><b class="mono">{{ t.total.value }}</b></div>
+      <div class="stat-pill"><span class="muted small">涉及操作人</span><b class="mono">{{ operatorCount }}</b></div>
+      <div class="stat-pill"><span class="muted small">涉及操作类型</span><b class="mono">{{ actions.length }}</b></div>
+      <div class="stat-pill">
+        <span class="muted small">价格隔离状态</span>
+        <el-tag :type="canSeePrice ? 'success' : 'info'" size="small" disable-transitions>
+          {{ canSeePrice ? '含涉价明细' : '涉价明细已自动遮盖' }}
+        </el-tag>
+      </div>
     </div>
     <el-card shadow="never" body-style="padding:0 0 8px">
       <template #header>
@@ -15,7 +26,7 @@
             <el-option v-for="a in actions" :key="a" :value="a" :label="a" />
           </el-select>
           <el-date-picker v-model="dates" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" style="width:260px;flex:none" @change="load" />
-          <span class="muted small">显示该范围内最近 300 条；导出不限条数，按所选日期范围</span>
+          <span class="muted small">显示该范围内最近 300 条；导出按当前筛选条件与日期范围全量导出</span>
         </div>
       </template>
       <LoadError v-if="error" :message="error" :loading="loading" @retry="load" />
@@ -38,18 +49,27 @@ import { computed, onMounted, ref } from 'vue'
 import http from '../api'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
+import { useAuth } from '../stores/auth'
 import { fmtTime } from '../utils/format'
 import { latestOnly } from '../utils/latest'
 import { usePaged } from '../utils/table'
 
+const auth = useAuth()
+const canSeePrice = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE'))
 const q = ref('')
 const action = ref('')
 const dates = ref(null)
 const range = computed(() => (dates.value ? { from: dates.value[0], to: dates.value[1] } : {}))
+const exportParams = computed(() => ({
+  ...range.value,
+  ...(q.value.trim() ? { q: q.value.trim() } : {}),
+  ...(action.value ? { action: action.value } : {})
+}))
 const rows = ref([])
 const loading = ref(false)
 const error = ref('')
 const actions = computed(() => [...new Set(rows.value.map((r) => r.action))].sort())
+const operatorCount = computed(() => new Set(rows.value.map((r) => r.username).filter(Boolean)).size)
 const t = usePaged(rows, { extra: (r) => !action.value || r.action === action.value, pageSize: 50 })
 
 const listReq = latestOnly()
@@ -69,3 +89,8 @@ async function load() {
 }
 onMounted(load)
 </script>
+
+<style scoped>
+.stat-bar { display: flex; gap: 12px; flex-wrap: wrap; }
+.stat-pill { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 12px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); }
+</style>

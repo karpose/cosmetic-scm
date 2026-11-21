@@ -45,6 +45,9 @@ public class SerialService {
     /** 单次最多生成多少个码，避免误操作一次生成过多。 */
     public static final int MAX_PER_REQUEST = 20000;
 
+    /** 默认防伪异常扫码阈值：单码累计被扫达到该次数即标为疑似仿冒或窜货风险。 */
+    public static final int DEFAULT_ANOMALY_THRESHOLD = 3;
+
     private final SerialCodeRepository codes;
     private final BatchRepository batches;
     private final RecallRepository recalls;
@@ -67,6 +70,16 @@ public class SerialService {
 
     public record CodeView(String code, String displayCode, int seq, String batchNo, String itemName, int scanCount,
                            LocalDateTime firstScanAt, LocalDateTime lastScanAt, LocalDateTime createdAt) {
+    }
+
+    public record AnomalyCode(String code, String displayCode, int seq, Long batchId, String batchNo, String itemCode,
+                              String itemName, String batchStatusLabel, int scanCount, LocalDateTime firstScanAt,
+                              LocalDateTime lastScanAt) {
+    }
+
+    public record AnomalySummary(int threshold, long totalGenerated, long totalScanned, long totalScans,
+                                 Double scanActivationRatePct, long suspiciousCodeCount, long suspiciousBatchCount,
+                                 List<AnomalyCode> topAnomalies) {
     }
 
     /** status：GENUINE 正品 / REPEATED 正品但多次查询 / RECALLED 召回或暂停销售 / EXPIRED 已过期 / UNRELEASED 未放行 / NOT_FOUND 查不到 */
@@ -153,6 +166,59 @@ public class SerialService {
         Batch b = inventory.batch(s.getBatchId());
         return new CodeView(s.getCode(), SerialCodes.display(s.getCode()), s.getSeq(), b.getBatchNo(),
                 lookup.item(b.getItemId()).getName(), s.getScanCount(), s.getFirstScanAt(), s.getLastScanAt(), s.getCreatedAt());
+    }
+
+    /** 高频重复扫码预警汇总（默认阈值 3 次，支持前端自定义 >=2）。 */
+    @Transactional(readOnly = true)
+    public AnomalySummary anomalySummary(Integer minScans) {
+        int threshold = normalizeThreshold(minScans);
+        List<BatchCodes> batchList = batches();
+        long totalGenerated = batchList.stream().mapToLong(BatchCodes::generated).sum();
+        long totalScanned = batchList.stream().mapToLong(BatchCodes::scannedCodes).sum();
+        long totalScans = batchList.stream().mapToLong(BatchCodes::scans).sum();
+        Double activationPct = totalGenerated == 0 ? null
+                : Math.round(totalScanned * 1000.0 / totalGenerated) / 10.0;
+        List<AnomalyCode> all = anomalies(threshold);
+        long batchCount = all.stream().map(AnomalyCode::batchId).distinct().count();
+        List<AnomalyCode> top = all.size() > 100 ? all.subList(0, 100) : all;
+        return new AnomalySummary(threshold, totalGenerated, totalScanned, totalScans,
+                activationPct, all.size(), batchCount, top);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AnomalyCode> anomalies(Integer minScans) {
+        int threshold = normalizeThreshold(minScans);
+        List<SerialCode> hits = codes.findByScanCountGreaterThanEqualOrderByScanCountDescLastScanAtDesc(threshold);
+        if (hits.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, Batch> bm = batches.findAllById(hits.stream().map(SerialCode::getBatchId).distinct().toList())
+                .stream().collect(java.util.stream.Collectors.toMap(Batch::getId, b -> b));
+        Map<Long, Item> im = lookup.itemMap();
+        List<AnomalyCode> out = new ArrayList<>(hits.size());
+        for (SerialCode s : hits) {
+            Batch b = bm.get(s.getBatchId());
+            if (b == null) {
+                continue;
+            }
+            Item item = im.get(b.getItemId());
+            out.add(new AnomalyCode(s.getCode(), SerialCodes.display(s.getCode()), s.getSeq(), b.getId(),
+                    b.getBatchNo(), item == null ? null : item.getCode(), item == null ? null : item.getName(),
+                    b.getStatus().getLabel(), s.getScanCount(), s.getFirstScanAt(), s.getLastScanAt()));
+        }
+        return out;
+    }
+
+    @Transactional(readOnly = true)
+    public long suspiciousCount() {
+        return codes.countByScanCountGreaterThanEqual(DEFAULT_ANOMALY_THRESHOLD);
+    }
+
+    private static int normalizeThreshold(Integer minScans) {
+        if (minScans == null) {
+            return DEFAULT_ANOMALY_THRESHOLD;
+        }
+        return Math.max(2, Math.min(minScans, 100));
     }
 
     // ---------- 消费者扫码 ----------

@@ -41,7 +41,13 @@ public class QmsController {
     private final DeviationService deviations;
     private final SupplierAuditService audits;
     private final RetainService retains;
+    private final com.cosmetic.scm.analytics.QualityGovernanceService qualityGov;
     private final SignatureService signature;
+
+    @GetMapping("/summary")
+    public com.cosmetic.scm.analytics.QualityGovernanceService.QmsSummary summary() {
+        return qualityGov.qmsSummary();
+    }
 
     @GetMapping("/deviations")
     public List<DeviationView> deviations() {

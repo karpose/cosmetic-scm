@@ -6,10 +6,27 @@
         <p>立项由管理员批准；开发中记录小试和中试，关联成品；上市检查从配方、备案、合规资料、稳定性、质量标准实时核对，全部通过才能提交，由质量安全负责人批准上市。</p>
       </div>
       <div class="toolbar">
+        <ExportButton report="npd-readiness" label="导出上市就绪度" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="canCreate" type="primary" @click="openCreate">申请立项</el-button>
       </div>
     </div>
+
+    <el-card v-if="readiness.length" shadow="never" body-style="padding:0 0 8px" style="margin-bottom:14px">
+      <template #header><b>新品上市门禁就绪度矩阵</b></template>
+      <el-table :data="readiness" size="small">
+        <el-table-column label="项目" min-width="160"><template #default="{ row }"><a href="#" class="mono" @click.prevent="openDetail(row.projectId)">{{ row.projectNo }}</a> {{ row.name }}</template></el-table-column>
+        <el-table-column prop="statusLabel" label="状态" width="95" />
+        <el-table-column label="计划上市" width="130"><template #default="{ row }"><span class="mono" :class="{ late: row.late }">{{ row.targetLaunch }}</span><div class="muted small">{{ row.daysLeft >= 0 ? `剩余 ${row.daysLeft} 天` : `超期 ${Math.abs(row.daysLeft)} 天` }}</div></template></el-table-column>
+        <el-table-column label="门禁进度" width="130" align="right"><template #default="{ row }"><b class="mono" :class="{ ok: row.ready }">{{ row.passedCount }}/{{ row.totalCount }}（{{ row.readinessPct }}%）</b></template></el-table-column>
+        <el-table-column label="待补齐项" min-width="220">
+          <template #default="{ row }">
+            <el-tag v-if="row.ready" size="small" type="success" disable-transitions>全部通过，可提交上市</el-tag>
+            <span v-else class="muted small">{{ row.missingItems?.join('、') || '待批准立项' }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
 
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
     <el-card v-else shadow="never" body-style="padding:0 0 8px">
@@ -165,6 +182,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
+import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
@@ -187,11 +205,13 @@ const isAdmin = computed(() => auth.hasAny('ADMIN'))
 const isQso = computed(() => auth.hasAny('QSO'))
 const projects = ref([])
 const versions = ref([])
+const readiness = ref([])
 const openOnly = ref(true)
 const loader = useLoader(async () => {
-  const [p, v] = await Promise.all([http.get('/npd/projects'), http.get('/plm/formulas')])
+  const [p, v, r] = await Promise.all([http.get('/npd/projects'), http.get('/plm/formulas'), http.get('/npd/readiness')])
   projects.value = p
   versions.value = v
+  readiness.value = r
 })
 const load = () => loader.run()
 const shown = computed(() => openOnly.value ? projects.value.filter((x) => ['PROPOSED', 'ACTIVE', 'LAUNCH_REVIEW'].includes(x.status)) : projects.value)

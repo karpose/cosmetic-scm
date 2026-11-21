@@ -154,7 +154,7 @@
         </div>
       </template>
       <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
-      <el-table v-else :data="t.paged.value" v-loading="loader.loading.value" :empty-text="selectedNo ? '没有找到这张对账单' : '没有符合条件的对账单'">
+      <el-table v-else :data="t.paged.value" v-loading="loader.loading.value" :empty-text="selectedNo ? '没有找到这张对账单' : '没有符合条件的对账单'" scrollbar-tabindex="0">
         <el-table-column label="对账单" width="170">
           <template #default="{ row }">
             <a href="#" class="mono" @click.prevent="openDetail(row)">{{ row.statementNo }}</a>

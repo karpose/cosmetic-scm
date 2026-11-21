@@ -28,10 +28,31 @@ import org.springframework.web.bind.annotation.RestController;
 public class ComplianceController {
 
     private final ComplianceService compliance;
+    private final com.cosmetic.scm.master.RegulatoryService regulatory;
+
+    public record ComplianceSummary(long totalWithFormula, long completeCount, long incompleteCount, long staleCount,
+                                    long pendingDocCount, long activeRuleCount, long violationCount, long gapCount,
+                                    Double completeRatePct) {
+    }
 
     @GetMapping("/products")
     public List<ProductStatus> products() {
         return compliance.statuses();
+    }
+
+    @GetMapping("/summary")
+    public ComplianceSummary summary() {
+        List<ProductStatus> ps = compliance.statuses().stream().filter(p -> p.versionId() != null).toList();
+        long total = ps.size();
+        long complete = ps.stream().filter(ProductStatus::complete).count();
+        long incomplete = total - complete;
+        long stale = ps.stream().filter(p -> "STALE".equals(p.safety()) || "STALE".equals(p.label())).count();
+        long pendingDocs = compliance.list().stream()
+                .filter(d -> d.status() == com.cosmetic.scm.domain.ComplianceDocStatus.PENDING).count();
+        var cmp = regulatory.compare();
+        Double rate = total == 0 ? null : Math.round(complete * 1000.0 / total) / 10.0;
+        return new ComplianceSummary(total, complete, incomplete, stale, pendingDocs,
+                cmp.activeRules(), cmp.violations().size(), cmp.gaps().size(), rate);
     }
 
     @GetMapping("/docs")
