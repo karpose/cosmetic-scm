@@ -99,6 +99,11 @@ public class RecallService {
     }
 
     @Transactional(readOnly = true)
+    public List<RecallView> listAll() {
+        return toViews(recalls.findAllByOrderByIdDesc());
+    }
+
+    @Transactional(readOnly = true)
     public List<RecallView> open() {
         return toViews(recalls.findByStatus(CaseStatus.OPEN));
     }

@@ -50,6 +50,10 @@ public class ReportService {
     private final com.cosmetic.scm.plm.PlmInsightsService plmInsights;
     private final com.cosmetic.scm.plm.DocControlService docControl;
     private final com.cosmetic.scm.analytics.QualityGovernanceService qualityGov;
+    private final com.cosmetic.scm.analytics.QualityEventAnalyticsService qualityEvents;
+    private final com.cosmetic.scm.serial.SerialService serials;
+    private final com.cosmetic.scm.integration.IntegrationService integration;
+    private final com.cosmetic.scm.golive.GoLiveService golive;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
     private final SupplierAuditService audits;
     private final RetainService retains;
@@ -73,7 +77,7 @@ public class ReportService {
     private record Table(String title, List<String> headers, List<List<Object>> rows) {
     }
 
-    private Map<String, Supplier<Table>> registry(LocalDate from, LocalDate to) {
+    private Map<String, Supplier<Table>> registry(LocalDate from, LocalDate to, String q, String action) {
         Map<String, Supplier<Table>> m = new LinkedHashMap<>();
         m.put("stock", this::stock);
         m.put("batches", this::batches);
@@ -86,7 +90,7 @@ public class ReportService {
         m.put("supplier-audits", this::supplierAudits);
         m.put("retains", this::retainSamples);
         m.put("equipment", this::equipmentList);
-        m.put("audit", () -> auditLogs(from, to));
+        m.put("audit", () -> auditLogs(from, to, q, action));
         m.put("statements", this::statements);
         m.put("ar-statements", this::arStatements);
         m.put("ar-invoice-ledger", () -> arInvoiceLedger(from, to));
@@ -110,20 +114,32 @@ public class ReportService {
         m.put("controlled-docs", this::controlledDocsReport);
         m.put("qms-summary", this::qmsSummaryReport);
         m.put("inventory-abc", this::inventoryAbcReport);
+        m.put("serial-anomalies", this::serialAnomaliesReport);
+        m.put("quality-events-summary", () -> qualityEventsSummaryReport(from, to));
+        m.put("integration-logs", () -> integrationLogsReport(from, to));
+        m.put("golive-checklist", this::goliveChecklistReport);
         m.put("inspections", () -> inspectionResults(from, to));
         return m;
     }
 
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to) {
-        // 金额只给采购和财务看，应收报表给销售、财务和管理员看，其它报表所有内部岗位都能导
+        return export(key, from, to, null, null);
+    }
+
+    @Transactional
+    public Export export(String key, LocalDate from, LocalDate to, String q, String action) {
+        // 金额只给采购和财务看，应收报表给销售、财务和管理员看，上线检查仅限管理员/主数据/质量导出，其它报表所有内部岗位都能导
         if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "batch-costs".equals(key) || "margins".equals(key) || "cashflow-forecast".equals(key) || "inventory-variance".equals(key) || "inventory-abc".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与成本数据");
         }
         if (("ar-statements".equals(key) || "ar-aging".equals(key) || "ar-invoice-ledger".equals(key) || "customer-credit".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出客户应收对账数据");
         }
-        Supplier<Table> source = registry(from, to).get(key);
+        if ("golive-checklist".equals(key) && !goliveReportAllowed()) {
+            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出上线检查报告");
+        }
+        Supplier<Table> source = registry(from, to, q, action).get(key);
         if (source == null) {
             throw BizException.notFound("报表");
         }
@@ -133,6 +149,13 @@ public class ReportService {
         }
         audit.log("导出报表", t.title(), t.rows().size() + " 行" + (from == null && to == null ? "" : "，范围 " + (from == null ? "不限" : from) + " 至 " + (to == null ? "不限" : to)));
         return new Export(t.title() + "-" + time.today() + ".xlsx", XlsxWriter.write(t.title(), t.headers(), t.rows()));
+    }
+
+    private static boolean goliveReportAllowed() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream().anyMatch(a ->
+                "ROLE_ADMIN".equals(a.getAuthority()) || "ROLE_MASTER_DATA".equals(a.getAuthority())
+                        || "ROLE_QA".equals(a.getAuthority()) || "ROLE_QSO".equals(a.getAuthority()));
     }
 
     private Table supplierReturns() {
@@ -459,10 +482,49 @@ public class ReportService {
         return new Table("设备台账", List.of("编号", "名称", "位置", "状态", "需要校准", "周期（月）", "校准到期", "最近校准", "结论", "停用原因"), rows);
     }
 
-    private Table auditLogs(LocalDate from, LocalDate to) {
+    private Table serialAnomaliesReport() {
         List<List<Object>> rows = new ArrayList<>();
-        // 多查一条，超限时能发现并报错，而不是悄悄少导
-        audit.search(from, to, null, MAX_ROWS + 1).forEach(a -> rows.add(row(a.getCreatedAt(), a.getUsername(), a.getDisplayName(), a.getAction(), a.getTarget(), a.getDetail(), a.getReason())));
+        serials.anomalies(null).forEach(a -> rows.add(row(
+                a.displayCode(), a.seq(), a.batchNo(), a.itemCode(), a.itemName(), a.batchStatusLabel(),
+                a.scanCount(), a.firstScanAt(), a.lastScanAt())));
+        return new Table("防伪异常扫码清单", List.of("防伪码", "序号", "批号", "成品编码", "成品名称", "批次状态", "累计扫码次数", "首次扫码时间", "最近扫码时间"), rows);
+    }
+
+    private Table qualityEventsSummaryReport(LocalDate from, LocalDate to) {
+        var rep = qualityEvents.report(from, to);
+        List<List<Object>> rows = new ArrayList<>();
+        rep.byCategory().forEach(r -> rows.add(row("按投诉类别", r.label(), r.count(), r.adverseCount(), r.seriousCount(), r.openCount(), r.sharePct(), null, null)));
+        rep.byChannel().forEach(r -> rows.add(row("按来源渠道", r.label(), r.count(), r.adverseCount(), r.seriousCount(), r.openCount(), r.sharePct(), null, null)));
+        rep.byItem().forEach(r -> rows.add(row("按成品", r.label(), r.count(), r.adverseCount(), r.seriousCount(), r.openCount(), r.sharePct(), null, null)));
+        rep.recalls().forEach(r -> rows.add(row("召回效率", r.recallNo() + " " + r.itemName() + "(" + r.batchNo() + ")",
+                r.customerCount(), r.notifiedCount(), null, "召回中".equals(r.statusLabel()) ? 1 : 0, r.notifyRatePct(), r.recoveryRatePct(), r.statusLabel())));
+        return new Table("客诉与召回效率分析", List.of("维度", "名称/单号", "总件数/客户数", "不良反应/已通知", "严重件数", "处理中", "占比/通知率(%)", "回收率(%)", "状态"), rows);
+    }
+
+    private Table integrationLogsReport(LocalDate from, LocalDate to) {
+        List<List<Object>> rows = new ArrayList<>();
+        integration.exportLogs(from, to).forEach(l -> rows.add(row(
+                l.createdAt(), "IN".equals(l.direction()) ? "平台→本系统" : "本系统→平台", l.platform(),
+                l.action(), l.ref(), l.success() ? "成功" : "失败", l.message())));
+        return new Table("系统对接日志", List.of("时间", "方向", "平台", "动作", "对象", "结果", "说明"), rows);
+    }
+
+    private Table goliveChecklistReport() {
+        var cl = golive.checklist();
+        List<List<Object>> rows = new ArrayList<>();
+        cl.checks().forEach(c -> rows.add(row(
+                c.group(), c.title(),
+                "BLOCK".equals(c.state()) ? "必须处理" : "WARN".equals(c.state()) ? "建议处理" : "通过",
+                c.detail())));
+        return new Table("上线前检查报告", List.of("分组", "检查项", "状态", "说明"), rows);
+    }
+
+    private Table auditLogs(LocalDate from, LocalDate to, String q, String action) {
+        List<List<Object>> rows = new ArrayList<>();
+        // 多查一条，超限时能发现并报错，而不是悄悄少导；AuditService.search 内部已按 PriceAccess 遮盖涉价内容
+        audit.search(from, to, q, MAX_ROWS + 1).stream()
+                .filter(a -> action == null || action.isBlank() || action.trim().equals(a.getAction()))
+                .forEach(a -> rows.add(row(a.getCreatedAt(), a.getUsername(), a.getDisplayName(), a.getAction(), a.getTarget(), a.getDetail(), a.getReason())));
         return new Table("审计日志", List.of("时间", "账号", "姓名", "操作", "对象", "内容", "原因"), rows);
     }
 

@@ -25,4 +25,8 @@ public interface SerialCodeRepository extends JpaRepository<SerialCode, Long> {
 
     @Query("select max(s.seq) from SerialCode s where s.batchId = :batchId")
     Integer maxSeq(@Param("batchId") Long batchId);
+
+    List<SerialCode> findByScanCountGreaterThanEqualOrderByScanCountDescLastScanAtDesc(int threshold);
+
+    long countByScanCountGreaterThanEqual(int threshold);
 }

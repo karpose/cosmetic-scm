@@ -137,6 +137,18 @@ public class IntegrationService {
                           String message, LocalDateTime createdAt) {
     }
 
+    public record PlatformHealth(String platform, long totalCalls, long successCalls, long failedCalls,
+                                 Double successRatePct, LocalDateTime lastCallAt, LocalDateTime lastFailureAt) {
+    }
+
+    public record FailureReasonRow(String platform, String action, String message, long count, LocalDateTime lastAt) {
+    }
+
+    public record IntegrationHealth(int days, long totalCalls, long successCalls, long failedCalls,
+                                    Double successRatePct, long failedOrdersBacklog, long receivedOrdersBacklog,
+                                    List<PlatformHealth> byPlatform, List<FailureReasonRow> topFailures) {
+    }
+
     // ---------- ERP 调用 ----------
 
     public List<PushResult> receive(PushReq req) {
@@ -217,6 +229,81 @@ public class IntegrationService {
     @Transactional(readOnly = true)
     public long failedCount() {
         return orders.findByStatus(ChannelOrderStatus.FAILED).size();
+    }
+
+    /** 统计近 N 天接口集成健康度（严格按 PriceAccess 过滤 FINANCE 平台日志）。 */
+    @Transactional(readOnly = true)
+    public IntegrationHealth health(int days) {
+        int window = Math.max(1, Math.min(days, 365));
+        boolean canSeeFinance = com.cosmetic.scm.security.PriceAccess.allowed();
+        LocalDateTime since = time.now().minusDays(window);
+        List<IntegrationLog> list = logs.findByCreatedAtGreaterThanEqualOrderByIdDesc(since).stream()
+                .filter(l -> canSeeFinance || !"FINANCE".equalsIgnoreCase(l.getPlatform()))
+                .toList();
+
+        long total = list.size();
+        long ok = list.stream().filter(IntegrationLog::isSuccess).count();
+        long fail = total - ok;
+        Double rate = total == 0 ? null : Math.round(ok * 1000.0 / total) / 10.0;
+
+        Map<String, List<IntegrationLog>> byPlat = new java.util.LinkedHashMap<>();
+        for (IntegrationLog l : list) {
+            String p = (l.getPlatform() == null || l.getPlatform().isBlank()) ? "GENERAL" : l.getPlatform().toUpperCase();
+            byPlat.computeIfAbsent(p, k -> new ArrayList<>()).add(l);
+        }
+        List<PlatformHealth> platformRows = byPlat.entrySet().stream()
+                .map(e -> {
+                    List<IntegrationLog> rows = e.getValue();
+                    long pTotal = rows.size();
+                    long pOk = rows.stream().filter(IntegrationLog::isSuccess).count();
+                    long pFail = pTotal - pOk;
+                    Double pRate = pTotal == 0 ? null : Math.round(pOk * 1000.0 / pTotal) / 10.0;
+                    LocalDateTime lastAt = rows.get(0).getCreatedAt();
+                    LocalDateTime lastFail = rows.stream().filter(x -> !x.isSuccess()).map(IntegrationLog::getCreatedAt)
+                            .findFirst().orElse(null);
+                    return new PlatformHealth(e.getKey(), pTotal, pOk, pFail, pRate, lastAt, lastFail);
+                })
+                .sorted(java.util.Comparator.comparingLong(PlatformHealth::failedCalls).reversed()
+                        .thenComparing(java.util.Comparator.comparingLong(PlatformHealth::totalCalls).reversed()))
+                .toList();
+
+        Map<String, List<IntegrationLog>> failGroups = new java.util.LinkedHashMap<>();
+        for (IntegrationLog l : list) {
+            if (!l.isSuccess()) {
+                String p = (l.getPlatform() == null || l.getPlatform().isBlank()) ? "GENERAL" : l.getPlatform().toUpperCase();
+                String act = l.getAction() == null ? "—" : l.getAction();
+                String msg = (l.getMessage() == null || l.getMessage().isBlank()) ? "未记录错误原因" : l.getMessage();
+                failGroups.computeIfAbsent(p + "\0" + act + "\0" + msg, k -> new ArrayList<>()).add(l);
+            }
+        }
+        List<FailureReasonRow> topFailures = failGroups.values().stream()
+                .map(rows -> {
+                    IntegrationLog first = rows.get(0);
+                    String p = (first.getPlatform() == null || first.getPlatform().isBlank()) ? "GENERAL" : first.getPlatform().toUpperCase();
+                    String act = first.getAction() == null ? "—" : first.getAction();
+                    String msg = (first.getMessage() == null || first.getMessage().isBlank()) ? "未记录错误原因" : first.getMessage();
+                    return new FailureReasonRow(p, act, msg, rows.size(), first.getCreatedAt());
+                })
+                .sorted(java.util.Comparator.comparingLong(FailureReasonRow::count).reversed())
+                .limit(20)
+                .toList();
+
+        long failedBacklog = orders.findByStatus(ChannelOrderStatus.FAILED).size();
+        long receivedBacklog = orders.findByStatus(ChannelOrderStatus.RECEIVED).size();
+        return new IntegrationHealth(window, total, ok, fail, rate, failedBacklog, receivedBacklog, platformRows, topFailures);
+    }
+
+    /** 按日期范围导出对接日志（无价格权限时过滤 FINANCE 平台日志）。 */
+    @Transactional(readOnly = true)
+    public List<LogView> exportLogs(java.time.LocalDate from, java.time.LocalDate to) {
+        boolean canSeeFinance = com.cosmetic.scm.security.PriceAccess.allowed();
+        LocalDateTime start = from == null ? java.time.LocalDate.of(2000, 1, 1).atStartOfDay() : from.atStartOfDay();
+        LocalDateTime end = to == null ? java.time.LocalDate.of(2999, 1, 1).atStartOfDay() : to.plusDays(1).atStartOfDay();
+        return logs.findByCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByIdDesc(start, end).stream()
+                .filter(l -> canSeeFinance || !"FINANCE".equalsIgnoreCase(l.getPlatform()))
+                .map(l -> new LogView(l.getId(), l.getDirection(), l.getPlatform(),
+                        l.getAction(), l.getRef(), l.isSuccess(), l.getMessage(), l.getCreatedAt()))
+                .toList();
     }
 
     public PushResult retry(Long id) {
