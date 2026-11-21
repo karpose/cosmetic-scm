@@ -35,7 +35,7 @@
         <div class="filters">
           <b>防伪异常扫码预警</b>
           <span class="muted small">单码累计扫码阈值</span>
-          <el-select v-model="minScans" size="small" style="width:110px" @change="loadAnomalies">
+          <el-select v-model="minScans" aria-label="单码累计扫码阈值" size="small" style="width:110px" @change="loadAnomalies">
             <el-option :value="2" label="≥ 2 次" />
             <el-option :value="3" label="≥ 3 次" />
             <el-option :value="5" label="≥ 5 次" />
