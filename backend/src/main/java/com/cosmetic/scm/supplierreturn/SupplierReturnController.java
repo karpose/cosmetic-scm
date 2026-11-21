@@ -38,6 +38,11 @@ public class SupplierReturnController {
         return returns.list(returnNo);
     }
 
+    @GetMapping("/summary")
+    public SupplierReturnService.SupplierReturnSummary summary() {
+        return returns.summary();
+    }
+
     @GetMapping("/candidates")
     @PreAuthorize(MAKER)
     public List<Candidate> candidates(@RequestParam Long supplierId) {

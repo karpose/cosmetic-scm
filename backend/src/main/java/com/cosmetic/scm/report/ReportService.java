@@ -62,6 +62,9 @@ public class ReportService {
     private final com.cosmetic.scm.master.RegulatoryService regulatory;
     private final com.cosmetic.scm.quality.QualityService quality;
     private final com.cosmetic.scm.dealer.DealerService dealers;
+    private final com.cosmetic.scm.analytics.ProductionEfficiencyService prodEfficiency;
+    private final com.cosmetic.scm.inventory.StockOpsService stockOps;
+    private final com.cosmetic.scm.security.UserService userService;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
     private final SupplierAuditService audits;
     private final RetainService retains;
@@ -135,6 +138,10 @@ public class ReportService {
         m.put("stability-coverage", this::stabilityCoverageReport);
         m.put("release-decisions", this::releaseDecisionsReport);
         m.put("dealer-orders", this::dealerOrdersReport);
+        m.put("production-efficiency", this::productionEfficiencyReport);
+        m.put("quality-specs", this::qualitySpecsReport);
+        m.put("inventory-ops", this::inventoryOpsReport);
+        m.put("users", this::usersReport);
         m.put("inspections", () -> inspectionResults(from, to));
         return m;
     }
@@ -156,6 +163,9 @@ public class ReportService {
         if ("golive-checklist".equals(key) && !goliveReportAllowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出上线检查报告");
         }
+        if ("users".equals(key) && !adminReportAllowed()) {
+            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "仅系统管理员可导出账号权限台账");
+        }
         Supplier<Table> source = registry(from, to, q, action).get(key);
         if (source == null) {
             throw BizException.notFound("报表");
@@ -173,6 +183,11 @@ public class ReportService {
         return auth != null && auth.getAuthorities().stream().anyMatch(a ->
                 "ROLE_ADMIN".equals(a.getAuthority()) || "ROLE_MASTER_DATA".equals(a.getAuthority())
                         || "ROLE_QA".equals(a.getAuthority()) || "ROLE_QSO".equals(a.getAuthority()));
+    }
+
+    private static boolean adminReportAllowed() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream().anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
     }
 
     private Table supplierReturns() {
@@ -620,6 +635,46 @@ public class ReportService {
                 o.reviewedBy(), o.reviewedAt(), o.reviewNote(), o.note()))));
         return new Table("经销商订货履约明细", List.of("订货单号", "下单时间", "经销商", "效期要求(%)", "期望到货日",
                 "状态", "成品编码", "成品名称", "订购数量", "单位", "生成出库单", "审核人", "审核时间", "审核说明", "备注"), rows);
+    }
+
+    private Table productionEfficiencyReport() {
+        var rep = prodEfficiency.report();
+        List<List<Object>> rows = new ArrayList<>();
+        rep.byFactory().forEach(f -> rows.add(row("按生产方", f.factoryName(), f.moTypeLabel(),
+                f.completedCount(), f.wipCount(), f.overdueCount(), f.totalPlannedQty(), f.totalActualQty(), f.avgYieldPct())));
+        rep.byItem().forEach(i -> rows.add(row("按成品", i.fgName(), i.fgCode(),
+                i.completedCount(), null, null, i.totalPlannedQty(), i.totalActualQty(), i.avgYieldPct())));
+        return new Table("生产收率与工厂效率对比", List.of("维度", "名称", "类型/编码", "完工批数", "在制批数",
+                "超期在制", "计划总产量", "实际总产量", "平均收率(%)"), rows);
+    }
+
+    private Table qualitySpecsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        qualitySpecs.listAll().forEach(s -> rows.add(row(
+                s.specNo(), "V" + s.versionNo(), s.itemCode(), s.itemName(), s.itemTypeLabel(),
+                s.statusLabel(), s.lines().size(), s.lines().stream().filter(l -> l.coaAllowed()).count(),
+                s.samplingPlan(), s.coaMaxStreak(), s.changeNote(), s.createdBy(), s.approvedBy(), s.approvedAt())));
+        return new Table("质量标准台账", List.of("标准编号", "版本", "物料编码", "物料名称", "物料类型",
+                "状态", "检验项数", "可采供方报告项", "取样要求", "连续采报告上限", "修改原因", "提交人", "签批人", "签批时间"), rows);
+    }
+
+    private Table inventoryOpsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        stockOps.listAll().forEach(d -> d.lines().forEach(l -> rows.add(row(
+                d.docNo(), d.docTypeLabel(), d.createdAt(), d.fromWarehouseName(), d.toWarehouseName(),
+                l.batchNo(), l.itemCode(), l.itemName(), l.bookQty(), l.qty(), l.unit(),
+                d.createdBy(), d.signedByName(), d.reason()))));
+        return new Table("库存作业明细", List.of("单号", "作业类型", "时间", "调出/作业仓", "调入仓",
+                "批号", "物料编码", "物料名称", "账面数", "变动/数量", "单位", "经办人", "签批人", "原因"), rows);
+    }
+
+    private Table usersReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        userService.list().forEach(u -> rows.add(row(
+                u.username(), u.displayName(), u.enabled() ? "启用" : "停用",
+                String.join("、", u.roles()), u.partnerName(), u.email(),
+                u.lockedUntil(), u.passwordChangeRequired())));
+        return new Table("账号与权限台账", List.of("账号", "姓名", "状态", "角色", "所属门户单位", "邮箱", "锁定截止", "密码状态"), rows);
     }
 
     private Table auditLogs(LocalDate from, LocalDate to, String q, String action) {
