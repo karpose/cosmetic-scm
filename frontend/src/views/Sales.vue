@@ -17,6 +17,34 @@
       <el-tab-pane label="客户协议价" name="prices" />
     </el-tabs>
 
+    <div v-if="activeTab === 'orders' && summary" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">近 {{ summary.windowDays }} 天出库单</div>
+        <div class="kpi-val mono">{{ summary.ordersInWindow }} <span class="kpi-unit">单</span></div>
+        <div class="kpi-sub">累计历史出库 {{ summary.totalOrdersAll }} 单</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">近 {{ summary.windowDays }} 天出库件数</div>
+        <div class="kpi-val mono">{{ fmtQty(summary.unitsInWindow) }}</div>
+        <div class="kpi-sub">覆盖 {{ summary.activeCustomersInWindow }} 家活跃客户</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">近 {{ summary.windowDays }} 天出库金额</div>
+        <div class="kpi-val mono">{{ summary.amountInWindow != null ? fmtMoney(summary.amountInWindow) : '—' }}</div>
+        <div class="kpi-sub">{{ summary.amountInWindow != null ? '已维护单价行含税合计' : '金额按角色权限隐藏' }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">主要出库渠道</div>
+        <div class="kpi-val">{{ summary.byChannel.length ? summary.byChannel[0].channel : '—' }}</div>
+        <div class="kpi-sub">
+          <template v-if="summary.byChannel.length">
+            {{ summary.byChannel.slice(0, 2).map((c) => `${c.channel} ${fmtQty(c.totalQty)}`).join(' · ') }}
+          </template>
+          <template v-else>近 {{ summary.windowDays }} 天暂无出库</template>
+        </div>
+      </div>
+    </div>
+
     <el-card v-if="activeTab === 'prices'" shadow="never" body-style="padding:0 0 8px">
       <el-table :data="cp.rows" v-loading="cp.loading" empty-text="还没有维护客户协议价">
         <el-table-column label="客户" min-width="160"><template #default="{ row }">{{ row.customerName }}<div class="muted small mono">{{ row.customerCode }}</div></template></el-table-column>
@@ -165,6 +193,7 @@ import { fmtMoney, fmtQty } from '../utils/format'
 const auth = useAuth()
 const rd = useRefData()
 const orders = ref([])
+const summary = ref(null)
 const loading = ref(false)
 const loadError = ref('')
 const filterBy = ref('')
@@ -211,7 +240,12 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    orders.value = await http.get('/sales-orders')
+    const [list, sum] = await Promise.all([
+      http.get('/sales-orders'),
+      http.get('/sales-orders/summary', { silent: true }).catch(() => null)
+    ])
+    orders.value = list
+    summary.value = sum
   } catch (e) {
     loadError.value = e.message
   } finally {
@@ -268,8 +302,15 @@ onMounted(() => Promise.all([load(), rd.load()]))
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .line-row.priced { display: grid; grid-template-columns: 2fr 1fr 1.2fr 1.1fr auto; gap: 8px; }
 .preview { background: var(--el-fill-color-lighter); }
 .pl { margin-top: 8px; line-height: 2; }
 .pick { margin-right: 10px; }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

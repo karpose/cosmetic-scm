@@ -5,6 +5,32 @@
         <h2>补货建议</h2>
         <p>按近期出库算日均需求，用再订货点法给出成品建议生产 / 委托量；勾选后可按 BOM 展开算品牌供料的净采购量（扣在库、待检、在途和已计划未发料的占用）。生成的生产单、采购单都是草稿，走原有的全部校验。</p>
       </div>
+      <div class="toolbar">
+        <ExportButton report="planning-fg" />
+      </div>
+    </div>
+
+    <div v-if="rows.length" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">在售成品 SKU</div>
+        <div class="kpi-val mono">{{ planSummary.totalFg }}</div>
+        <div class="kpi-sub">当前参与再订货点核算</div>
+      </div>
+      <div class="kpi-card" :class="{ danger: planSummary.belowRop > 0 }">
+        <div class="kpi-label">低于再订货点</div>
+        <div class="kpi-val mono">{{ planSummary.belowRop }} <span class="kpi-unit">个</span></div>
+        <div class="kpi-sub">已自动勾选待补产 SKU</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: planSummary.nearExpirySkus > 0 }">
+        <div class="kpi-label">含临期库存成品</div>
+        <div class="kpi-val mono">{{ planSummary.nearExpirySkus }} <span class="kpi-unit">个</span></div>
+        <div class="kpi-sub">临期总量 {{ fmtQty(planSummary.totalNearExpiry) }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">建议补产总量</div>
+        <div class="kpi-val mono">{{ fmtQty(planSummary.totalSuggested) }}</div>
+        <div class="kpi-sub">按 100 件取整汇总</div>
+      </div>
     </div>
 
     <el-card shadow="never" body-style="padding:14px 18px">
@@ -118,6 +144,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { CircleCheckFilled, WarningFilled } from '@element-plus/icons-vue'
 import http from '../api'
+import ExportButton from '../components/ExportButton.vue'
 import LoadError from '../components/LoadError.vue'
 import { useAuth } from '../stores/auth'
 import { daysFromToday, fmtMoney, fmtQty } from '../utils/format'
@@ -131,6 +158,13 @@ const p = reactive({ windowDays: 90, leadDays: 30, safetyDays: 15, coverDays: 60
 const rows = ref([])
 const chosen = ref([])
 const fgTable = ref(null)
+const planSummary = computed(() => ({
+  totalFg: rows.value.length,
+  belowRop: rows.value.filter((r) => r.belowReorderPoint).length,
+  nearExpirySkus: rows.value.filter((r) => Number(r.nearExpiry) > 0).length,
+  totalNearExpiry: rows.value.reduce((a, r) => a + Number(r.nearExpiry || 0), 0),
+  totalSuggested: rows.value.reduce((a, r) => a + Number(r.suggested || 0), 0)
+}))
 const qty = reactive({})
 const factory = reactive({})
 const canMo = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
@@ -228,6 +262,14 @@ onMounted(() => Promise.all([loader.run(false), rd.load()]))
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; }
+.kpi-card.danger { border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .params { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
 .params label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--el-text-color-regular); }
 .params .el-input-number { width: 72px; }
@@ -236,4 +278,5 @@ onMounted(() => Promise.all([loader.run(false), rd.load()]))
 .mq { display: inline-block; margin-right: 8px; }
 .warn { color: var(--el-color-warning); }
 .ti { vertical-align: -2px; margin-right: 2px; }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

@@ -6,8 +6,32 @@
         <p>物料编码、往来单位资质和 BOM 是整条主线的基础。资质过期的供应商或代工厂会被自动挡在下单之外；BOM 保存时校验禁用和限用原料。</p>
       </div>
       <div class="toolbar">
+        <ExportButton v-if="tab === 'items' || tab === 'partners'" :report="tab === 'partners' ? 'partners' : 'items'" />
         <el-button v-if="canEdit && (tab === 'items' || tab === 'partners' || tab === 'boms')" @click="importOpen = true">{{ tab === 'boms' ? '批量导入首版配方' : '批量导入' }}</el-button>
         <el-button v-if="canEdit" type="primary" @click="onAdd">{{ addLabel }}</el-button>
+      </div>
+    </div>
+
+    <div v-if="summary" class="kpi-grid">
+      <div class="kpi-card" @click="tab = 'items'">
+        <div class="kpi-label">启用物料</div>
+        <div class="kpi-val mono">{{ summary.activeItems }} <span class="kpi-unit">/ {{ summary.totalItems }}</span></div>
+        <div class="kpi-sub">原料 {{ summary.activeRm }} · 包材 {{ summary.activePk }} · 成品 {{ summary.activeFg }}</div>
+      </div>
+      <div class="kpi-card" @click="tab = 'partners'">
+        <div class="kpi-label">往来单位</div>
+        <div class="kpi-val mono">{{ summary.totalPartners }}</div>
+        <div class="kpi-sub">供应商 {{ summary.suppliersCount }} · 生产方 {{ summary.factoriesCount }} · 客户 {{ summary.customersCount }}</div>
+      </div>
+      <div class="kpi-card" :class="{ danger: summary.licenseExpiredCount > 0, warn: summary.licenseExpiredCount === 0 && (summary.licenseExpiringCount > 0 || summary.unqualifiedNonCustomerCount > 0) }" @click="tab = 'partners'">
+        <div class="kpi-label">资质与准入风控</div>
+        <div class="kpi-val mono">{{ summary.licenseExpiredCount + summary.licenseExpiringCount }}</div>
+        <div class="kpi-sub">已过期 {{ summary.licenseExpiredCount }} · 临期 {{ summary.licenseExpiringCount }} · 未入名录 {{ summary.unqualifiedNonCustomerCount }}</div>
+      </div>
+      <div class="kpi-card" @click="tab = 'boms'">
+        <div class="kpi-label">已配 BOM / 仓库</div>
+        <div class="kpi-val mono">{{ summary.bomsConfiguredCount }} <span class="kpi-unit">套</span></div>
+        <div class="kpi-sub">仓库 {{ summary.warehousesCount }} 个 · 禁用原料 {{ summary.bannedRm }} 个</div>
       </div>
     </div>
 
@@ -263,6 +287,7 @@
 import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElTag } from 'element-plus'
 import http from '../api'
+import ExportButton from '../components/ExportButton.vue'
 import ImportDialog from '../components/ImportDialog.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
@@ -289,6 +314,7 @@ const auth = useAuth()
 const rd = useRefData()
 const tab = ref('items')
 const boms = ref([])
+const summary = ref(null)
 const canEdit = computed(() => auth.hasAny('ADMIN', 'MASTER_DATA'))
 const addLabel = computed(() => ({ items: '新增物料', partners: '新增往来单位', warehouses: '新增仓库', boms: '维护 BOM' }[tab.value]))
 
@@ -316,7 +342,12 @@ async function load() {
   error.value = ''
   try {
     await rd.load()
-    boms.value = await http.get('/boms')
+    const [bm, sum] = await Promise.all([
+      http.get('/boms'),
+      http.get('/master/summary', { silent: true }).catch(() => null)
+    ])
+    boms.value = bm
+    summary.value = sum
   } catch (e) {
     error.value = e.message
   }
@@ -429,11 +460,21 @@ onMounted(load)
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: border-color 0.15s; }
+.kpi-card:hover { border-color: var(--el-color-primary-light-5); }
+.kpi-card.danger { border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .tabs :deep(.el-tabs__header) { padding: 0 16px; margin-bottom: 0; }
 .pad { padding: 12px 16px 4px; }
 .boms { display: grid; gap: 12px; padding: 16px; }
 .bom-h { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bom-row { display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 8px; margin-bottom: 8px; }
 .checks { margin-top: 12px; display: grid; gap: 4px; }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 768px) { .bom-row { grid-template-columns: 1fr 1fr; } .bom-row > :first-child { grid-column: 1 / -1; } }
 </style>
