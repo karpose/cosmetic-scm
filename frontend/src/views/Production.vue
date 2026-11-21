@@ -6,12 +6,60 @@
         <p>委托代工和自有工厂走同一张单：品牌供料部分按“先到期先出”从自有仓发料，工厂代采部分在完工时登记受托厂的原料批号。完工批次一律进入“待上市放行”。</p>
       </div>
       <div class="toolbar">
-        <ExportButton report="production" />
+        <ExportButton v-if="tab === 'efficiency'" report="production-efficiency" label="导出效率对比" />
+        <ExportButton v-else report="production" />
         <el-button v-if="canCreate" type="primary" @click="openCreate">新建生产 / 委托单</el-button>
       </div>
     </div>
 
-    <el-card shadow="never" body-style="padding:0 0 8px">
+    <div v-if="eff" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="muted small">已完工 / 在制工单</div>
+        <div class="kpi-val mono">{{ eff.completedOrders }} <span class="muted small">/ {{ eff.wipOrders }}</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">整体平均收率</div>
+        <div class="kpi-val mono">{{ eff.overallAvgYieldPct != null ? `${eff.overallAvgYieldPct}%` : '—' }}</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: eff.overdueWipOrders > 0 }">
+        <div class="muted small">超期在制工单</div>
+        <div class="kpi-val mono">{{ eff.overdueWipOrders }}</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: eff.pendingOemReports > 0 }">
+        <div class="muted small">受托厂申报待确认入库</div>
+        <div class="kpi-val mono">{{ eff.pendingOemReports }}</div>
+      </div>
+    </div>
+
+    <el-tabs v-model="tab" class="seg">
+      <el-tab-pane label="生产与委托单" name="orders" />
+      <el-tab-pane label="工厂收率对比" name="efficiency" />
+    </el-tabs>
+
+    <div v-if="tab === 'efficiency' && eff" class="ana-grid">
+      <el-card shadow="never" body-style="padding:0">
+        <template #header><b>自产 / 受托厂效率对比</b></template>
+        <el-table :data="eff.byFactory" size="small" empty-text="暂无生产记录">
+          <el-table-column prop="factoryName" label="生产方" min-width="130" />
+          <el-table-column prop="moTypeLabel" label="类型" width="80" />
+          <el-table-column prop="completedCount" label="完工批" width="75" align="right" />
+          <el-table-column prop="wipCount" label="在制" width="65" align="right" />
+          <el-table-column prop="overdueCount" label="超期" width="65" align="right" />
+          <el-table-column label="平均收率" width="90" align="right"><template #default="{ row }"><span class="mono">{{ row.avgYieldPct != null ? `${row.avgYieldPct}%` : '—' }}</span></template></el-table-column>
+        </el-table>
+      </el-card>
+      <el-card shadow="never" body-style="padding:0">
+        <template #header><b>按成品收率汇总</b></template>
+        <el-table :data="eff.byItem" size="small" empty-text="暂无完工批次">
+          <el-table-column label="成品" min-width="150"><template #default="{ row }">{{ row.fgName }} <span class="muted small mono">{{ row.fgCode }}</span></template></el-table-column>
+          <el-table-column prop="completedCount" label="完工批" width="75" align="right" />
+          <el-table-column label="实际总产量" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.totalActualQty) }}</span></template></el-table-column>
+          <el-table-column label="平均收率" width="90" align="right"><template #default="{ row }"><span class="mono">{{ row.avgYieldPct != null ? `${row.avgYieldPct}%` : '—' }}</span></template></el-table-column>
+        </el-table>
+      </el-card>
+    </div>
+
+    <el-card v-else shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="filters">
           <el-input v-model="t.keyword.value" placeholder="搜索单号、生产方、成品、批号" clearable />
@@ -229,7 +277,9 @@ import { latestOnly } from '../utils/latest'
 
 const auth = useAuth()
 const rd = useRefData()
+const tab = ref('orders')
 const orders = ref([])
+const eff = ref(null)
 const loading = ref(false)
 const loadError = ref('')
 const filterBy = ref('')
@@ -264,7 +314,9 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    orders.value = await http.get('/mfg-orders')
+    const [os, ef] = await Promise.all([http.get('/mfg-orders'), http.get('/analytics/production-efficiency')])
+    orders.value = os
+    eff.value = ef
   } catch (e) {
     loadError.value = e.message
   } finally {
@@ -410,6 +462,11 @@ onMounted(() => Promise.all([load(), rd.load()]))
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 20px; font-weight: 600; }
+.ana-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 14px; }
 .sec { margin: 20px 0 10px; font-size: 14px; }
 .tl { padding-left: 4px; }
 .report { padding: 12px 14px; margin-top: 10px; border-radius: 14px; display: grid; gap: 4px; }

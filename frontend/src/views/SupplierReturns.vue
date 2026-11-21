@@ -11,6 +11,25 @@
       </div>
     </div>
 
+    <div v-if="summary" class="kpi-grid">
+      <div class="kpi-card" :class="{ warn: summary.pendingSignCount > 0 }">
+        <div class="muted small">待质量签批</div>
+        <div class="kpi-val mono">{{ summary.pendingSignCount }}</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.pendingShipCount > 0 }">
+        <div class="muted small">待登记退货物流</div>
+        <div class="kpi-val mono">{{ summary.pendingShipCount }}</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.awaitingReceiptCount > 0 }">
+        <div class="muted small">已发出待签收（需代录）</div>
+        <div class="kpi-val mono">{{ summary.awaitingReceiptCount }} <span class="muted small">（{{ summary.offlineReceiptPendingCount }}）</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">已完成签收 / 累计单数</div>
+        <div class="kpi-val mono">{{ summary.completedCount }} <span class="muted small">/ {{ summary.totalCount }}</span></div>
+      </div>
+    </div>
+
     <el-card shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div v-if="selectedNo" class="filters">
@@ -159,12 +178,19 @@ const canSign = computed(() => auth.hasAny('QA', 'QSO'))
 const canRecordReceipt = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
 
 const rows = ref([])
+const summary = ref(null)
 const selectedNo = computed(() => typeof route.query.no === 'string' ? route.query.no : '')
 const listRequest = latestOnly()
 const loader = useLoader(async () => {
   const current = listRequest()
-  const data = await http.get('/supplier-returns', { params: { returnNo: selectedNo.value || undefined } })
-  if (current()) rows.value = data
+  const [data, sum] = await Promise.all([
+    http.get('/supplier-returns', { params: { returnNo: selectedNo.value || undefined } }),
+    http.get('/supplier-returns/summary')
+  ])
+  if (current()) {
+    rows.value = data
+    summary.value = sum
+  }
 })
 const load = () => loader.run()
 const t = usePaged(rows, { match: textMatch('returnNo', 'supplierName', 'batchNo', 'extBatchNo', 'itemName', 'trackingNo', 'receiptReference') })
@@ -273,5 +299,9 @@ async function cancel(row) {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 20px; font-weight: 600; }
 .late { color: var(--el-color-danger); }
 </style>

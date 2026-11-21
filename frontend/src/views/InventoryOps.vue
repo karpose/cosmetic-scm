@@ -6,11 +6,19 @@
         <p>仓间调拨、盘点调整和报废出库。每张单据的数量变化都写入库存流水和审计日志；报废须质量人员再次输入密码签批。退货隔离区的货请在“销售退货”里处置。</p>
       </div>
       <div class="toolbar">
+        <ExportButton report="inventory-ops" label="导出作业明细" />
         <el-button v-if="isQso" @click="openingOpen = true">期初库存导入</el-button>
         <el-button v-if="canMove" @click="open('TRANSFER')">仓间调拨</el-button>
         <el-button v-if="canMove" @click="open('ADJUST')">盘点调整</el-button>
         <el-button v-if="canScrap" type="danger" plain @click="open('SCRAP')">报废出库</el-button>
       </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card"><div class="muted small">累计库存作业单</div><div class="kpi-val mono">{{ docs.length }}</div></div>
+      <div class="kpi-card"><div class="muted small">仓间调拨</div><div class="kpi-val mono">{{ docs.filter((x) => x.docType === 'TRANSFER').length }}</div></div>
+      <div class="kpi-card"><div class="muted small">盘点调整</div><div class="kpi-val mono">{{ docs.filter((x) => x.docType === 'ADJUST').length }}</div></div>
+      <div class="kpi-card"><div class="muted small">报废出库</div><div class="kpi-val mono">{{ docs.filter((x) => x.docType === 'SCRAP').length }}</div></div>
     </div>
 
     <el-card shadow="never" body-style="padding:0 0 8px">
@@ -131,6 +139,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
+import ExportButton from '../components/ExportButton.vue'
 import ImportDialog from '../components/ImportDialog.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
@@ -227,6 +236,9 @@ onMounted(() => Promise.all([load(), rd.load()]))
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-val { font-size: 20px; font-weight: 600; }
 .dl { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; line-height: 1.9; }
 .neg { color: var(--el-color-danger); }
 .pos { color: var(--el-color-success); }
