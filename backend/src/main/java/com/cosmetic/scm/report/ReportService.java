@@ -47,6 +47,7 @@ public class ReportService {
     private final ComplaintService complaints;
     private final DeviationService deviations;
     private final com.cosmetic.scm.plm.StabilityService stability;
+    private final com.cosmetic.scm.plm.PlmInsightsService plmInsights;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
     private final SupplierAuditService audits;
     private final RetainService retains;
@@ -100,6 +101,9 @@ public class ReportService {
         m.put("supplier-performance", () -> supplierPerformanceReport(from, to));
         m.put("supplier-returns", this::supplierReturns);
         m.put("stability", this::stabilityResults);
+        m.put("plm-readiness", this::plmReadiness);
+        m.put("where-used", this::whereUsedReport);
+        m.put("npd-readiness", this::npdReadinessReport);
         m.put("inspections", () -> inspectionResults(from, to));
         return m;
     }
@@ -228,6 +232,37 @@ public class ReportService {
         rep.rows().forEach(r -> rows.add(row(r.docNo(), r.docTypeLabel(), r.createdAt(), r.itemCode(), r.itemName(), r.unit(), r.qty(), r.unitCost(), r.amount(), r.reason())));
         rows.add(row("汇总", "盘盈/盘亏/报废", null, rep.from() + "~" + rep.to(), "盘盈 " + rep.gainValue() + " / 盘亏 " + rep.lossValue() + " / 报废 " + rep.scrapValue(), null, null, null, rep.netValue(), null));
         return new Table("库存盘点报废损益", List.of("作业单号", "类型", "时间", "物料编码", "物料名称", "单位", "差异数量", "单位成本", "损益金额", "原因"), rows);
+    }
+
+    private Table plmReadiness() {
+        List<List<Object>> rows = new ArrayList<>();
+        plmInsights.productReadiness().forEach(r -> rows.add(row(
+                r.fgCode(), r.fgName(), r.effectiveVersionNo() == null ? null : "V" + r.effectiveVersionNo(),
+                r.filingNo(), r.safetyState(), r.labelState(), r.stabilityState(), r.supportedMonths(),
+                r.hasQualitySpec() ? "已生效" : "缺失", r.readyForRelease() ? "就绪" : "未就绪")));
+        return new Table("产品合规就绪度矩阵", List.of("成品编码", "成品名称", "生效配方", "备案/注册号",
+                "安全评估", "标签审核", "稳定性", "支持保质期(月)", "质量标准", "上市放行就绪"), rows);
+    }
+
+    private Table whereUsedReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        plmInsights.whereUsedAllEffective().forEach(r -> rows.add(row(
+                r.itemCode(), r.itemName(), r.fgCode(), r.fgName(), r.filingNo(),
+                "V" + r.versionNo(), r.statusLabel(), r.qtyPer(), r.unit(), r.concentrationPct(),
+                r.supplyModeLabel(), r.checkMessage())));
+        return new Table("原料包材反查清单", List.of("物料编码", "物料名称", "成品编码", "成品名称", "备案号",
+                "配方版本", "版本状态", "每件单耗", "单位", "浓度(%)", "供料方式", "合规校验"), rows);
+    }
+
+    private Table npdReadinessReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        plmInsights.npdReadiness().forEach(r -> rows.add(row(
+                r.projectNo(), r.name(), r.category(), r.filingTypeLabel(), r.statusLabel(),
+                r.targetLaunch(), r.daysLeft(), r.fgCode(), r.fgName(),
+                r.passedCount() + "/" + r.totalCount(), r.readinessPct(),
+                r.ready() ? "就绪" : String.join("、", r.missingItems()))));
+        return new Table("新品上市就绪度", List.of("项目编号", "产品名称", "品类", "备案类型", "状态",
+                "计划上市日", "剩余天数", "成品编码", "成品名称", "通过项", "完成率(%)", "待补齐门禁"), rows);
     }
 
     private Table invoiceLedger(LocalDate from, LocalDate to) {

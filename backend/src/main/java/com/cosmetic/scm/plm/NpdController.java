@@ -32,10 +32,16 @@ import org.springframework.web.bind.annotation.RestController;
 public class NpdController {
 
     private final NpdService npd;
+    private final PlmInsightsService insights;
 
     @GetMapping("/projects")
     public List<ProjectRow> list() {
         return npd.list();
+    }
+
+    @GetMapping("/readiness")
+    public List<PlmInsightsService.NpdReadinessRow> readiness() {
+        return insights.npdReadiness();
     }
 
     @GetMapping("/projects/{id}")

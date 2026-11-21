@@ -13,6 +13,10 @@ import com.cosmetic.scm.plm.FormulaService.ApproveReq;
 import com.cosmetic.scm.plm.FormulaService.DraftReq;
 import com.cosmetic.scm.plm.FormulaService.RejectReq;
 import com.cosmetic.scm.plm.FormulaService.VersionView;
+import com.cosmetic.scm.plm.PlmInsightsService.PifView;
+import com.cosmetic.scm.plm.PlmInsightsService.ProductReadinessRow;
+import com.cosmetic.scm.plm.PlmInsightsService.VersionDiffView;
+import com.cosmetic.scm.plm.PlmInsightsService.WhereUsedRow;
 import com.cosmetic.scm.security.SignatureService;
 
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -22,9 +26,10 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 配方版本与备案：主数据或管理员发起变更，只有质量安全负责人能签批生效。 */
+/** 配方版本、备案、PIF 档案与原料反查：主数据或管理员发起变更，只有质量安全负责人能签批生效。 */
 @RestController
 @RequestMapping("/api/plm")
 @RequiredArgsConstructor
@@ -32,11 +37,32 @@ public class PlmController {
 
     private final FormulaService formulas;
     private final FilingService filings;
+    private final PlmInsightsService insights;
     private final SignatureService signature;
 
     @GetMapping("/formulas")
     public List<VersionView> formulas() {
         return formulas.list();
+    }
+
+    @GetMapping("/formulas/compare")
+    public VersionDiffView compare(@RequestParam Long fromVersionId, @RequestParam Long toVersionId) {
+        return insights.compareVersions(fromVersionId, toVersionId);
+    }
+
+    @GetMapping("/pif/{fgItemId}")
+    public PifView pif(@PathVariable Long fgItemId) {
+        return insights.pif(fgItemId);
+    }
+
+    @GetMapping("/where-used/{itemId}")
+    public List<WhereUsedRow> whereUsed(@PathVariable Long itemId) {
+        return insights.whereUsed(itemId);
+    }
+
+    @GetMapping("/readiness")
+    public List<ProductReadinessRow> readiness() {
+        return insights.productReadiness();
     }
 
     @PostMapping("/formulas/{fgItemId}/draft")
