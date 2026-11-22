@@ -15,6 +15,7 @@ import java.util.function.Supplier;
 import com.cosmetic.scm.demo.DemoDataLoader;
 import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.ItemType;
+import com.cosmetic.scm.domain.MoStatus;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.SupplyMode;
 import com.cosmetic.scm.domain.WarehouseKind;
@@ -27,6 +28,7 @@ import com.cosmetic.scm.master.Item;
 import com.cosmetic.scm.master.MasterDtos;
 import com.cosmetic.scm.master.MasterImportService;
 import com.cosmetic.scm.master.MasterService;
+import com.cosmetic.scm.production.ProductionService;
 import com.cosmetic.scm.security.UserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -54,6 +56,7 @@ class V57OemConsignmentIssueOpsTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired MasterService master;
+    @Autowired ProductionService production;
     @Autowired MasterImportService imports;
     @Autowired OpeningStockService opening;
     @Autowired BatchRepository batches;
@@ -215,6 +218,32 @@ class V57OemConsignmentIssueOpsTest {
         var gens = genealogy.findByChildBatchId(outBatch.getId());
         assertThat(gens).hasSize(1);
         assertThat(gens.get(0).getQty()).isEqualByComparingTo("9");
+    }
+
+    @Test
+    void supplementKeepsTheInventoryPathOfAnAlreadyIssuedOrder() {
+        LocalDate today = LocalDate.now();
+        Long factoryId = as("admin", () -> master.createPartner(new MasterDtos.PartnerReq(
+                "OEM-V57-OLD", "V57 历史受托厂", PartnerKind.OEM, "LIC-V57-OLD", today.plusYears(2),
+                "护肤类", "V57OLD", null, 0, null, null, true, false)).id());
+        var items = master.listItems();
+        Long fgId = items.stream().filter(i -> "FG-SER-001".equals(i.getCode())).findFirst().orElseThrow().getId();
+        Long rmId = items.stream().filter(i -> "RM-NIA-001".equals(i.getCode())).findFirst().orElseThrow().getId();
+
+        Long moId = as("prod1", () -> {
+            var mo = production.create(new ProductionService.CreateMoReq(factoryId, fgId, BigDecimal.TEN, today));
+            production.issue(mo.id());
+            return mo.id();
+        });
+        as("admin", () -> master.createWarehouse(new MasterDtos.WarehouseReq(
+                "WH-OEM-V57-OLD", "V57 后建寄存仓", WarehouseKind.OEM, factoryId)));
+
+        var cancelled = as("prod1", () -> {
+            var detail = production.supplement(moId, new ProductionService.SupplementReq(rmId, BigDecimal.ONE, "追加领用"));
+            assertThat(detail.oemWarehouseName()).isNull();
+            return production.cancel(moId, new ProductionService.CancelReq("撤销历史工单"));
+        });
+        assertThat(cancelled.status()).isEqualTo(MoStatus.CANCELLED);
     }
 
     private static JsonNode findConsignmentRow(JsonNode array, String batchNo) {

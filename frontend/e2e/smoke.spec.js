@@ -669,6 +669,9 @@ test('报表导出 Excel 并写审计，消息提醒页只显示渠道状态', a
 
 test('开错的单据可以取消：生产单退回物料，采购单关闭后不能再收货', async ({ page }) => {
   await login(page, 'prod1')
+  const warehouses = await api(page, '/warehouses')
+  const mainWarehouse = warehouses.find((w) => w.code === 'WH-MAIN').id
+  const oemWarehouse = warehouses.find((w) => w.code === 'WH-A3').id
   const before = await api(page, '/stock')
   const created = await page.evaluate(async () => {
     const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
@@ -679,8 +682,12 @@ test('开错的单据可以取消：生产单退回物料，采购单关闭后�
     await fetch(`/api/mfg-orders/${mo.id}/issue`, { method: 'POST', headers: h })
     return mo.moNo
   })
-  const onHand = (rows) => rows.reduce((sum, s) => sum + (s.itemCode === 'PK-BTL-001' ? Number(s.qty) : 0), 0)
-  expect(onHand(await api(page, '/stock'))).toBe(onHand(before) - 10)
+  const onHand = (rows, warehouseId) => rows
+    .filter((s) => s.itemCode === 'PK-BTL-001' && s.warehouseId === warehouseId)
+    .reduce((sum, s) => sum + Number(s.qty), 0)
+  const issued = await api(page, '/stock')
+  expect(onHand(issued, mainWarehouse)).toBe(onHand(before, mainWarehouse) - 10)
+  expect(onHand(issued, oemWarehouse)).toBe(onHand(before, oemWarehouse) + 10)
 
   await page.goto('/production')
   const row = page.locator('.el-table__row').filter({ hasText: created })
@@ -691,7 +698,9 @@ test('开错的单据可以取消：生产单退回物料，采购单关闭后�
   await expect(row.getByText('已取消')).toBeVisible()
   await expect(row.getByText('E2E 开错单')).toBeVisible()
   await expect(row.getByRole('button', { name: '发料' })).toHaveCount(0)
-  expect(onHand(await api(page, '/stock'))).toBe(onHand(before))
+  const cancelled = await api(page, '/stock')
+  expect(onHand(cancelled, mainWarehouse)).toBe(onHand(before, mainWarehouse))
+  expect(onHand(cancelled, oemWarehouse)).toBe(onHand(before, oemWarehouse))
 
   await login(page, 'purchase1')
   await page.goto('/purchase')

@@ -510,15 +510,8 @@ public class ProductionService {
             throw new BizException(matched.item().getName() + " 自有仓已放行库存不足，缺 " + plain(alloc.shortQty()) + " " + matched.item().getUnit());
         }
         inventory.consume(alloc.picks(), TxnType.ISSUE, mo.getMoNo());
+        // 首次发料已确定库存路径。没有寄存仓的旧工单按原路径补料，避免完工时重复核销。
         Long oemWhId = mo.getOemWarehouseId();
-        if (oemWhId == null && mo.getMoType() == MoType.OEM) {
-            oemWhId = warehouses.findFirstByKindAndPartnerIdOrderByIdAsc(WarehouseKind.OEM, mo.getFactoryId())
-                    .map(Warehouse::getId).orElse(null);
-            if (oemWhId != null) {
-                mo.setOemWarehouseId(oemWhId);
-                orders.save(mo);
-            }
-        }
         LocalDateTime now = time.now();
         String actor = currentUser.usernameOrSystem();
         String reason = req.reason().trim();

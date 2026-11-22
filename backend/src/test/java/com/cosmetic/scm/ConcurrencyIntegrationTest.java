@@ -138,9 +138,12 @@ class ConcurrencyIntegrationTest {
         }
     }
 
-    private BigDecimal onHand(String code) {
+    private BigDecimal mainOnHand(String code) {
         Long id = item(code).getId();
-        return stocks.findAll().stream().filter(s -> s.getItemId().equals(id)).map(s -> s.getQty()).reduce(BigDecimal.ZERO, BigDecimal::add);
+        Long warehouseId = mainWarehouse();
+        return stocks.findAll().stream()
+                .filter(s -> s.getItemId().equals(id) && s.getWarehouseId().equals(warehouseId))
+                .map(s -> s.getQty()).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private void as(String user, Runnable r) {
@@ -187,20 +190,20 @@ class ConcurrencyIntegrationTest {
     void cancellingTwiceReturnsMaterialsOnce() throws Exception {
         var mo = newOrder();
         as("prod1", () -> production.issue(mo.id()));
-        BigDecimal mid = onHand("PK-BTL-001");
+        BigDecimal mid = mainOnHand("PK-BTL-001");
         int ok = race("prod1", i -> production.cancel(mo.id(), new ProductionService.CancelReq("重复点击")));
         assertThat(ok).isEqualTo(1);
-        assertThat(onHand("PK-BTL-001")).isEqualByComparingTo(mid.add(BigDecimal.TEN));
+        assertThat(mainOnHand("PK-BTL-001")).isEqualByComparingTo(mid.add(BigDecimal.TEN));
     }
 
     @Test
     void issueAndCancelTogetherLeaveConsistentStock() throws Exception {
         var mo = newOrder();
-        BigDecimal before = onHand("PK-BTL-001");
+        BigDecimal before = mainOnHand("PK-BTL-001");
         race("prod1", i -> i % 2 == 0 ? production.issue(mo.id()) : production.cancel(mo.id(), new ProductionService.CancelReq("同时")));
         MoStatus status = orders.findById(mo.id()).orElseThrow().getStatus();
         BigDecimal expected = status == MoStatus.ISSUED ? before.subtract(BigDecimal.TEN) : before;
-        assertThat(onHand("PK-BTL-001")).isEqualByComparingTo(expected);
+        assertThat(mainOnHand("PK-BTL-001")).isEqualByComparingTo(expected);
     }
 
     @Test

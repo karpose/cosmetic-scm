@@ -171,7 +171,7 @@ class V58OemVarianceSettlementTest {
         mvc.perform(get("/api/statements/preview")
                         .param("supplierId", String.valueOf(oemId))
                         .param("periodTo", today.toString())
-                        .header("Authorization", "Bearer " + finToken))
+                        .header("Authorization", "Bearer " + login("purchase1")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.goodsAmount").value(1200))
                 .andExpect(jsonPath("$.oemOveruses.length()").value(1))

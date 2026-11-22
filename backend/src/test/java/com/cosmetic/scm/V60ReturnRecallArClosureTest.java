@@ -121,8 +121,8 @@ class V60ReturnRecallArClosureTest {
                 .andExpect(jsonPath("$.disposedUnbilledArLines").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)));
 
         // 3. 生成客户应收对账单（自动冲减已处置退货）→ 退货行回显 arStatementNo，unbilledArLines 归零
-        var arSt = as("finance1", () -> arSettlement.create(new ArSettlementService.CreateReq(
-                cusId, today, 30, BigDecimal.ZERO, null)));
+        var arSt = as("finance1", () -> arSettlement.create(new ArSettlementService.ArCreateReq(
+                cusId, today, 30, BigDecimal.ZERO, null, Map.of(fgId, new BigDecimal("100")))));
 
         JsonNode list = json.readTree(mvc.perform(get("/api/sales-returns").header("Authorization", "Bearer " + salesToken))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());

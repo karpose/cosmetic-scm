@@ -119,7 +119,7 @@ class V63DashboardRiskTodosTest {
         });
 
         String qaToken = login("qa1");
-        JsonNode dash = json.readTree(mvc.perform(get("/api/dashboard/summary")
+        JsonNode dash = json.readTree(mvc.perform(get("/api/dashboard")
                         .header("Authorization", "Bearer " + qaToken))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
 
