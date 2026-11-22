@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
 import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.ItemType;
@@ -53,6 +54,7 @@ class V60ReturnRecallArClosureTest {
 
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
+    @Autowired TimeProvider time;
     @Autowired MasterService master;
     @Autowired OpeningStockService opening;
     @Autowired SalesService sales;
@@ -78,7 +80,7 @@ class V60ReturnRecallArClosureTest {
 
     @Test
     void salesReturnTracksDispositionAndArStatementOffsetClosure() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = time.today();
         Long ownWh = master.listWarehouses().stream().filter(w -> "WH-MAIN".equals(w.code())).findFirst().orElseThrow().id();
         Long rtWh = master.listWarehouses().stream().filter(w -> w.kind() == WarehouseKind.RETURN).findFirst().orElseThrow().id();
 

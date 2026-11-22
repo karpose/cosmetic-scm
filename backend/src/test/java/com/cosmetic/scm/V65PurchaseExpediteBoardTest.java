@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.PartnerKind;
@@ -45,6 +46,7 @@ class V65PurchaseExpediteBoardTest {
 
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
+    @Autowired TimeProvider time;
     @Autowired MasterService master;
     @Autowired PurchaseService purchase;
     @Autowired PurchaseOrderRepository poRepo;
@@ -66,7 +68,7 @@ class V65PurchaseExpediteBoardTest {
 
     @Test
     void expediteBoardClassifiesOverdueAndDueSoonOrdersAndExportsReport() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = time.today();
         var ctx = as("admin", () -> {
             Long supId = master.createPartner(new MasterDtos.PartnerReq(
                     "SUP-V65", "V65 原料商", PartnerKind.SUPPLIER, "LIC-V65", today.plusYears(2),

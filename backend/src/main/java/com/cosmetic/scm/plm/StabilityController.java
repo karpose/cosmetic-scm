@@ -10,6 +10,7 @@ import com.cosmetic.scm.plm.StabilityService.NoteReq;
 import com.cosmetic.scm.plm.StabilityService.ProductCoverage;
 import com.cosmetic.scm.plm.StabilityService.RecordReq;
 import com.cosmetic.scm.plm.StabilityService.StudyDetail;
+import com.cosmetic.scm.plm.StabilityService.StabilityRiskBoard;
 import com.cosmetic.scm.plm.StabilityService.StudyRow;
 
 import jakarta.validation.Valid;
@@ -70,6 +71,11 @@ public class StabilityController {
     @GetMapping("/products")
     public List<ProductCoverage> products() {
         return stability.coverage();
+    }
+
+    @GetMapping("/risk-board")
+    public StabilityRiskBoard riskBoard() {
+        return stability.riskBoard();
     }
 
     @PostMapping("/studies")

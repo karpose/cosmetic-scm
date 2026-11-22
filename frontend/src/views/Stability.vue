@@ -7,7 +7,8 @@
       </div>
       <div class="toolbar">
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
-        <ExportButton report="stability-coverage" label="导出保质期覆盖" />
+        <ExportButton v-if="tab === 'risk'" report="stability-risk" label="导出风险预警" />
+        <ExportButton v-else report="stability-coverage" label="导出保质期覆盖" />
         <ExportButton report="stability" />
         <el-button v-if="canCreate" type="primary" @click="openCreate()">登记试验</el-button>
       </div>
@@ -35,6 +36,7 @@
     <el-tabs v-model="tab" class="seg">
       <el-tab-pane :label="`试验（${activeCount} 个进行中）`" name="studies" />
       <el-tab-pane :label="`保质期依据（${gapCount} 个不足）`" name="products" />
+      <el-tab-pane :label="`取样与覆盖预警（${riskBoard?.totalCount ?? 0}）`" name="risk" />
     </el-tabs>
 
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
@@ -57,6 +59,53 @@
       </el-table>
       <ListCapHint :count="studies.length" />
       <ListPager v-model:page="st.page.value" v-model:size="st.size.value" :total="st.total.value" />
+    </el-card>
+
+    <el-card v-else-if="tab === 'risk'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-radio-group v-model="riskFilter" size="small">
+            <el-radio-button value="ALL">全部 ({{ riskBoard?.totalCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="OVERDUE">取样已超期 ({{ riskBoard?.overduePullCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="DUE_SOON">7天内取样 ({{ riskBoard?.dueSoonPullCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="COVERAGE_GAP">保质期缺口 ({{ riskBoard?.coverageGapCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="PENDING_CLOSE">待结案/签批 ({{ riskBoard?.pendingCloseCount ?? 0 }})</el-radio-button>
+          </el-radio-group>
+        </div>
+        <div v-if="riskBoard" class="muted small" style="margin-top:8px">
+          稳定性预警共 <b class="mono">{{ riskBoard.totalCount }}</b> 项 · 取样已超期 <b class="mono" :class="{ late: riskBoard.overduePullCount > 0 }">{{ riskBoard.overduePullCount }}</b> · 7天内取样 <b class="mono">{{ riskBoard.dueSoonPullCount }}</b> · 保质期缺口 <b class="mono">{{ riskBoard.coverageGapCount }}</b> · 待结论/签批 <b class="mono">{{ riskBoard.pendingCloseCount }}</b>
+        </div>
+      </template>
+      <el-table :data="filteredRiskRows" v-loading="loader.loading.value" size="small" empty-text="当前无超期取样、保质期缺口或待签批稳定性事项">
+        <el-table-column label="风险分级" width="120" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.riskLevel === 'OVERDUE' ? 'danger' : row.riskLevel === 'DUE_SOON' ? 'warning' : row.riskLevel === 'COVERAGE_GAP' ? 'danger' : 'primary'" disable-transitions>{{ row.riskLabel }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="itemTypeLabel" label="预警类型" width="115" />
+        <el-table-column label="试验 / 成品" min-width="200">
+          <template #default="{ row }">
+            <span class="mono">{{ row.refNo }}</span> · {{ row.fgName }}
+            <div class="muted small">{{ row.detail }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="计划取样 / 剩余" width="130" align="right">
+          <template #default="{ row }">
+            <template v-if="row.dueDate">
+              <span class="mono">{{ row.dueDate }}</span>
+              <div class="small mono" :class="{ late: row.daysLeft < 0 }">{{ row.daysLeft < 0 ? `超期 ${-row.daysLeft} 天` : `剩 ${row.daysLeft} 天` }}</div>
+            </template>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="recommendedAction" label="合规处置建议" min-width="220" />
+        <el-table-column label="" width="90" :fixed="narrow ? false : 'right'">
+          <template #default="{ row }">
+            <el-button v-if="row.studyId" size="small" @click="openDetail(row.studyId)">处理</el-button>
+            <el-button v-else-if="canCreate" size="small" @click="openCreate({ fgItemId: row.fgItemId })">登记</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-card>
 
     <el-card v-else shadow="never" body-style="padding:0 0 8px">
@@ -414,7 +463,7 @@ const route = useRoute()
 const router = useRouter()
 const printReport = () => router.push({ path: '/stability-report', query: { id: dt.data.study.id } })
 const auth = useAuth()
-const tab = ref(route.query.tab === 'products' ? 'products' : 'studies')
+const tab = ref(['products', 'risk'].includes(route.query.tab) ? route.query.tab : 'studies')
 const canCreate = computed(() => auth.hasAny('MASTER_DATA', 'QA', 'QSO'))
 const canRecord = computed(() => auth.hasAny('QA', 'QSO'))
 const isQso = computed(() => auth.hasAny('QSO'))
@@ -422,17 +471,25 @@ const studies = ref([])
 const products = ref([])
 const versions = ref([])
 const summary = ref(null)
+const riskBoard = ref(null)
+const riskFilter = ref('ALL')
+const filteredRiskRows = computed(() => {
+  const list = riskBoard.value?.rows || []
+  return riskFilter.value === 'ALL' ? list : list.filter((r) => r.riskLevel === riskFilter.value)
+})
 const loader = useLoader(async () => {
-  const [s, p, v, sum] = await Promise.all([
+  const [s, p, v, sum, rb] = await Promise.all([
     http.get('/stability/studies'),
     http.get('/stability/products'),
     http.get('/plm/formulas'),
-    http.get('/stability/summary')
+    http.get('/stability/summary'),
+    http.get('/stability/risk-board')
   ])
   studies.value = s
   products.value = p
   versions.value = v
   summary.value = sum
+  riskBoard.value = rb
 })
 const load = () => loader.run()
 const st = usePaged(studies, { match: textMatch('studyNo', 'fgName', 'fgCode', 'batchNo', 'condition') })

@@ -6,12 +6,12 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
 
+import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
 import com.cosmetic.scm.domain.DocCategory;
 import com.cosmetic.scm.domain.DocStatus;
@@ -47,6 +47,7 @@ class V69DocComplianceBoardTest {
 
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
+    @Autowired TimeProvider time;
     @Autowired DocControlService docControl;
     @Autowired ControlledDocRepository docRepo;
     @Autowired DocRevisionRepository revRepo;
@@ -68,7 +69,7 @@ class V69DocComplianceBoardTest {
 
     @Test
     void complianceBoardSurfacesOverdueReviewAckAndPendingApprovalAndExportsReport() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = time.today();
         // 1) 造一份复审超期且生效超 14 天仍有 QA 未签收的在用受控文件
         ControlledDoc overdueDoc = new ControlledDoc();
         overdueDoc.setDocCode("SOP-V69-01");
@@ -80,7 +81,7 @@ class V69DocComplianceBoardTest {
         overdueDoc.setLastReviewedOn(today.minusMonths(13));
         overdueDoc.setTrainRoles("QA");
         overdueDoc.setCreatedBy("qa1");
-        overdueDoc.setCreatedAt(LocalDateTime.now().minusMonths(13));
+        overdueDoc.setCreatedAt(time.now().minusMonths(13));
         overdueDoc = docRepo.save(overdueDoc);
 
         DocRevision rev = new DocRevision();
@@ -90,9 +91,9 @@ class V69DocComplianceBoardTest {
         rev.setEffectiveDate(today.minusDays(20));
         rev.setStatus(RevisionStatus.APPROVED);
         rev.setDraftedBy("qa1");
-        rev.setDraftedAt(LocalDateTime.now().minusDays(21));
+        rev.setDraftedAt(time.now().minusDays(21));
         rev.setApprovedBy("qso1");
-        rev.setApprovedAt(LocalDateTime.now().minusDays(20));
+        rev.setApprovedAt(time.now().minusDays(20));
         revRepo.save(rev);
 
         // 2) 新建一份待 QSO 签批的受控文件

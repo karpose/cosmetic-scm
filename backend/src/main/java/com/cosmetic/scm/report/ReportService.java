@@ -144,10 +144,12 @@ public class ReportService {
         m.put("expiry-risk", this::expiryRiskReport);
         m.put("sales-returns", this::salesReturnsReport);
         m.put("changes", this::changesReport);
+        m.put("change-closure", this::changeClosureReport);
         m.put("artworks", this::artworksReport);
         m.put("compliance-status", this::complianceStatusReport);
         m.put("regulatory-violations", this::regulatoryViolationsReport);
         m.put("stability-coverage", this::stabilityCoverageReport);
+        m.put("stability-risk", this::stabilityRiskReport);
         m.put("release-decisions", this::releaseDecisionsReport);
         m.put("ncr-disposition", this::ncrDispositionReport);
         m.put("dealer-orders", this::dealerOrdersReport);
@@ -676,6 +678,15 @@ public class ReportService {
                 "行动总数", "未完行动", "超期行动", "申请人", "申请时间", "评估人", "批准人", "关闭人", "关闭时间", "变更原因"), rows);
     }
 
+    private Table changeClosureReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        changeControl.closureBoard().rows().forEach(r -> rows.add(row(
+                r.closureLabel(), r.changeNo(), r.changeTypeLabel(), r.title(), r.riskLabel(), r.statusLabel(),
+                r.actionsTotal(), r.actionsOpen(), r.actionsOverdue(), r.createdBy(), r.recommendedAction())));
+        return new Table("变更控制与行动超期闭环监控", List.of("闭环状态", "变更编号", "类型", "标题", "风险等级", "当前阶段",
+                "行动总数", "未完行动", "超期行动", "申请人", "闭环处置建议"), rows);
+    }
+
     private Table artworksReport() {
         List<List<Object>> rows = new ArrayList<>();
         artworks.listAll().forEach(a -> rows.add(row(
@@ -709,6 +720,15 @@ public class ReportService {
                 p.fgCode(), p.fgName(), p.versionNo() == null ? null : "V" + p.versionNo(),
                 p.shelfMonths(), p.supportedMonths(), p.state())));
         return new Table("成品保质期稳定性依据覆盖表", List.of("成品编码", "成品名称", "生效配方", "标的保质期(月)", "已签批支持(月)", "覆盖状态"), rows);
+    }
+
+    private Table stabilityRiskReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        stability.riskBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.itemTypeLabel(), r.refNo(), r.fgCode(), r.fgName(),
+                r.dueDate(), r.daysLeft(), r.detail(), r.recommendedAction())));
+        return new Table("稳定性试验取样与覆盖风险预警", List.of("风险分级", "预警类型", "试验/成品编号", "成品编码", "成品名称",
+                "计划取样日", "剩余天数", "具体情况", "合规处置建议"), rows);
     }
 
     private Table releaseDecisionsReport() {

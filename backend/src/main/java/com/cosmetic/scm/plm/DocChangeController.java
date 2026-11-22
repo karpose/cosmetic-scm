@@ -131,6 +131,11 @@ public class DocChangeController {
         return changes.summary();
     }
 
+    @GetMapping("/changes/closure-board")
+    public ChangeService.ChangeClosureBoard changeClosureBoard() {
+        return changes.closureBoard();
+    }
+
     @GetMapping("/changes/artwork-options")
     public ChangeService.FormulaOptions artworkOptions() {
         return changes.artworkOptions();

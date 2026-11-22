@@ -7,11 +7,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.master.MasterDtos;
@@ -45,6 +45,7 @@ class V67ArCollectionBoardTest {
 
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
+    @Autowired TimeProvider time;
     @Autowired MasterService master;
     @Autowired PartnerRepository partners;
     @Autowired CustomerStatementRepository arStatements;
@@ -66,7 +67,7 @@ class V67ArCollectionBoardTest {
 
     @Test
     void collectionBoardClassifiesCriticalAndDueSoonAndEnforcesArAccess() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = time.today();
         var custIds = as("admin", () -> {
             Long c1 = master.createPartner(new MasterDtos.PartnerReq(
                     "CUST-V67-A", "V67 超额逾期客户", PartnerKind.CUSTOMER, null, null,
@@ -93,9 +94,9 @@ class V67ArCollectionBoardTest {
         sCrit.setTotalAmount(new BigDecimal("12000.00"));
         sCrit.setReceivedAmount(BigDecimal.ZERO);
         sCrit.setCreatedBy("sales1");
-        sCrit.setCreatedAt(LocalDateTime.now().minusDays(70));
+        sCrit.setCreatedAt(time.now().minusDays(70));
         sCrit.setApprovedBy("finance1");
-        sCrit.setApprovedAt(LocalDateTime.now().minusDays(69));
+        sCrit.setApprovedAt(time.now().minusDays(69));
         arStatements.save(sCrit);
 
         // 2) 7天内到期应收单（距到期 3 天）
@@ -111,9 +112,9 @@ class V67ArCollectionBoardTest {
         sSoon.setTotalAmount(new BigDecimal("5000.00"));
         sSoon.setReceivedAmount(BigDecimal.ZERO);
         sSoon.setCreatedBy("sales1");
-        sSoon.setCreatedAt(LocalDateTime.now().minusDays(27));
+        sSoon.setCreatedAt(time.now().minusDays(27));
         sSoon.setApprovedBy("finance1");
-        sSoon.setApprovedAt(LocalDateTime.now().minusDays(26));
+        sSoon.setApprovedAt(time.now().minusDays(26));
         arStatements.save(sSoon);
 
         String finToken = login("finance1");

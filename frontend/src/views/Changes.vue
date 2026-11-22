@@ -6,7 +6,7 @@
         <p>配方、工艺、原料或供应商、包材、标签、文件、设备的变更。质量人员评估风险和影响，质量安全负责人批准；行动全部完成后由质量安全负责人确认效果并关闭。申请人不能批准或关闭自己的变更。</p>
       </div>
       <div class="toolbar">
-        <ExportButton report="changes" />
+        <ExportButton :report="activeTab === 'closure' ? 'change-closure' : 'changes'" :label="activeTab === 'closure' ? '导出闭环监控' : '导出台账'" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="canRaise" type="primary" @click="openCreate">提出变更</el-button>
       </div>
@@ -31,7 +31,53 @@
       </div>
     </div>
 
+    <el-tabs v-model="activeTab" class="seg">
+      <el-tab-pane label="变更台账" name="list" />
+      <el-tab-pane :label="`闭环监控（${closureBoard?.totalCount ?? 0}）`" name="closure" />
+    </el-tabs>
+
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
+    <el-card v-else-if="activeTab === 'closure'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-radio-group v-model="closureFilter" size="small">
+            <el-radio-button value="ALL">全部 ({{ closureBoard?.totalCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="ACTION_OVERDUE">行动超期 ({{ closureBoard?.actionOverdueCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="PENDING_LINKED_APPROVAL">关联资料待签批 ({{ closureBoard?.pendingLinkedApprovalCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="READY_TO_CLOSE">待确认关闭 ({{ closureBoard?.readyToCloseCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="PENDING_APPROVE">待 QSO 批准 ({{ closureBoard?.pendingApproveCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="PENDING_ASSESS">待 QA 评估 ({{ closureBoard?.pendingAssessCount ?? 0 }})</el-radio-button>
+          </el-radio-group>
+        </div>
+        <div v-if="closureBoard" class="muted small" style="margin-top:8px">
+          进行中变更 <b class="mono">{{ closureBoard.totalCount }}</b> 项 · 行动超期 <b class="mono" :class="{ late: closureBoard.actionOverdueCount > 0 }">{{ closureBoard.actionOverdueCount }}</b> · 关联资料待签批 <b class="mono">{{ closureBoard.pendingLinkedApprovalCount }}</b> · 待关闭 <b class="mono">{{ closureBoard.readyToCloseCount }}</b> · 待批准 <b class="mono">{{ closureBoard.pendingApproveCount }}</b> · 待评估 <b class="mono">{{ closureBoard.pendingAssessCount }}</b>
+        </div>
+      </template>
+      <el-table :data="filteredClosureRows" v-loading="loader.loading.value" size="small" empty-text="没有符合筛选条件的变更事项" scrollbar-tabindex="0">
+        <el-table-column label="闭环优先级" width="125" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="CLOSURE_TAG[row.closureState] ?? 'info'" disable-transitions>{{ row.closureLabel }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="变更编号 / 类型" width="155">
+          <template #default="{ row }"><a href="#" class="mono" @click.prevent="openDetail(row.changeId)">{{ row.changeNo }}</a><div class="muted small">{{ row.changeTypeLabel }} · {{ row.riskLabel }}</div></template>
+        </el-table-column>
+        <el-table-column label="变更标题 / 阶段" min-width="190">
+          <template #default="{ row }">{{ row.title }}<div class="muted small">{{ row.statusLabel }} · {{ row.createdBy }} 提出</div></template>
+        </el-table-column>
+        <el-table-column label="行动进度" width="115" align="right">
+          <template #default="{ row }">
+            <span v-if="row.actionsTotal" class="mono">{{ row.actionsTotal - row.actionsOpen }} / {{ row.actionsTotal }}</span>
+            <span v-else class="muted">—</span>
+            <div v-if="row.actionsOverdue" class="late small mono">超期 {{ row.actionsOverdue }} 项</div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="recommendedAction" label="闭环处置建议" min-width="220" />
+        <el-table-column label="" width="80" :fixed="narrow ? false : 'right'">
+          <template #default="{ row }"><el-button size="small" @click="openDetail(row.changeId)">处理</el-button></template>
+        </el-table-column>
+      </el-table>
+    </el-card>
     <el-card v-else shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="filters">
@@ -191,13 +237,26 @@ const auth = useAuth()
 const canRaise = computed(() => auth.hasAny('ADMIN', 'MASTER_DATA', 'PURCHASE', 'WAREHOUSE', 'PRODUCTION', 'QA', 'QSO', 'SALES', 'FINANCE'))
 const isQuality = computed(() => auth.hasAny('QA', 'QSO'))
 const isQso = computed(() => auth.hasAny('QSO'))
+const activeTab = ref('list')
 const changes = ref([])
 const summary = ref(null)
+const closureBoard = ref(null)
+const closureFilter = ref('ALL')
+const CLOSURE_TAG = { ACTION_OVERDUE: 'danger', PENDING_LINKED_APPROVAL: 'warning', READY_TO_CLOSE: 'success', PENDING_APPROVE: 'warning', PENDING_ASSESS: 'primary' }
+const filteredClosureRows = computed(() => {
+  const list = closureBoard.value?.rows || []
+  return closureFilter.value === 'ALL' ? list : list.filter((r) => r.closureState === closureFilter.value)
+})
 const openOnly = ref(true)
 const loader = useLoader(async () => {
-  const [cs, sum] = await Promise.all([http.get('/changes'), http.get('/changes/summary')])
+  const [cs, sum, cb] = await Promise.all([
+    http.get('/changes'),
+    http.get('/changes/summary'),
+    http.get('/changes/closure-board')
+  ])
   changes.value = cs
   summary.value = sum
+  closureBoard.value = cb
 })
 const load = () => loader.run()
 const shown = computed(() => openOnly.value ? changes.value.filter((x) => ['SUBMITTED', 'ASSESSED', 'APPROVED'].includes(x.status)) : changes.value)
