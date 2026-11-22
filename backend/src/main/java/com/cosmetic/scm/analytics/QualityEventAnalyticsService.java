@@ -3,6 +3,7 @@ package com.cosmetic.scm.analytics;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -24,8 +25,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 客诉、不良反应与召回效率深度分析（V48）：
- * 按类别、来源渠道、成品汇总投诉分布与不良反应按时上报率，并计算每次召回的通知完成率与实际回收率。
+ * 客诉、不良反应与召回效率深度分析及监管合规闭环监控（V48 / V68）：
+ * 按类别、来源渠道、成品汇总投诉分布与不良反应按时上报率，计算召回通知完成率与实际回收率，
+ * 并提供不良反应法定上报倒计时与召回执行滞后预警看板。
  */
 @Service
 @RequiredArgsConstructor
@@ -54,6 +56,17 @@ public class QualityEventAnalyticsService {
                                      Double avgRecallNotifyRatePct, Double avgRecallRecoveryRatePct,
                                      List<DimensionRow> byCategory, List<DimensionRow> byChannel,
                                      List<DimensionRow> byItem, List<RecallMetricRow> recalls) {
+    }
+
+    public record ClosureItemRow(String itemType, String itemTypeLabel, String refNo, String itemName,
+                                 String batchNo, String detail, LocalDate dueDate, Long daysLeft,
+                                 Double progressPct, String riskLevel, String riskLabel,
+                                 String recommendedAction, String route) {
+    }
+
+    public record QualityEventClosureBoard(int totalCount, int overdueCount, int dueSoonCount,
+                                           int recallLagCount, int openComplaintCount,
+                                           List<ClosureItemRow> rows) {
     }
 
     @Transactional(readOnly = true)
@@ -141,6 +154,110 @@ public class QualityEventAnalyticsService {
                 adverseTotal, onTime, overdue, adverseOnTimeRate,
                 rs.size(), recallOpen, recallClosed, avgNotify, avgRecovery,
                 byCategory, byChannel, byItem, recallRows);
+    }
+
+    @Transactional(readOnly = true)
+    public QualityEventClosureBoard closureBoard() {
+        LocalDate today = time.today();
+        List<ComplaintView> openComplaints = complaints.open();
+        List<RecallView> openRecalls = recalls.open();
+
+        List<ClosureItemRow> rows = new ArrayList<>();
+        int overdueCnt = 0;
+        int dueSoonCnt = 0;
+        int recallLagCnt = 0;
+
+        for (ComplaintView c : openComplaints) {
+            if (c.category() != ComplaintCategory.ADVERSE || c.reportedDate() != null) {
+                continue;
+            }
+            LocalDate deadline = c.reportDeadline();
+            Long daysLeft = deadline == null ? null : ChronoUnit.DAYS.between(today, deadline);
+            String riskLevel;
+            String riskLabel;
+            String action;
+            if ("OVERDUE".equals(c.reportState()) || (daysLeft != null && daysLeft < 0)) {
+                riskLevel = "OVERDUE";
+                riskLabel = "上报已超期";
+                action = "不良反应已超法定上报时限，请立即补报国家监测平台并登记上报编号";
+                overdueCnt++;
+            } else if (daysLeft != null && daysLeft <= 3) {
+                riskLevel = "DUE_SOON";
+                riskLabel = daysLeft == 0 ? "今日截止上报" : "3天内须上报";
+                action = daysLeft == 0
+                        ? "今日为法定上报截止日，请务必今日完成上报并录入编号"
+                        : "距法定上报截止仅 " + daysLeft + " 天，请优先完成不良反应上报";
+                dueSoonCnt++;
+            } else {
+                riskLevel = "NORMAL";
+                riskLabel = "待上报";
+                action = "请于 " + (deadline == null ? "法定期限" : deadline) + " 前完成监管上报并登记编号";
+            }
+            String ch = c.channel() == null ? "未知渠道" : c.channel();
+            rows.add(new ClosureItemRow(
+                    "ADVERSE_REPORT", "不良反应上报", c.complaintNo(), c.itemName(), c.batchNo(),
+                    c.severityLabel() + " · " + ch, deadline, daysLeft, 0.0,
+                    riskLevel, riskLabel, action, "/quality-events?tab=complaints"));
+        }
+
+        for (RecallView r : openRecalls) {
+            int custCount = r.notices() == null ? 0 : r.notices().size();
+            long notified = r.notifiedCount();
+            BigDecimal shipped = r.shippedQty() == null ? BigDecimal.ZERO : r.shippedQty();
+            BigDecimal returned = r.returnedQty() == null ? BigDecimal.ZERO : r.returnedQty();
+            BigDecimal outstanding = shipped.subtract(returned).max(BigDecimal.ZERO);
+            BigDecimal recovered = r.recoveredQty() == null ? BigDecimal.ZERO : r.recoveredQty();
+            Double recoveryRate = outstanding.signum() > 0
+                    ? Math.min(100.0, Math.round(recovered.doubleValue() * 1000.0 / outstanding.doubleValue()) / 10.0)
+                    : 100.0;
+            long openDays = r.openedAt() == null ? 0L
+                    : ChronoUnit.DAYS.between(r.openedAt().toLocalDate(), today);
+            boolean notifyLag = custCount > 0 && notified < custCount;
+            boolean recoveryLag = recoveryRate < 80.0;
+
+            String riskLevel;
+            String riskLabel;
+            String action;
+            if (notifyLag && openDays >= 3) {
+                riskLevel = "OVERDUE";
+                riskLabel = "召回通知滞后";
+                action = "召回已发起 " + openDays + " 天，仍有 " + (custCount - notified) + " 家客户未确认通知，请立即催办";
+                overdueCnt++;
+            } else if (notifyLag || recoveryLag) {
+                riskLevel = "RECALL_LAG";
+                riskLabel = notifyLag ? "待完成客户通知" : "回收率偏低";
+                action = notifyLag
+                        ? "请尽快完成剩余 " + (custCount - notified) + " 家客户召回通知"
+                        : "当前回收率 " + recoveryRate + "%，请持续跟进客户退货入库";
+                recallLagCnt++;
+            } else {
+                riskLevel = "NORMAL";
+                riskLabel = "可评估结案";
+                action = "客户已全部通知且回收率达标，请质量负责人审核后关闭召回";
+            }
+            String detail = "通知 " + notified + "/" + custCount + " 家 · 回收 "
+                    + recovered.stripTrailingZeros().toPlainString() + "/"
+                    + outstanding.stripTrailingZeros().toPlainString();
+            rows.add(new ClosureItemRow(
+                    "RECALL_CLOSURE", "召回执行闭环", r.recallNo(), r.itemName(), r.batchNo(),
+                    detail, null, null, recoveryRate, riskLevel, riskLabel, action,
+                    "/quality-events?tab=recalls&recall=" + r.id()));
+        }
+
+        rows.sort(Comparator.comparingInt((ClosureItemRow x) -> closureRiskRank(x.riskLevel()))
+                .thenComparing(ClosureItemRow::daysLeft, Comparator.nullsLast(Comparator.naturalOrder())));
+
+        return new QualityEventClosureBoard(rows.size(), overdueCnt, dueSoonCnt, recallLagCnt,
+                openComplaints.size(), rows);
+    }
+
+    private static int closureRiskRank(String level) {
+        return switch (level) {
+            case "OVERDUE" -> 0;
+            case "DUE_SOON" -> 1;
+            case "RECALL_LAG" -> 2;
+            default -> 3;
+        };
     }
 
     private static List<DimensionRow> group(List<ComplaintView> list, long total,

@@ -136,6 +136,7 @@ public class ReportService {
         m.put("inventory-abc", this::inventoryAbcReport);
         m.put("serial-anomalies", this::serialAnomaliesReport);
         m.put("quality-events-summary", () -> qualityEventsSummaryReport(from, to));
+        m.put("quality-event-closure", this::qualityEventClosureReport);
         m.put("integration-logs", () -> integrationLogsReport(from, to));
         m.put("golive-checklist", this::goliveChecklistReport);
         m.put("expiry-risk", this::expiryRiskReport);
@@ -591,6 +592,15 @@ public class ReportService {
         rep.recalls().forEach(r -> rows.add(row("召回效率", r.recallNo() + " " + r.itemName() + "(" + r.batchNo() + ")",
                 r.customerCount(), r.notifiedCount(), null, "召回中".equals(r.statusLabel()) ? 1 : 0, r.notifyRatePct(), r.recoveryRatePct(), r.statusLabel())));
         return new Table("客诉与召回效率分析", List.of("维度", "名称/单号", "总件数/客户数", "不良反应/已通知", "严重件数", "处理中", "占比/通知率(%)", "回收率(%)", "状态"), rows);
+    }
+
+    private Table qualityEventClosureReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        qualityEvents.closureBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.itemTypeLabel(), r.refNo(), r.itemName(), r.batchNo(),
+                r.detail(), r.dueDate(), r.daysLeft(), r.progressPct(), r.recommendedAction())));
+        return new Table("不良反应上报与召回闭环监控", List.of("风险分级", "事项类型", "单号", "成品名称", "批号",
+                "执行进度明细", "上报截止日", "剩余天数", "回收/完成率(%)", "处置建议"), rows);
     }
 
     private Table integrationLogsReport(LocalDate from, LocalDate to) {

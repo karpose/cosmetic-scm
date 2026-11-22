@@ -14,6 +14,7 @@ import com.cosmetic.scm.analytics.ProductionEfficiencyService.ProductionEfficien
 import com.cosmetic.scm.analytics.FinanceInsightsService.CashFlowReport;
 import com.cosmetic.scm.analytics.FinanceInsightsService.MarginReport;
 import com.cosmetic.scm.analytics.FinanceInsightsService.VarianceReport;
+import com.cosmetic.scm.analytics.QualityEventAnalyticsService.QualityEventClosureBoard;
 import com.cosmetic.scm.analytics.QualityEventAnalyticsService.QualityEventReport;
 import com.cosmetic.scm.analytics.QualityGovernanceService.AbcReport;
 import com.cosmetic.scm.analytics.QualityGovernanceService.PqrReport;
@@ -69,6 +70,11 @@ public class AnalyticsController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         return qualityEvents.report(from, to);
+    }
+
+    @GetMapping("/quality-events/closure-board")
+    public QualityEventClosureBoard qualityEventClosureBoard() {
+        return qualityEvents.closureBoard();
     }
 
     @GetMapping("/expiry-risk")
