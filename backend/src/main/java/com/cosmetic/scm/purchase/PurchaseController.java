@@ -26,6 +26,11 @@ public class PurchaseController {
     private final PurchaseService purchase;
     private final ReceiptDisputeService receiptDisputes;
 
+    @GetMapping("/summary")
+    public PurchaseService.PoSummary summary() {
+        return purchase.summary();
+    }
+
     @GetMapping
     public List<PoView> list() {
         return purchase.list();

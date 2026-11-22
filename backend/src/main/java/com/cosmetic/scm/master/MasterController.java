@@ -37,6 +37,11 @@ public class MasterController {
     private final MasterService master;
     private final MasterImportService importer;
 
+    @GetMapping("/master/summary")
+    public MasterService.MasterSummary summary() {
+        return master.summary();
+    }
+
     @GetMapping("/items")
     public List<Item> items() {
         return master.listItems();

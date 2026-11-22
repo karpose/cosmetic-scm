@@ -132,6 +132,52 @@ public class PurchaseService {
                                boolean receiptDisputed, ReceiptDisputeService.DisputeView receiptDispute) {
     }
 
+    public record PoSummary(
+            int totalCount, int openCount, int partialCount, int receivedCount, int closedOrCancelledCount,
+            int overdueCount, int openShipmentsCount, int unresolvedDisputesCount, int unconfirmedPortalCount) {
+    }
+
+    @Transactional(readOnly = true)
+    public PoSummary summary() {
+        LocalDate today = time.today();
+        List<PurchaseOrder> all = orders.findAll();
+        Set<Long> withPortal = users.partnersWithAccounts();
+        int openCount = 0, partialCount = 0, receivedCount = 0, closedOrCancelled = 0;
+        int overdueCount = 0, unconfirmedPortal = 0;
+        for (PurchaseOrder po : all) {
+            if (po.getStatus() == PoStatus.OPEN) {
+                openCount++;
+            } else if (po.getStatus() == PoStatus.PARTIAL) {
+                partialCount++;
+            } else if (po.getStatus() == PoStatus.RECEIVED) {
+                receivedCount++;
+            } else {
+                closedOrCancelled++;
+            }
+            if (po.getStatus() == PoStatus.OPEN || po.getStatus() == PoStatus.PARTIAL) {
+                LocalDate due = po.getPromisedDate() != null ? po.getPromisedDate() : po.getExpectedDate();
+                if (due != null && due.isBefore(today)) {
+                    overdueCount++;
+                }
+                if (withPortal.contains(po.getSupplierId()) && po.getSupplierConfirmedAt() == null) {
+                    unconfirmedPortal++;
+                }
+            }
+        }
+        int openShipments = 0, unresolvedDisputes = 0;
+        for (PoShipment s : shipments.findAll()) {
+            if (s.getStatus() == ShipmentStatus.OPEN) {
+                openShipments++;
+            }
+            if (s.getReceiptDisputedAt() != null && s.getReceiptResolvedAt() == null) {
+                unresolvedDisputes++;
+            }
+        }
+        return new PoSummary(
+                all.size(), openCount, partialCount, receivedCount, closedOrCancelled,
+                overdueCount, openShipments, unresolvedDisputes, unconfirmedPortal);
+    }
+
     @Transactional(readOnly = true)
     public List<PoView> list() {
         return views(orders.findTop300ByOrderByIdDesc());

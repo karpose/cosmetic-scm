@@ -5,7 +5,17 @@
         <h2>账号与权限</h2>
         <p>按岗位分配角色。成品上市放行只授予“质量安全负责人”角色，系统管理员也不能代签。受托厂和经销商用门户账号：只能有一个门户角色，必须绑定所属单位，只看得到本单位的数据。连续输错 5 次密码会锁定 15 分钟，可在这里提前解锁。</p>
       </div>
-      <el-button type="primary" @click="openCreate">新增账号</el-button>
+      <div class="toolbar">
+        <ExportButton report="users" label="导出账号台账" />
+        <el-button type="primary" @click="openCreate">新增账号</el-button>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card"><div class="muted small">启用账号 / 总账号</div><div class="kpi-val mono">{{ users.filter((u) => u.enabled).length }} <span class="muted small">/ {{ users.length }}</span></div></div>
+      <div class="kpi-card"><div class="muted small">内部岗位账号</div><div class="kpi-val mono">{{ users.filter((u) => !u.partnerId).length }}</div></div>
+      <div class="kpi-card"><div class="muted small">外部门户账号</div><div class="kpi-val mono">{{ users.filter((u) => !!u.partnerId).length }}</div></div>
+      <div class="kpi-card" :class="{ warn: users.some((u) => u.lockedUntil) }"><div class="muted small">当前锁定账号</div><div class="kpi-val mono">{{ users.filter((u) => !!u.lockedUntil).length }}</div></div>
     </div>
     <el-card shadow="never" body-style="padding:0 0 8px">
       <template #header>
@@ -95,6 +105,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import http from '../api'
+import ExportButton from '../components/ExportButton.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import { PASSWORD_RULE, PORTAL_ROLES, ROLE_LABELS } from '../stores/auth'
@@ -201,6 +212,10 @@ onMounted(load)
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 20px; font-weight: 600; }
 .role { margin: 2px 4px 2px 0; }
 .hint { margin: -6px 0 14px; }
 </style>

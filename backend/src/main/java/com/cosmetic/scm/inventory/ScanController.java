@@ -28,6 +28,11 @@ public class ScanController {
         return scan.card(batchNo);
     }
 
+    @GetMapping("/recent")
+    public java.util.List<ScanService.RecentCheck> recent() {
+        return scan.recentChecks();
+    }
+
     @PostMapping("/checks")
     @PreAuthorize("hasAnyRole('ADMIN','WAREHOUSE','PRODUCTION','SALES','QA','QSO')")
     public CheckResult check(@Valid @RequestBody CheckReq req) {

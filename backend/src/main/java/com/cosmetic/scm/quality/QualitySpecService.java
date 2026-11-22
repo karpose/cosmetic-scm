@@ -140,9 +140,45 @@ public class QualitySpecService {
                             String judgement, String conclusion, String status, String voidReason, String deviationNo, String note) {
     }
 
+    public record SpecSummary(long activeItemsTotal, long coveredItems, Double coverageRatePct,
+                              long rmTotal, long rmCovered, long pkTotal, long pkCovered, long fgTotal, long fgCovered,
+                              long pendingSpecs, long inspections30dTotal, long inspections30dPassed,
+                              Double firstPassRate30dPct) {
+    }
+
     @Transactional(readOnly = true)
     public List<SpecView> list() {
         return views(specs.findTop300ByOrderByIdDesc());
+    }
+
+    @Transactional(readOnly = true)
+    public List<SpecView> listAll() {
+        return views(specs.findAll().stream()
+                .sorted(java.util.Comparator.comparing(QualitySpec::getId).reversed()).toList());
+    }
+
+    @Transactional(readOnly = true)
+    public SpecSummary summary() {
+        List<Item> activeItems = items.findAll().stream().filter(Item::isActive).toList();
+        Set<Long> coveredIds = itemsWithSpec();
+        long rmTotal = activeItems.stream().filter(i -> i.getItemType() == com.cosmetic.scm.domain.ItemType.RM).count();
+        long rmCov = activeItems.stream().filter(i -> i.getItemType() == com.cosmetic.scm.domain.ItemType.RM && coveredIds.contains(i.getId())).count();
+        long pkTotal = activeItems.stream().filter(i -> i.getItemType() == com.cosmetic.scm.domain.ItemType.PK).count();
+        long pkCov = activeItems.stream().filter(i -> i.getItemType() == com.cosmetic.scm.domain.ItemType.PK && coveredIds.contains(i.getId())).count();
+        long fgTotal = activeItems.stream().filter(i -> i.getItemType() == com.cosmetic.scm.domain.ItemType.FG).count();
+        long fgCov = activeItems.stream().filter(i -> i.getItemType() == com.cosmetic.scm.domain.ItemType.FG && coveredIds.contains(i.getId())).count();
+        long total = activeItems.size();
+        long covered = rmCov + pkCov + fgCov;
+        Double covRate = total == 0 ? null : Math.round(covered * 1000.0 / total) / 10.0;
+        long pending = specs.findByStatusOrderById(SpecStatus.PENDING).size();
+        LocalDate since = time.today().minusDays(30);
+        List<BatchInspection> recent30 = inspections.findAllByOrderByIdAsc().stream()
+                .filter(i -> i.getStatus() == InspectionStatus.VALID && i.getInspectedDate() != null && !i.getInspectedDate().isBefore(since))
+                .toList();
+        long passed30 = recent30.stream().filter(BatchInspection::isPassed).count();
+        Double passRate = recent30.isEmpty() ? null : Math.round(passed30 * 1000.0 / recent30.size()) / 10.0;
+        return new SpecSummary(total, covered, covRate, rmTotal, rmCov, pkTotal, pkCov, fgTotal, fgCov,
+                pending, recent30.size(), passed30, passRate);
     }
 
     @Transactional(readOnly = true)

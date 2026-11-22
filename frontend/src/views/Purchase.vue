@@ -12,6 +12,29 @@
       </div>
     </div>
 
+    <div v-if="summary" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">进行中采购单</div>
+        <div class="kpi-val mono">{{ summary.openCount + summary.partialCount }} <span class="kpi-unit">/ {{ summary.totalCount }}</span></div>
+        <div class="kpi-sub">待收 {{ summary.openCount }} · 部分收货 {{ summary.partialCount }} · 已收齐 {{ summary.receivedCount }}</div>
+      </div>
+      <div class="kpi-card" :class="{ danger: summary.overdueCount > 0 }">
+        <div class="kpi-label">逾期未交</div>
+        <div class="kpi-val mono">{{ summary.overdueCount }}</div>
+        <div class="kpi-sub">已超供应商承诺或期望到货日</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.openShipmentsCount > 0 }">
+        <div class="kpi-label">已发货待收通知</div>
+        <div class="kpi-val mono">{{ summary.openShipmentsCount }}</div>
+        <div class="kpi-sub">供应商已发运、待仓库核对收货</div>
+      </div>
+      <div class="kpi-card" :class="{ danger: summary.unresolvedDisputesCount > 0, warn: summary.unresolvedDisputesCount === 0 && summary.unconfirmedPortalCount > 0 }">
+        <div class="kpi-label">待处理收货异议</div>
+        <div class="kpi-val mono">{{ summary.unresolvedDisputesCount }}</div>
+        <div class="kpi-sub">门户待供应商确认 {{ summary.unconfirmedPortalCount }} 单</div>
+      </div>
+    </div>
+
     <el-card shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="filters">
@@ -266,6 +289,7 @@ onMounted(() => window.addEventListener('resize', onResize))
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 const rd = useRefData()
 const orders = ref([])
+const summary = ref(null)
 const loading = ref(false)
 const loadError = ref('')
 const filterBy = ref('')
@@ -377,7 +401,12 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    orders.value = await http.get('/purchase-orders')
+    const [list, sum] = await Promise.all([
+      http.get('/purchase-orders'),
+      http.get('/purchase-orders/summary', { silent: true }).catch(() => null)
+    ])
+    orders.value = list
+    summary.value = sum
   } catch (e) {
     loadError.value = e.message
   } finally {
@@ -503,9 +532,18 @@ async function deactivatePrice(row) {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; }
+.kpi-card.danger { border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .price-row { grid-column: 1 / -1; display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 8px; }
 .late { color: var(--el-color-danger); font-weight: 600; }
 .receipt-detail dt { margin-top: 12px; font-weight: 600; }
 .receipt-detail dd { margin: 4px 0; }
 .receipt-note { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

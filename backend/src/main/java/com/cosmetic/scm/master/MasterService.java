@@ -62,6 +62,63 @@ public class MasterService {
     private final TimeProvider time;
     private final CurrentUser currentUser;
 
+    public record MasterSummary(
+            int totalItems, int activeItems, int activeRm, int activePk, int activeFg, int bannedRm,
+            int totalPartners, int suppliersCount, int factoriesCount, int customersCount,
+            int licenseExpiredCount, int licenseExpiringCount, int unqualifiedNonCustomerCount,
+            int warehousesCount, int bomsConfiguredCount) {
+    }
+
+    @Transactional(readOnly = true)
+    public MasterSummary summary() {
+        LocalDate today = time.today();
+        List<Item> allItems = items.findAll();
+        int activeItems = 0, activeRm = 0, activePk = 0, activeFg = 0, bannedRm = 0;
+        for (Item i : allItems) {
+            if (i.isActive()) {
+                activeItems++;
+                if (i.getItemType() == ItemType.RM) {
+                    activeRm++;
+                } else if (i.getItemType() == ItemType.PK) {
+                    activePk++;
+                } else if (i.getItemType() == ItemType.FG) {
+                    activeFg++;
+                }
+            }
+            if (i.getItemType() == ItemType.RM && regulatory.isBanned(i)) {
+                bannedRm++;
+            }
+        }
+        List<Partner> allPartners = partners.findAll();
+        int suppliersCount = 0, factoriesCount = 0, customersCount = 0;
+        int licenseExpired = 0, licenseExpiring = 0, unqualifiedNonCustomer = 0;
+        for (Partner p : allPartners) {
+            if (p.getKind() == PartnerKind.SUPPLIER) {
+                suppliersCount++;
+            } else if (p.getKind() == PartnerKind.OEM || p.getKind() == PartnerKind.OWN_FACTORY) {
+                factoriesCount++;
+            } else if (p.getKind() == PartnerKind.CUSTOMER) {
+                customersCount++;
+            }
+            if (p.getKind() != PartnerKind.CUSTOMER && !p.isQualified()) {
+                unqualifiedNonCustomer++;
+            }
+            if (p.getLicenseExpiry() != null) {
+                long daysLeft = ChronoUnit.DAYS.between(today, p.getLicenseExpiry());
+                if (daysLeft < 0) {
+                    licenseExpired++;
+                } else if (daysLeft <= LICENSE_WARN_DAYS) {
+                    licenseExpiring++;
+                }
+            }
+        }
+        return new MasterSummary(
+                allItems.size(), activeItems, activeRm, activePk, activeFg, bannedRm,
+                allPartners.size(), suppliersCount, factoriesCount, customersCount,
+                licenseExpired, licenseExpiring, unqualifiedNonCustomer,
+                (int) warehouses.count(), (int) boms.count());
+    }
+
     // ---------- 物料 ----------
 
     @Transactional(readOnly = true)

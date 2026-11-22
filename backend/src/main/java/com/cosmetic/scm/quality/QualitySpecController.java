@@ -35,6 +35,11 @@ public class QualitySpecController {
         return specs.list();
     }
 
+    @GetMapping("/specs/summary")
+    public QualitySpecService.SpecSummary summary() {
+        return specs.summary();
+    }
+
     /** 没有生效标准时返回 204。 */
     @GetMapping("/items/{itemId}/spec")
     public ResponseEntity<SpecView> effective(@PathVariable Long itemId) {

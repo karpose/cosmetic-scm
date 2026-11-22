@@ -6,9 +6,29 @@
         <p>按物料建立检验项目和限度。每次修改是一个新版本，质量安全负责人签批后生效，旧版本自动替代。有生效标准的物料，放行前要逐项录入检验结果，最近一次检验合格才能放行。导出的是全部批次的检验结果，一个项目一行。</p>
       </div>
       <div class="toolbar">
+        <ExportButton report="quality-specs" label="导出标准台账" />
         <ExportButton report="inspections" label="导出检验结果" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="canCreate" type="primary" @click="openCreate()">新建标准</el-button>
+      </div>
+    </div>
+
+    <div v-if="summary" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="muted small">质量标准覆盖率</div>
+        <div class="kpi-val mono">{{ summary.coverageRatePct != null ? `${summary.coverageRatePct}%` : '—' }} <span class="muted small">（{{ summary.coveredItems }}/{{ summary.activeItemsTotal }}）</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">原料 / 包材 / 成品已覆盖</div>
+        <div class="kpi-val mono">{{ summary.rmCovered }}/{{ summary.rmTotal }} · {{ summary.pkCovered }}/{{ summary.pkTotal }} · {{ summary.fgCovered }}/{{ summary.fgTotal }}</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.pendingSpecs > 0 }">
+        <div class="muted small">待签批质量标准</div>
+        <div class="kpi-val mono">{{ summary.pendingSpecs }}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="muted small">近 30 天检验一次合格率</div>
+        <div class="kpi-val mono">{{ summary.firstPassRate30dPct != null ? `${summary.firstPassRate30dPct}%` : '—' }} <span class="muted small">（{{ summary.inspections30dPassed }}/{{ summary.inspections30dTotal }}）</span></div>
       </div>
     </div>
 
@@ -131,9 +151,12 @@ const rd = useRefData()
 const canCreate = computed(() => auth.hasAny('MASTER_DATA', 'QA', 'QSO'))
 const isQso = computed(() => auth.hasAny('QSO'))
 const specs = ref([])
+const summary = ref(null)
 const currentOnly = ref(true)
 const loader = useLoader(async () => {
-  specs.value = await http.get('/quality/specs')
+  const [sp, sum] = await Promise.all([http.get('/quality/specs'), http.get('/quality/specs/summary')])
+  specs.value = sp
+  summary.value = sum
 })
 const load = () => loader.run()
 const shown = computed(() => currentOnly.value ? specs.value.filter((s) => s.status === 'EFFECTIVE' || s.status === 'PENDING') : specs.value)
@@ -220,6 +243,10 @@ async function reject() {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
+.kpi-card.warn { border-color: var(--el-color-danger-light-5); }
+.kpi-val { font-size: 18px; font-weight: 600; }
 .late { color: var(--el-color-danger); }
 .summary-line { margin: 0 0 10px; line-height: 1.8; }
 /* 表单项里的说明文字：不跟随输入框的行高，换行后不会拉得很开 */

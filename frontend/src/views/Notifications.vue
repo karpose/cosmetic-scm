@@ -5,11 +5,37 @@
         <h2>消息提醒</h2>
         <p>每天把总览里警告和紧急的待办汇总推送出去：账号填了邮箱的只收自己岗位的事项，配置的收件人和企业微信群收全部。渠道在服务器的环境变量里配置（见部署说明），这里只显示状态，不显示密钥。</p>
       </div>
-      <el-button type="primary" :loading="sending" :disabled="!channelReady" @click="send">立即发送一次</el-button>
+      <div class="toolbar">
+        <ExportButton report="notification-logs" />
+        <el-button type="primary" :loading="sending" :disabled="!channelReady" @click="send">立即发送一次</el-button>
+      </div>
     </div>
 
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
     <template v-else-if="s">
+      <div class="kpi-grid">
+        <div class="kpi-card" :class="{ warn: s.preview.items.length > 0 }">
+          <div class="kpi-label">今日待推送事项</div>
+          <div class="kpi-val mono">{{ s.preview.items.length }}</div>
+          <div class="kpi-sub">紧急 {{ badCount }} · 警告 {{ warnCount }}</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">可触达内部成员</div>
+          <div class="kpi-val mono">{{ s.people.length }} <span class="kpi-unit">人</span></div>
+          <div class="kpi-sub">已配置邮箱且有对应岗位待办</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">待提醒供应商</div>
+          <div class="kpi-val mono">{{ s.suppliers.length }} <span class="kpi-unit">家</span></div>
+          <div class="kpi-sub">仅定时任务自动发送给供应商</div>
+        </div>
+        <div class="kpi-card" :class="{ danger: failCount > 0 }">
+          <div class="kpi-label">近 {{ s.logs.length }} 次发送成功率</div>
+          <div class="kpi-val mono">{{ successRateText }}</div>
+          <div class="kpi-sub">成功 {{ okCount }} · 失败 {{ failCount }}</div>
+        </div>
+      </div>
+
       <el-card shadow="never">
         <template #header><b>渠道状态</b></template>
         <el-descriptions :column="1" size="small" border>
@@ -55,7 +81,7 @@
           <el-table-column prop="itemCount" label="事项" width="90" align="right" />
         </el-table>
       </el-card>
-<el-card shadow="never" body-style="padding:0 0 8px">
+      <el-card shadow="never" body-style="padding:0 0 8px">
         <template #header><b>发送记录</b> <span class="muted small">最近 50 次</span></template>
         <el-table scrollbar-tabindex="0" :data="s.logs" empty-text="还没有发送过">
           <el-table-column label="时间" width="170"><template #default="{ row }"><span class="mono small">{{ fmtTime(row.sentAt) }}</span></template></el-table-column>
@@ -75,6 +101,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import http from '../api'
+import ExportButton from '../components/ExportButton.vue'
 import LoadError from '../components/LoadError.vue'
 import { fmtTime } from '../utils/format'
 import { useLoader } from '../utils/loader'
@@ -82,6 +109,14 @@ import { useLoader } from '../utils/loader'
 const s = ref(null)
 const sending = ref(false)
 const channelReady = computed(() => s.value && (s.value.mailConfigured || s.value.wecomConfigured))
+const badCount = computed(() => (s.value?.preview?.items || []).filter((i) => i.level === 'bad').length)
+const warnCount = computed(() => (s.value?.preview?.items || []).filter((i) => i.level !== 'bad').length)
+const okCount = computed(() => (s.value?.logs || []).filter((l) => l.success).length)
+const failCount = computed(() => (s.value?.logs || []).filter((l) => !l.success).length)
+const successRateText = computed(() => {
+  const total = s.value?.logs?.length || 0
+  return total ? `${Math.round((okCount.value / total) * 100)}%` : '—'
+})
 const loader = useLoader(async () => {
   s.value = await http.get('/notify/status')
 })
@@ -101,3 +136,15 @@ async function send() {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; }
+.kpi-card.danger { border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+</style>

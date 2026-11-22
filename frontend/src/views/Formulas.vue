@@ -8,8 +8,32 @@
       <div class="toolbar">
         <ExportButton v-if="tab === 'versions'" report="plm-readiness" label="导出合规就绪度" />
         <ExportButton v-if="tab === 'versions'" report="pqr" label="导出年度质量回顾" />
+        <ExportButton v-if="tab === 'filings'" report="filings" label="导出备案台账" />
         <ExportButton v-if="tab === 'where-used'" report="where-used" label="导出反查清单" />
         <el-button v-if="tab === 'filings' && canFile" type="primary" @click="openFiling()">登记备案</el-button>
+      </div>
+    </div>
+
+    <div v-if="summary" class="kpi-grid">
+      <div class="kpi-card" @click="tab = 'versions'">
+        <div class="kpi-label">生效配方覆盖</div>
+        <div class="kpi-val mono">{{ summary.effectiveFormulaFgCount }} <span class="kpi-unit">/ {{ summary.activeFgCount }} 成品</span></div>
+        <div class="kpi-sub">在研草稿 {{ summary.draftCount }} 个</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.pendingApprovalCount > 0 }" @click="tab = 'versions'">
+        <div class="kpi-label">配方待 QSO 签批</div>
+        <div class="kpi-val mono">{{ summary.pendingApprovalCount }}</div>
+        <div class="kpi-sub">签批生效后自动同步 BOM</div>
+      </div>
+      <div class="kpi-card" @click="tab = 'filings'">
+        <div class="kpi-label">已完成备案 / 注册</div>
+        <div class="kpi-val mono">{{ summary.filedCount }}</div>
+        <div class="kpi-sub">已提交办理中 {{ summary.submittedFilingCount }} 件</div>
+      </div>
+      <div class="kpi-card" :class="{ danger: summary.expiringOrExpiredFilingCount > 0 }" @click="tab = 'filings'">
+        <div class="kpi-label">注册证临期 / 已到期</div>
+        <div class="kpi-val mono">{{ summary.expiringOrExpiredFilingCount }}</div>
+        <div class="kpi-sub">特妆注册证提前 180 天预警</div>
       </div>
     </div>
 
@@ -305,6 +329,7 @@ const qty = (v) => (v == null ? '—' : fmtQty(v, 6))
 
 const versions = ref([])
 const filings = ref([])
+const summary = ref(null)
 const ft = usePaged(filings, { match: textMatch('fgName', 'fgCode', 'filingNo') })
 const pendingCount = computed(() => versions.value.filter((v) => v.status === 'PENDING').length)
 const versionsOf = (fgId) => versions.value.filter((v) => v.fgItemId === fgId && v.status !== 'DISCARDED')
@@ -325,9 +350,14 @@ const products = computed(() => {
 })
 
 const loader = useLoader(async () => {
-  const [a, b] = await Promise.all([http.get('/plm/formulas'), http.get('/plm/filings')])
+  const [a, b, s] = await Promise.all([
+    http.get('/plm/formulas'),
+    http.get('/plm/filings'),
+    http.get('/plm/formulas/summary', { silent: true }).catch(() => null)
+  ])
   versions.value = a
   filings.value = b
+  summary.value = s
 })
 const load = () => loader.run()
 
@@ -513,7 +543,17 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: border-color 0.15s; }
+.kpi-card:hover { border-color: var(--el-color-primary-light-5); }
+.kpi-card.danger { border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .products { display: grid; gap: 14px; min-height: 80px; }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .ph { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ver { padding: 10px 0; border-top: 1px solid var(--lg-stroke); }
 .ver:first-child { border-top: 0; padding-top: 0; }

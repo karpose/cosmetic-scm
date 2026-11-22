@@ -1333,8 +1333,9 @@ test('退货给供应商：质量签批扣库存，登记物流后供应商签�
   expect(Number(stock.qty)).toBe(5)
 
   await page.goto(`/trace?no=${batchNo}`)
-  await expect(page.getByText('退回供应商')).toBeVisible()
-  await expect(page.locator('.el-card').filter({ hasText: '退回供应商' })).toContainText('来料检验不合格')
+  const returnsCard = page.locator('.el-card').filter({ has: page.getByText('退回供应商', { exact: true }) })
+  await expect(returnsCard).toBeVisible()
+  await expect(returnsCard).toContainText('来料检验不合格')
 
   await login(page, 'sup1')
   await page.getByRole('tab', { name: /退货/ }).click()
@@ -1431,7 +1432,7 @@ test('退供线下签收：采购从待办进入凭回单代录，批次追溯�
   await expect(row).toContainText('POD-OFFLINE-E2E')
   await expect(row.getByRole('button', { name: '代录签收' })).toHaveCount(0)
   await page.goto(`/trace?no=${batchNo}`)
-  const trace = page.locator('.el-card').filter({ hasText: '退回供应商' })
+  const trace = page.locator('.el-card').filter({ has: page.getByText('退回供应商', { exact: true }) })
   await expect(trace).toContainText('采购代录')
   await trace.getByRole('link', { name: returnNo }).click()
   await expect(row).toContainText('纸质回单数量无误')

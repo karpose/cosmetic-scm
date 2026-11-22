@@ -5,7 +5,33 @@
         <h2>委托生产协同</h2>
         <p>{{ auth.user?.partnerName }}：这里列出品牌方委托给本厂的生产单。请及时回传接单、排产和生产进度；生产完成、出厂检验合格后提交完工申报，品牌方核对后入库。</p>
       </div>
-      <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
+      <div class="toolbar">
+        <el-input v-if="tab !== 'statements'" v-model="keyword" size="default" placeholder="搜索委托单号、成品名称" clearable style="width:220px" />
+        <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card" @click="tab = 'active'">
+        <div class="kpi-label">进行中委托单</div>
+        <div class="kpi-val mono">{{ active.length }} <span class="kpi-unit">/ {{ orders.length }}</span></div>
+        <div class="kpi-sub">已完成/取消 {{ finished.length }} 单</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: unconfirmedCount > 0 }" @click="tab = 'active'">
+        <div class="kpi-label">待确认接单</div>
+        <div class="kpi-val mono">{{ unconfirmedCount }}</div>
+        <div class="kpi-sub">尚未回传首条接单进度</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: pendingReviewCount > 0 }" @click="tab = 'active'">
+        <div class="kpi-label">完工申报待核对</div>
+        <div class="kpi-val mono">{{ pendingReviewCount }}</div>
+        <div class="kpi-sub">已提交品牌方等待核对入库</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: pendingStatementCount > 0 }" @click="tab = 'statements'">
+        <div class="kpi-label">待确认委外对账单</div>
+        <div class="kpi-val mono">{{ pendingStatementCount }}</div>
+        <div class="kpi-sub">共 {{ statements.length }} 张加工费对账单</div>
+      </div>
     </div>
 
     <el-tabs v-model="tab" class="seg">
@@ -182,6 +208,7 @@ const auth = useAuth()
 const orders = ref([])
 const statements = ref([])
 const tab = ref('active')
+const keyword = ref('')
 const loader = useLoader(async () => {
   const [o, s] = await Promise.all([http.get('/portal/oem/orders'), http.get('/portal/oem/statements')])
   orders.value = o
@@ -192,8 +219,15 @@ const load = () => loader.run()
 const isClosed = (o) => o.status === 'COMPLETED' || o.status === 'CANCELLED'
 const active = computed(() => orders.value.filter((o) => !isClosed(o)))
 const finished = computed(() => orders.value.filter(isClosed))
-const shown = computed(() => (tab.value === 'active' ? active.value : finished.value))
 const latestReport = (o) => o.reports[o.reports.length - 1] || null
+const unconfirmedCount = computed(() => active.value.filter((o) => !o.progress.length).length)
+const pendingReviewCount = computed(() => active.value.filter((o) => latestReport(o)?.status === 'SUBMITTED').length)
+const pendingStatementCount = computed(() => statements.value.filter((s) => s.status === 'SENT' || s.status === 'CONFIRMED').length)
+const shown = computed(() => {
+  const base = tab.value === 'active' ? active.value : finished.value
+  const q = keyword.value.trim().toLowerCase()
+  return q ? base.filter((o) => (o.moNo || '').toLowerCase().includes(q) || (o.fgName || '').toLowerCase().includes(q)) : base
+})
 const canReport = (o) => o.status === 'ISSUED' && latestReport(o)?.status !== 'SUBMITTED'
 const startOfToday = startOfBusinessDay()
 
@@ -292,7 +326,16 @@ onMounted(load)
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: border-color 0.15s; }
+.kpi-card:hover { border-color: var(--el-color-primary-light-5); }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .cards { display: grid; gap: 16px; }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .order { padding: 18px 20px; display: grid; gap: 14px; }
 .oh { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
 .oh h3 { margin: 4px 0; font-size: 18px; letter-spacing: -0.01em; }

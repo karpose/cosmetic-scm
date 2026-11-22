@@ -89,6 +89,36 @@ public class FormulaService {
                               boolean needsFiling, String filingNo, Long changeId, String changeNo) {
     }
 
+    public record FormulaSummary(
+            int activeFgCount, int effectiveFormulaFgCount, int pendingApprovalCount, int draftCount,
+            int filedCount, int submittedFilingCount, int expiringOrExpiredFilingCount) {
+    }
+
+    @Transactional(readOnly = true)
+    public FormulaSummary summary() {
+        java.time.LocalDate today = time.today();
+        java.time.LocalDate warnLimit = today.plusDays(FilingService.EXPIRY_WARN_DAYS);
+        int activeFg = (int) items.findByItemTypeOrderByCode(ItemType.FG).stream().filter(Item::isActive).count();
+        List<FormulaVersion> allVersions = versions.findAll();
+        int effFg = (int) allVersions.stream().filter(v -> v.getStatus() == FormulaStatus.EFFECTIVE)
+                .map(FormulaVersion::getFgItemId).distinct().count();
+        int pending = (int) allVersions.stream().filter(v -> v.getStatus() == FormulaStatus.PENDING).count();
+        int draft = (int) allVersions.stream().filter(v -> v.getStatus() == FormulaStatus.DRAFT).count();
+        List<ProductFiling> allFilings = filings.findAll();
+        int filed = 0, submitted = 0, expiring = 0;
+        for (ProductFiling f : allFilings) {
+            if (f.getStatus() == FilingStatus.FILED) {
+                filed++;
+                if (f.getExpiryDate() != null && !f.getExpiryDate().isAfter(warnLimit)) {
+                    expiring++;
+                }
+            } else if (f.getStatus() == FilingStatus.SUBMITTED) {
+                submitted++;
+            }
+        }
+        return new FormulaSummary(activeFg, effFg, pending, draft, filed, submitted, expiring);
+    }
+
     @Transactional(readOnly = true)
     public List<VersionView> list() {
         return versions.findTop300ByOrderByIdDesc().stream().map(this::toView).toList();

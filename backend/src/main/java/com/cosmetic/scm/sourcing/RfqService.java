@@ -173,9 +173,47 @@ public class RfqService {
         }
     }
 
+    public record RfqSummary(
+            int totalCount, int sealedCount, int waitingAwardCount, int awardedCount,
+            int cancelledCount, int multiRoundCount, int closingSoonCount) {
+    }
+
+    @Transactional(readOnly = true)
+    public RfqSummary summary() {
+        LocalDate today = time.today();
+        LocalDate soon = today.plusDays(3);
+        List<Rfq> all = rfqs.findAll();
+        int sealedCount = 0, waitingAwardCount = 0, awardedCount = 0, cancelledCount = 0;
+        int multiRoundCount = 0, closingSoonCount = 0;
+        for (Rfq r : all) {
+            if (r.getRoundNo() > 1) {
+                multiRoundCount++;
+            }
+            if (r.getStatus() == RfqStatus.AWARDED) {
+                awardedCount++;
+            } else if (r.getStatus() == RfqStatus.CANCELLED) {
+                cancelledCount++;
+            } else if (sealed(r)) {
+                sealedCount++;
+                if (r.getDeadline() != null && !r.getDeadline().isAfter(soon)) {
+                    closingSoonCount++;
+                }
+            } else if (canAward(r)) {
+                waitingAwardCount++;
+            }
+        }
+        return new RfqSummary(all.size(), sealedCount, waitingAwardCount, awardedCount,
+                cancelledCount, multiRoundCount, closingSoonCount);
+    }
+
     @Transactional(readOnly = true)
     public List<RfqView> list() {
         return views(rfqs.findTop300ByOrderByIdDesc());
+    }
+
+    @Transactional(readOnly = true)
+    public List<RfqView> listAll() {
+        return views(rfqs.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id")));
     }
 
     @Transactional

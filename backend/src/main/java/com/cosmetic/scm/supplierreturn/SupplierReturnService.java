@@ -108,9 +108,40 @@ public class SupplierReturnService {
                 : returns.findByReturnNo(returnNo.trim()).stream().toList());
     }
 
+    public record SupplierRank(String supplierName, long count, BigDecimal totalQty) {
+    }
+
+    public record SupplierReturnSummary(long totalCount, long pendingSignCount, long pendingShipCount,
+                                        long awaitingReceiptCount, long offlineReceiptPendingCount,
+                                        long completedCount, long cancelledCount,
+                                        List<SupplierRank> bySupplier) {
+    }
+
     @Transactional(readOnly = true)
     public List<ReturnView> listAll() {
         return views(returns.findAllByOrderByIdDesc());
+    }
+
+    @Transactional(readOnly = true)
+    public SupplierReturnSummary summary() {
+        List<ReturnView> all = listAll();
+        long pendingSign = all.stream().filter(r -> r.status() == SupplierReturnStatus.PENDING).count();
+        long pendingShip = all.stream().filter(r -> r.status() == SupplierReturnStatus.DONE && r.shippedAt() == null && r.supplierConfirmedAt() == null).count();
+        long awaitingReceipt = all.stream().filter(r -> r.status() == SupplierReturnStatus.DONE && r.shippedAt() != null && r.supplierConfirmedAt() == null).count();
+        long offlinePending = all.stream().filter(ReturnView::offlineReceiptPending).count();
+        long completed = all.stream().filter(r -> r.status() == SupplierReturnStatus.DONE && r.supplierConfirmedAt() != null).count();
+        long cancelled = all.stream().filter(r -> r.status() == SupplierReturnStatus.CANCELLED).count();
+        Map<String, List<ReturnView>> bySup = all.stream()
+                .filter(r -> r.status() != SupplierReturnStatus.CANCELLED)
+                .collect(Collectors.groupingBy(ReturnView::supplierName, LinkedHashMap::new, Collectors.toList()));
+        List<SupplierRank> ranks = bySup.entrySet().stream()
+                .map(e -> new SupplierRank(e.getKey(), e.getValue().size(),
+                        e.getValue().stream().map(ReturnView::qty).reduce(BigDecimal.ZERO, BigDecimal::add)))
+                .sorted(java.util.Comparator.comparingLong(SupplierRank::count).reversed()
+                        .thenComparing(SupplierRank::totalQty, java.util.Comparator.reverseOrder()))
+                .toList();
+        return new SupplierReturnSummary(all.size(), pendingSign, pendingShip, awaitingReceipt, offlinePending,
+                completed, cancelled, ranks);
     }
 
     @Transactional(readOnly = true)

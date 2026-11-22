@@ -25,4 +25,14 @@ public class TraceController {
     public TraceView trace(@PathVariable String batchNo) {
         return trace.trace(batchNo);
     }
+
+    @GetMapping("/{batchNo}/export")
+    public org.springframework.http.ResponseEntity<byte[]> export(@PathVariable String batchNo) {
+        TraceService.TraceExport e = trace.export(batchNo);
+        return org.springframework.http.ResponseEntity.ok()
+                .contentType(org.springframework.http.MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                        org.springframework.http.ContentDisposition.attachment().filename(e.fileName(), java.nio.charset.StandardCharsets.UTF_8).build().toString())
+                .body(e.content());
+    }
 }

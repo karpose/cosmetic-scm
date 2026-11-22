@@ -91,6 +91,11 @@ public class StockOpsService {
         return toViews(docs.findTop300ByOrderByIdDesc());
     }
 
+    @Transactional(readOnly = true)
+    public List<DocView> listAll() {
+        return toViews(docs.findAllByOrderByIdDesc());
+    }
+
     @Transactional
     public DocView transfer(TransferReq req) {
         Warehouse from = usable(req.fromWarehouseId());

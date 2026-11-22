@@ -23,6 +23,11 @@ public class SalesController {
 
     private final SalesService sales;
 
+    @GetMapping("/summary")
+    public SalesService.SalesSummary summary(@org.springframework.web.bind.annotation.RequestParam(defaultValue = "30") int days) {
+        return sales.summary(days);
+    }
+
     @GetMapping
     public List<SoView> list() {
         return sales.list();

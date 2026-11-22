@@ -103,4 +103,25 @@ public class ScanService {
                 + (unexpected.isEmpty() ? "" : "多扫 / 扫错 " + String.join("、", unexpected)));
         return new CheckResult(passed, missing, unexpected);
     }
+
+    public record RecentCheck(Long id, String action, String refNo, boolean passed, String detail, String reason,
+                              String operator, java.time.LocalDateTime checkedAt) {
+    }
+
+    @Transactional(readOnly = true)
+    public List<RecentCheck> recentChecks() {
+        return audit.list(null, 200).stream()
+                .filter(a -> "发料扫码核对".equals(a.getAction()) || "出库扫码核对".equals(a.getAction()))
+                .limit(20)
+                .map(a -> new RecentCheck(
+                        a.getId(),
+                        a.getAction(),
+                        a.getTarget(),
+                        a.getDetail() != null && a.getDetail().startsWith("一致"),
+                        a.getDetail(),
+                        a.getReason(),
+                        a.getDisplayName() != null ? a.getDisplayName() : a.getUsername(),
+                        a.getCreatedAt()))
+                .toList();
+    }
 }

@@ -20,6 +20,7 @@
         </el-select>
         <span v-if="expected.length" class="muted small">应扫 {{ expected.length }} 个批次，已核对 {{ matchedCount }} 个</span>
       </div>
+      <el-progress v-if="expected.length" class="prog" :percentage="progressPct" :status="matchedCount === expected.length ? 'success' : undefined" />
     </el-card>
 
     <div class="scanbar glass">
@@ -72,6 +73,20 @@
       </div>
     </el-card>
 
+    <el-card v-if="recentChecks.length" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="ch"><b>近期扫码核对记录</b><span class="muted small">最近 {{ recentChecks.length }} 条</span></div>
+      </template>
+      <el-table :data="recentChecks" size="small">
+        <el-table-column label="时间" width="150"><template #default="{ row }"><span class="mono small">{{ fmtTime(row.checkedAt) }}</span></template></el-table-column>
+        <el-table-column prop="action" label="类型" width="115" />
+        <el-table-column label="单号" width="150"><template #default="{ row }"><span class="mono">{{ row.refNo }}</span></template></el-table-column>
+        <el-table-column label="结果" width="90"><template #default="{ row }"><el-tag size="small" :type="row.passed ? 'success' : 'warning'" disable-transitions>{{ row.passed ? '一致' : '有差异' }}</el-tag></template></el-table-column>
+        <el-table-column prop="operator" label="经办人" width="100" />
+        <el-table-column label="明细" min-width="220"><template #default="{ row }"><span class="small">{{ row.detail }}</span><div v-if="row.reason" class="small muted">{{ row.reason }}</div></template></el-table-column>
+      </el-table>
+    </el-card>
+
     <el-dialog v-model="cam.visible" title="摄像头扫码" width="min(480px, 94vw)" @closed="stopCamera">
       <video ref="video" class="video" playsinline muted />
       <p class="muted small">把二维码放进画面里，识别到会自动关闭。</p>
@@ -86,7 +101,7 @@ import { Camera, CircleCheckFilled, CircleCloseFilled, Printer, Remove, WarningF
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
 import ShelfBar from '../components/ShelfBar.vue'
-import { fmtQty } from '../utils/format'
+import { fmtQty, fmtTime } from '../utils/format'
 import { latestOnly } from '../utils/latest'
 
 const ICONS = { ok: CircleCheckFilled, warn: WarningFilled, bad: CircleCloseFilled }
@@ -106,6 +121,7 @@ const lookupReq = latestOnly()
 const refNo = ref('')
 const expected = ref([])        // [{ batchNo, itemName, qty }]
 const scanned = ref([])         // 已扫批号，按顺序
+const recentChecks = ref([])
 const saving = ref(false)
 const narrow = window.innerWidth < 640 // 手持设备上批次卡片排一列
 
@@ -157,6 +173,14 @@ const checkRows = computed(() => {
   return rows
 })
 const matchedCount = computed(() => expected.value.filter((e) => scanned.value.includes(e.batchNo)).length)
+const progressPct = computed(() => expected.value.length ? Math.round((matchedCount.value / expected.value.length) * 100) : 0)
+async function loadRecent() {
+  try {
+    recentChecks.value = await http.get('/scan/recent', { silent: true })
+  } catch {
+    recentChecks.value = []
+  }
+}
 
 async function loadRefs() {
   refs.value = []
@@ -203,6 +227,7 @@ async function submit() {
     const res = await http.post('/scan/checks', { refType: mode.value, refNo: refNo.value, expected: expected.value.map((e) => e.batchNo), scanned: scanned.value })
     if (res.passed) ElMessage.success('核对一致，已记录')
     else ElMessage.warning(`已记录：${res.missing.length ? `漏扫 ${res.missing.join('、')} ` : ''}${res.unexpected.length ? `扫错 ${res.unexpected.join('、')}` : ''}`)
+    loadRecent()
     reset()
   } finally {
     saving.value = false
@@ -254,12 +279,13 @@ function stopCamera() {
   cam.stream = null
 }
 
-onMounted(() => { loadRefs(); focus() })
+onMounted(() => { loadRefs(); loadRecent(); focus() })
 onBeforeUnmount(stopCamera)
 </script>
 
 <style scoped>
 .pick { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.prog { margin-top: 10px; }
 .scanbar { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 12px; border-radius: 18px; }
 /* 手机上输入框独占一行，提示文字才显示得全，摄像头按钮也更好按 */
 @media (max-width: 640px) { .scanbar { grid-template-columns: minmax(0, 1fr); } }
