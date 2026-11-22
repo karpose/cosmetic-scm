@@ -6,7 +6,7 @@
         <p>只结算检验放行的来料批次，按采购单价算金额，支持账期到期日计算、多税率拆分汇总、一单多票/红字发票及退货冲减退款登记。这里只做业务台账登记，不代替财务记账。</p>
       </div>
       <div class="toolbar">
-        <ExportButton :report="activeTab === 'ledger' ? 'invoice-ledger' : activeTab === 'ar' ? 'ar-statements' : activeTab === 'aging' ? (ag.side === 'AR' ? 'ar-aging' : 'ap-aging') : 'statements'" />
+        <ExportButton :report="activeTab === 'ledger' ? 'invoice-ledger' : activeTab === 'ar' ? 'ar-statements' : activeTab === 'ar-collection' ? 'ar-collection' : activeTab === 'aging' ? (ag.side === 'AR' ? 'ar-aging' : 'ap-aging') : 'statements'" />
         <ExportButton v-if="canAr && activeTab === 'ar'" report="ar-invoice-ledger" label="导出销项台账" />
         <el-button v-if="canAr && activeTab === 'ar'" @click="openCreditSummary">客户授信概览</el-button>
         <el-button v-if="canFinance && activeTab === 'statements'" @click="exportVouchers">导出应付凭证</el-button>
@@ -43,6 +43,7 @@
       <el-tab-pane label="对账单" name="statements" />
       <el-tab-pane label="进项发票台账" name="ledger" />
       <el-tab-pane v-if="canAr" label="客户应收对账" name="ar" />
+      <el-tab-pane v-if="canAr" label="应收催收看板" name="ar-collection" />
       <el-tab-pane label="账龄分析" name="aging" />
     </el-tabs>
 
@@ -120,6 +121,59 @@
             <el-button v-if="row.status === 'INVOICED' && canFinance" size="small" type="primary" @click="arApprove(row)">审批</el-button>
             <el-button v-if="row.status === 'APPROVED' && canFinance" size="small" type="primary" @click="arReceive(row)">登记回款</el-button>
             <el-button v-if="(row.status === 'DRAFT' || row.status === 'INVOICED') && canFinance" size="small" text @click="arCancel(row)">作废</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card v-else-if="activeTab === 'ar-collection' && !selectedNo" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-radio-group v-model="col.filter" size="small">
+            <el-radio-button value="ALL">全部 ({{ col.data?.totalCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="CRITICAL">严重/超额逾期 ({{ col.data?.criticalCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="OVERDUE">已逾期 ({{ col.data?.overdueCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="DUE_SOON">7天内到期 ({{ col.data?.dueSoonCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="OVER_LIMIT">授信超额</el-radio-button>
+          </el-radio-group>
+          <el-button size="small" @click="loadArCollection">刷新</el-button>
+        </div>
+        <div v-if="col.data" class="muted small" style="margin-top:8px">
+          待催收 <b class="mono">{{ col.data.totalCount }}</b> 笔 · 待回款合计 <b class="mono">¥{{ fmtMoney(col.data.totalUnreceived) }}</b> · 其中已逾期 <b class="mono" :class="{ late: Number(col.data.totalOverdueAmount) > 0 }">¥{{ fmtMoney(col.data.totalOverdueAmount) }}</b> · 授信超额客户 <b class="mono" :class="{ late: col.data.overLimitCustomerCount > 0 }">{{ col.data.overLimitCustomerCount }}</b> 家
+        </div>
+      </template>
+      <el-table :data="filteredArCollection" v-loading="col.loading" empty-text="当前没有待催收的已审批应收单">
+        <el-table-column label="风险分级" width="125" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.riskLevel === 'CRITICAL' ? 'danger' : row.riskLevel === 'OVERDUE' ? 'warning' : row.riskLevel === 'DUE_SOON' ? 'primary' : row.riskLevel === 'OVER_LIMIT' ? 'danger' : 'info'" disable-transitions>{{ row.riskLabel }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="应收单 / 到期日" width="175">
+          <template #default="{ row }">
+            <span class="mono">{{ row.statementNo }}</span>
+            <div class="small mono" :class="{ late: row.overdueDays > 0 }">到期 {{ row.dueDate }}<span v-if="row.overdueDays > 0"> · 逾期 {{ row.overdueDays }} 天</span></div>
+          </template>
+        </el-table-column>
+        <el-table-column label="客户 / 联系方式" min-width="170">
+          <template #default="{ row }">
+            {{ row.customerName }}
+            <div class="muted small">{{ row.contact || row.channel || row.customerCode }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="待回款" width="115" align="right">
+          <template #default="{ row }"><b class="mono" :class="{ late: row.overdueDays > 0 }">¥{{ fmtMoney(row.unreceived) }}</b></template>
+        </el-table-column>
+        <el-table-column label="授信风控" width="135" align="right">
+          <template #default="{ row }">
+            <el-tag v-if="row.overLimit" size="small" type="danger" disable-transitions>超额 {{ row.utilizationPct }}%</el-tag>
+            <span v-else-if="row.utilizationPct != null" class="mono">{{ row.utilizationPct }}%</span>
+            <span v-else class="muted">不限额度</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="collectionAction" label="催收建议" min-width="220" />
+        <el-table-column label="" width="100" :fixed="narrow ? false : 'right'">
+          <template #default="{ row }">
+            <el-button v-if="canFinance" size="small" type="primary" @click="arReceiveFromBoard(row)">登记回款</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -577,6 +631,23 @@ async function loadAr() {
   ar.loading = true
   try { ar.rows = await http.get('/ar-statements') } finally { ar.loading = false }
 }
+const col = reactive({ loading: false, filter: 'ALL', data: null })
+const filteredArCollection = computed(() => {
+  const list = col.data?.rows || []
+  return col.filter === 'ALL' ? list : list.filter((r) => r.riskLevel === col.filter)
+})
+async function loadArCollection() {
+  if (!canAr.value) return
+  col.loading = true
+  try { col.data = await http.get('/ar-statements/collection-board') } finally { col.loading = false }
+}
+async function arReceiveFromBoard(row) {
+  let amt
+  try { amt = (await ElMessageBox.prompt(`待收 ¥${fmtMoney(row.unreceived)}，请输入本次回款金额`, `登记回款：${row.statementNo}`, { inputValue: String(row.unreceived) })).value } catch { return }
+  await http.post(`/ar-statements/${row.statementId}/receive`, { receiptDate: today(), amount: Number(amt) })
+  ElMessage.success('回款已登记')
+  loadArCollection()
+}
 const ag = reactive({ loading: false, side: 'AP', data: null })
 async function loadAging() {
   ag.loading = true
@@ -585,6 +656,7 @@ async function loadAging() {
 function onTabChange(name) {
   if (name === 'ledger' && !lg.data) loadLedger()
   if (name === 'ar') loadAr()
+  if (name === 'ar-collection') loadArCollection()
   if (name === 'aging') loadAging()
 }
 async function openArCreate() {
@@ -689,6 +761,7 @@ const startOfToday = startOfBusinessDay()
 const canVoid = (s) => ['SENT', 'DISPUTED', 'CONFIRMED', 'INVOICED'].includes(s.status)
 onMounted(() => {
   if (route.query.tab === 'ar' && canAr.value) { activeTab.value = 'ar'; loadAr() }
+  if (route.query.tab === 'ar-collection' && canAr.value) { activeTab.value = 'ar-collection'; loadArCollection() }
   load(); rd.load()
 })
 const narrow = ref(window.innerWidth <= 768)
