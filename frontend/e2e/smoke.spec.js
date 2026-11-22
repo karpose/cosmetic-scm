@@ -2265,7 +2265,9 @@ test('设备校准：不合格自动停用并生成偏差，批记录不能选�
   await expect(row.getByText('停用')).toBeVisible()
 
   await page.goto('/qms')
-  await expect(page.locator('.el-table__row').filter({ hasText: 'EQ-SC-01' }).getByText('重大偏差')).toBeVisible()
+  const deviations = page.getByRole('tabpanel', { name: /^偏差（/ })
+  const deviation = deviations.getByRole('row').filter({ hasText: 'EQ-SC-01' })
+  await expect(deviation.getByText('重大偏差', { exact: true })).toBeVisible()
 })
 
 test('上线准备：批量导入首版配方，上线检查列出还缺什么', async ({ page }) => {
