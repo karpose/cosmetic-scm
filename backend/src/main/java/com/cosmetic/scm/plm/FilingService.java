@@ -70,6 +70,12 @@ public class FilingService {
         return filings.findTop300ByOrderByIdDesc().stream().map(this::toView).toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<FilingView> listAll() {
+        return filings.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id"))
+                .stream().map(this::toView).toList();
+    }
+
     /** 已完成、有有效期、将在提醒窗口内到期（含已过期）的注册证。 */
     @Transactional(readOnly = true)
     public List<FilingView> expiring() {

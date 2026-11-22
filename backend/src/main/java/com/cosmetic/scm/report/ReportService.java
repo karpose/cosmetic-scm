@@ -70,6 +70,8 @@ public class ReportService {
     private final com.cosmetic.scm.sourcing.RfqService rfqService;
     private final com.cosmetic.scm.notify.NotificationLogRepository notificationLogs;
     private final com.cosmetic.scm.dashboard.DashboardService dashboardService;
+    private final com.cosmetic.scm.plm.NpdService npdService;
+    private final com.cosmetic.scm.plm.FilingService filingService;
     private final SupplierAuditService audits;
     private final RetainService retains;
     private final PurchaseService purchases;
@@ -152,6 +154,8 @@ public class ReportService {
         m.put("rfqs", this::rfqsReport);
         m.put("notification-logs", this::notificationLogsReport);
         m.put("todos", this::todosReport);
+        m.put("npd-projects", this::npdProjectsReport);
+        m.put("filings", this::filingsReport);
         m.put("inspections", () -> inspectionResults(from, to));
         return m;
     }
@@ -763,6 +767,29 @@ public class ReportService {
                 "bad".equals(t.level()) ? "紧急" : "warn".equals(t.level()) ? "警告" : "info".equals(t.level()) ? "常规" : "提示",
                 t.label(), t.title(), t.ref(), t.detail(), t.route())));
         return new Table("当前待办清单", List.of("级别", "事项类别", "对象", "编号", "说明", "页面路径"), rows);
+    }
+
+    private Table npdProjectsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        npdService.listAll().forEach(p -> rows.add(row(
+                p.projectNo(), p.name(), p.category(), p.filingTypeLabel(), p.statusLabel(),
+                p.targetLaunch(), p.late() ? "已超期" : "正常", p.fgCode(), p.fgName(),
+                p.trials(), p.pilotPassed() ? "通过" : "未通过", p.claims(),
+                p.createdBy(), p.approvedBy(), p.launchedBy(), p.launchedAt())));
+        return new Table("新品研发项目台账", List.of("项目编号", "产品名称", "品类", "备案类型", "状态",
+                "计划上市日期", "进度状态", "关联成品编码", "关联成品名称", "试制次数", "中试通过", "宣称",
+                "申请人", "立项批准人", "上市批准人", "上市批准时间"), rows);
+    }
+
+    private Table filingsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        filingService.listAll().forEach(f -> rows.add(row(
+                f.fgCode(), f.fgName(), f.versionNo() == null ? null : "V" + f.versionNo(),
+                f.filingTypeLabel(), f.filingNo(), f.statusLabel(),
+                f.submittedDate(), f.filedDate(), f.expiryDate(), f.expiryDaysLeft(),
+                f.createdBy(), f.note())));
+        return new Table("产品备案与注册台账", List.of("成品编码", "成品名称", "对应配方", "类型", "备案/注册号", "状态",
+                "提交日期", "完成日期", "有效期至", "剩余天数", "登记人", "备注"), rows);
     }
 
     private Table auditLogs(LocalDate from, LocalDate to, String q, String action) {

@@ -34,6 +34,11 @@ public class NpdController {
     private final NpdService npd;
     private final PlmInsightsService insights;
 
+    @GetMapping("/summary")
+    public NpdService.NpdSummary summary() {
+        return npd.summary();
+    }
+
     @GetMapping("/projects")
     public List<ProjectRow> list() {
         return npd.list();

@@ -40,6 +40,11 @@ public class PlmController {
     private final PlmInsightsService insights;
     private final SignatureService signature;
 
+    @GetMapping("/formulas/summary")
+    public FormulaService.FormulaSummary formulaSummary() {
+        return formulas.summary();
+    }
+
     @GetMapping("/formulas")
     public List<VersionView> formulas() {
         return formulas.list();

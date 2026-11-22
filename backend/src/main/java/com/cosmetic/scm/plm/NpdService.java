@@ -103,9 +103,46 @@ public class NpdService {
     public record Detail(ProjectRow project, List<TrialView> trials, List<Check> checks, boolean ready) {
     }
 
+    public record NpdSummary(
+            int totalCount, int proposedCount, int activeCount, int launchReviewCount,
+            int launchedCount, int lateCount, int rejectedOrCancelledCount) {
+    }
+
+    @Transactional(readOnly = true)
+    public NpdSummary summary() {
+        LocalDate today = time.today();
+        List<NpdProject> all = projects.findAll();
+        int proposed = 0, active = 0, launchReview = 0, launched = 0, late = 0, closed = 0;
+        for (NpdProject p : all) {
+            if (p.getStatus() == NpdStatus.PROPOSED) {
+                proposed++;
+            } else if (p.getStatus() == NpdStatus.ACTIVE) {
+                active++;
+                if (p.getTargetLaunch() != null && p.getTargetLaunch().isBefore(today)) {
+                    late++;
+                }
+            } else if (p.getStatus() == NpdStatus.LAUNCH_REVIEW) {
+                launchReview++;
+                if (p.getTargetLaunch() != null && p.getTargetLaunch().isBefore(today)) {
+                    late++;
+                }
+            } else if (p.getStatus() == NpdStatus.LAUNCHED) {
+                launched++;
+            } else {
+                closed++;
+            }
+        }
+        return new NpdSummary(all.size(), proposed, active, launchReview, launched, late, closed);
+    }
+
     @Transactional(readOnly = true)
     public List<ProjectRow> list() {
         return rows(projects.findTop300ByOrderByIdDesc());
+    }
+
+    @Transactional(readOnly = true)
+    public List<ProjectRow> listAll() {
+        return rows(projects.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id")));
     }
 
     @Transactional(readOnly = true)
