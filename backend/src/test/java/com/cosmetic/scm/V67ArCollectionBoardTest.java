@@ -70,10 +70,10 @@ class V67ArCollectionBoardTest {
         var custIds = as("admin", () -> {
             Long c1 = master.createPartner(new MasterDtos.PartnerReq(
                     "CUST-V67-A", "V67 超额逾期客户", PartnerKind.CUSTOMER, null, null,
-                    "KA", 50, null, 30, "李财务 13900139000", null, true, false)).id();
+                    null, null, "KA", 50, "李财务 13900139000", null, true, false)).id();
             Long c2 = master.createPartner(new MasterDtos.PartnerReq(
                     "CUST-V67-B", "V67 临期客户", PartnerKind.CUSTOMER, null, null,
-                    "线上", 50, null, 30, "王财务 13700137000", null, true, false)).id();
+                    null, null, "线上", 50, "王财务 13700137000", null, true, false)).id();
             Partner p1 = partners.findById(c1).orElseThrow();
             p1.setCreditLimit(new BigDecimal("10000.00"));
             partners.save(p1);

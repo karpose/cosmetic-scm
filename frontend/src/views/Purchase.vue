@@ -357,9 +357,15 @@ const et = usePaged(expedite, {
   extra: (r) => !expRisk.value || r.riskLevel === expRisk.value
 })
 const urgentExpediteCount = computed(() => expedite.value.filter((r) => r.riskLevel === 'OVERDUE' || r.riskLevel === 'DUE_SOON').length)
-function openReceiveById(poId) {
-  const po = orders.value.find((o) => o.id === poId)
-  if (po) openReceive(po)
+async function openReceiveById(poId) {
+  const po = await http.get(`/purchase-orders/${poId}`).catch(() => null)
+  if (!po) return
+  if (!isOpen(po)) {
+    ElMessage.warning(`${po.poNo} 已结束，无法收货`)
+    await load()
+    return
+  }
+  await openReceive(po)
 }
 const canCreate = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
 const canSeePrice = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE'))

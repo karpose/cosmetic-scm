@@ -86,7 +86,7 @@ class V66BatchCostAnomalyTest {
         // 1) 超标批次：计划 100 实际 80（收率 80% < 95%），领料成本 1000 -> 单位成本 12.5，偏差 +25.0%，超支 200 元
         MfgOrder overrunMo = new MfgOrder();
         overrunMo.setMoNo("MO-V66-OVER");
-        overrunMo.setMoType(MoType.INHOUSE);
+        overrunMo.setMoType(MoType.OWN);
         overrunMo.setFactoryId(sampleMo.getFactoryId());
         overrunMo.setFgItemId(ids[1]);
         overrunMo.setPlannedQty(new BigDecimal("100"));
@@ -112,7 +112,7 @@ class V66BatchCostAnomalyTest {
         // 2) 节约批次：计划 100 实际 100，领料成本 800 -> 单位成本 8.0，偏差 -20.0%，节约 200 元
         MfgOrder savingMo = new MfgOrder();
         savingMo.setMoNo("MO-V66-SAVE");
-        savingMo.setMoType(MoType.INHOUSE);
+        savingMo.setMoType(MoType.OWN);
         savingMo.setFactoryId(sampleMo.getFactoryId());
         savingMo.setFgItemId(ids[1]);
         savingMo.setPlannedQty(new BigDecimal("100"));
