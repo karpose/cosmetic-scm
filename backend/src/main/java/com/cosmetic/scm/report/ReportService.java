@@ -144,6 +144,7 @@ public class ReportService {
         m.put("expiry-risk", this::expiryRiskReport);
         m.put("sales-returns", this::salesReturnsReport);
         m.put("changes", this::changesReport);
+        m.put("change-closure", this::changeClosureReport);
         m.put("artworks", this::artworksReport);
         m.put("compliance-status", this::complianceStatusReport);
         m.put("regulatory-violations", this::regulatoryViolationsReport);
@@ -675,6 +676,15 @@ public class ReportService {
                 c.assessedBy(), c.approvedBy(), c.closedBy(), c.closedAt(), c.reason())));
         return new Table("变更控制台账", List.of("变更编号", "变更类型", "标题", "影响范围", "风险等级", "状态",
                 "行动总数", "未完行动", "超期行动", "申请人", "申请时间", "评估人", "批准人", "关闭人", "关闭时间", "变更原因"), rows);
+    }
+
+    private Table changeClosureReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        changeControl.closureBoard().rows().forEach(r -> rows.add(row(
+                r.closureLabel(), r.changeNo(), r.changeTypeLabel(), r.title(), r.riskLabel(), r.statusLabel(),
+                r.actionsTotal(), r.actionsOpen(), r.actionsOverdue(), r.createdBy(), r.recommendedAction())));
+        return new Table("变更控制与行动超期闭环监控", List.of("闭环状态", "变更编号", "类型", "标题", "风险等级", "当前阶段",
+                "行动总数", "未完行动", "超期行动", "申请人", "闭环处置建议"), rows);
     }
 
     private Table artworksReport() {

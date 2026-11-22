@@ -129,6 +129,17 @@ public class ChangeService {
                                 List<TypeCount> byType) {
     }
 
+    public record ChangeClosureRow(Long changeId, String changeNo, String title, String changeTypeLabel,
+                                   String statusLabel, String riskLabel, String createdBy,
+                                   int actionsTotal, int actionsOpen, int actionsOverdue,
+                                   String closureState, String closureLabel, String recommendedAction) {
+    }
+
+    public record ChangeClosureBoard(int totalCount, int actionOverdueCount, int readyToCloseCount,
+                                     int pendingApproveCount, int pendingAssessCount,
+                                     List<ChangeClosureRow> rows) {
+    }
+
     @Transactional(readOnly = true)
     public List<ChangeRow> list() {
         return rows(changes.findTop300ByOrderByIdDesc());
@@ -184,6 +195,69 @@ public class ChangeService {
     @Transactional(readOnly = true)
     public List<ActionView> overdueActions() {
         return actions.findOverdue(time.today()).stream().map(this::view).toList();
+    }
+
+    /** 变更控制与行动超期闭环监控看板（V72）。 */
+    @Transactional(readOnly = true)
+    public ChangeClosureBoard closureBoard() {
+        List<ChangeRow> open = rows(changes.findByStatusInOrderById(
+                List.of(ChangeStatus.SUBMITTED, ChangeStatus.ASSESSED, ChangeStatus.APPROVED)));
+        List<ChangeClosureRow> items = new ArrayList<>();
+        int overdueCnt = 0;
+        int readyCnt = 0;
+        int approveCnt = 0;
+        int assessCnt = 0;
+
+        for (ChangeRow c : open) {
+            String state;
+            String label;
+            String action;
+            if (c.status() == ChangeStatus.APPROVED && c.actionsOverdue() > 0) {
+                state = "ACTION_OVERDUE";
+                label = "行动已超期";
+                action = "有 " + c.actionsOverdue() + " 项行动已超期（共 " + c.actionsOpen() + " 项未完成），请督办负责人立即整改闭环";
+                overdueCnt++;
+            } else if (c.status() == ChangeStatus.APPROVED && c.actionsOpen() == 0) {
+                state = "READY_TO_CLOSE";
+                label = "待 QSO 确认关闭";
+                action = "全部行动项已完成，请质量安全负责人确认变更效果并签批关闭";
+                readyCnt++;
+            } else if (c.status() == ChangeStatus.ASSESSED) {
+                state = "PENDING_APPROVE";
+                label = c.risk() == RiskLevel.HIGH ? "高风险待批" : "待 QSO 批准";
+                action = "评估已完成（风险" + c.riskLabel() + "，含 " + c.actionsTotal() + " 项行动），请质量安全负责人审批";
+                approveCnt++;
+            } else if (c.status() == ChangeStatus.SUBMITTED) {
+                state = "PENDING_ASSESS";
+                label = "待 QA 评估";
+                action = "变更已提交，请质量人员开展风险与影响评估并制定行动项";
+                assessCnt++;
+            } else {
+                state = "IN_PROGRESS";
+                label = "实施跟进中";
+                action = "变更实施中，剩余 " + c.actionsOpen() + " 项行动按计划推进";
+            }
+            items.add(new ChangeClosureRow(
+                    c.id(), c.changeNo(), c.title(), c.changeTypeLabel(), c.statusLabel(),
+                    c.riskLabel() == null ? "未评估" : c.riskLabel(), c.createdBy(),
+                    c.actionsTotal(), c.actionsOpen(), c.actionsOverdue(), state, label, action));
+        }
+
+        items.sort(java.util.Comparator.comparingInt((ChangeClosureRow r) -> closureRank(r.closureState()))
+                .thenComparing(ChangeClosureRow::actionsOverdue, java.util.Comparator.reverseOrder())
+                .thenComparing(ChangeClosureRow::changeNo));
+
+        return new ChangeClosureBoard(items.size(), overdueCnt, readyCnt, approveCnt, assessCnt, items);
+    }
+
+    private static int closureRank(String state) {
+        return switch (state) {
+            case "ACTION_OVERDUE" -> 0;
+            case "READY_TO_CLOSE" -> 1;
+            case "PENDING_APPROVE" -> 2;
+            case "PENDING_ASSESS" -> 3;
+            default -> 4;
+        };
     }
 
     @Transactional
