@@ -38,9 +38,9 @@ class V55PortalsScanDocsTest {
 
     @Test
     void scanRecentChecksReturnsRecordedCheck() throws Exception {
-        String admin = login("admin");
+        String warehouse = login("purchase1");
 
-        mvc.perform(post("/api/scan/checks").header("Authorization", "Bearer " + admin)
+        mvc.perform(post("/api/scan/checks").header("Authorization", "Bearer " + warehouse)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json.writeValueAsString(Map.of(
                                 "refType", "SO",
@@ -50,7 +50,7 @@ class V55PortalsScanDocsTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.passed").value(true));
 
-        mvc.perform(get("/api/scan/recent").header("Authorization", "Bearer " + admin))
+        mvc.perform(get("/api/scan/recent").header("Authorization", "Bearer " + warehouse))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].refNo").value("SO-V55-TEST"))
                 .andExpect(jsonPath("$[0].passed").value(true));

@@ -29,16 +29,16 @@ class V52MasterPoSoPlanTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
 
-    private String login(String u) throws Exception {
+    private String login(String u, String password) throws Exception {
         return json.readTree(mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(Map.of("username", u, "password", PWD))))
+                        .content(json.writeValueAsString(Map.of("username", u, "password", password))))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).get("token").asText();
     }
 
     @Test
     void masterPurchaseSalesSummariesAndExportsWorkWithPriceIsolation() throws Exception {
-        String admin = login("admin");
-        String qa = login("qa1");
+        String admin = login("admin", "Admin@123456");
+        String qa = login("qa1", PWD);
 
         // 1. 主数据资质风控与物料汇总
         mvc.perform(get("/api/master/summary").header("Authorization", "Bearer " + qa))
