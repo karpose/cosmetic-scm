@@ -67,6 +67,9 @@ public class ReportService {
     private final com.cosmetic.scm.security.UserService userService;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
     private final com.cosmetic.scm.planning.PlanningService planning;
+    private final com.cosmetic.scm.sourcing.RfqService rfqService;
+    private final com.cosmetic.scm.notify.NotificationLogRepository notificationLogs;
+    private final com.cosmetic.scm.dashboard.DashboardService dashboardService;
     private final SupplierAuditService audits;
     private final RetainService retains;
     private final PurchaseService purchases;
@@ -146,6 +149,9 @@ public class ReportService {
         m.put("items", this::itemsReport);
         m.put("partners", this::partnersReport);
         m.put("planning-fg", this::planningFgReport);
+        m.put("rfqs", this::rfqsReport);
+        m.put("notification-logs", this::notificationLogsReport);
+        m.put("todos", this::todosReport);
         m.put("inspections", () -> inspectionResults(from, to));
         return m;
     }
@@ -158,7 +164,7 @@ public class ReportService {
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to, String q, String action) {
         // 金额只给采购和财务看，应收报表给销售、财务和管理员看，上线检查仅限管理员/主数据/质量导出，其它报表所有内部岗位都能导
-        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "batch-costs".equals(key) || "margins".equals(key) || "cashflow-forecast".equals(key) || "inventory-variance".equals(key) || "inventory-abc".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
+        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "rfqs".equals(key) || "batch-costs".equals(key) || "margins".equals(key) || "cashflow-forecast".equals(key) || "inventory-variance".equals(key) || "inventory-abc".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与成本数据");
         }
         if (("ar-statements".equals(key) || "ar-aging".equals(key) || "ar-invoice-ledger".equals(key) || "customer-credit".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
@@ -167,8 +173,8 @@ public class ReportService {
         if ("golive-checklist".equals(key) && !goliveReportAllowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出上线检查报告");
         }
-        if ("users".equals(key) && !adminReportAllowed()) {
-            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "仅系统管理员可导出账号权限台账");
+        if (("users".equals(key) || "notification-logs".equals(key)) && !adminReportAllowed()) {
+            throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "仅系统管理员可导出该管理台账");
         }
         Supplier<Table> source = registry(from, to, q, action).get(key);
         if (source == null) {
@@ -721,6 +727,42 @@ public class ReportService {
                 "可用库存", "其中临期", "待上市放行", "在制生产", "预计可用",
                 "安全库存", "再订货点", "可售天数", "低于再订货点", "建议补产", "建议生产方",
                 "单位成本(元)", "指导价(元)"), rows);
+    }
+
+    private Table rfqsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        rfqService.listAll().forEach(r -> {
+            int invitedCount = r.suppliers().size();
+            long quotedCount = r.suppliers().stream().filter(s -> s.quoted()).count();
+            r.lines().forEach(l -> {
+                var awarded = l.quotes().stream().filter(q -> q.awarded()).findFirst().orElse(null);
+                rows.add(row(r.rfqNo(), r.title(), "第" + r.roundNo() + "轮", r.deadline(), r.statusLabel(),
+                        invitedCount, quotedCount, l.itemCode(), l.itemName(), l.qty(), l.unit(),
+                        l.lastPoPrice(), awarded == null ? null : awarded.supplierName(),
+                        awarded == null ? null : awarded.unitPrice(), awarded == null ? null : awarded.poNo(),
+                        r.awardedBy(), r.awardedAt()));
+            });
+        });
+        return new Table("询价比价台账", List.of("询价单号", "标题", "轮次", "截止日期", "状态",
+                "邀请家数", "已报价家数", "物料编码", "物料名称", "询价数量", "单位",
+                "历史采购单价", "中标供应商", "中标含税单价", "生成采购单", "定标人", "定标时间"), rows);
+    }
+
+    private Table notificationLogsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        notificationLogs.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id"))
+                .forEach(l -> rows.add(row(l.getSentAt(), "MAIL".equals(l.getChannel()) ? "邮件" : "企业微信",
+                        l.getRecipient(), l.getSubject(), l.getItemCount(), l.isSuccess() ? "成功" : "失败",
+                        "schedule".equals(l.getTriggered()) ? "定时" : l.getTriggered(), l.getError())));
+        return new Table("消息提醒发送记录", List.of("发送时间", "渠道", "收件人", "主题", "事项数", "结果", "触发方式", "失败原因"), rows);
+    }
+
+    private Table todosReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        dashboardService.summary().todos().forEach(t -> rows.add(row(
+                "bad".equals(t.level()) ? "紧急" : "warn".equals(t.level()) ? "警告" : "info".equals(t.level()) ? "常规" : "提示",
+                t.label(), t.title(), t.ref(), t.detail(), t.route())));
+        return new Table("当前待办清单", List.of("级别", "事项类别", "对象", "编号", "说明", "页面路径"), rows);
     }
 
     private Table auditLogs(LocalDate from, LocalDate to, String q, String action) {

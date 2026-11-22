@@ -68,6 +68,8 @@ public class TraceService {
     private final RecallRepository recalls;
     private final QualityService quality;
     private final MasterLookup lookup;
+    private final com.cosmetic.scm.audit.AuditService audit;
+    private final com.cosmetic.scm.common.TimeProvider time;
 
     public record SourceView(String type, String no, String partnerName, String licenseNo, String extBatchNo,
                              String moTypeLabel) {
@@ -256,5 +258,48 @@ public class TraceService {
         return new TraceView(self, item.getFilingNo(), source, upstream, downstream, finishedViews, shipments, stock,
                 quality.decisionsOf(b.getId()), affected, returnViews, recallViews, ms,
                 supplierReturns.ofBatch(self.id()));
+    }
+
+    public record TraceExport(String fileName, byte[] content) {
+    }
+
+    @Transactional
+    public TraceExport export(String batchNo) {
+        TraceView t = trace(batchNo);
+        List<List<Object>> rows = new ArrayList<>();
+        rows.add(row("批次概览", t.batch().itemName(), t.batch().batchNo(), t.source().partnerName(),
+                t.batch().onHand(), t.batch().statusLabel(),
+                (t.batch().mfgDate() == null ? "" : t.batch().mfgDate()) + " ~ " + (t.batch().expDate() == null ? "" : t.batch().expDate())));
+        for (UpstreamView u : t.upstream()) {
+            rows.add(row("向上原料", u.itemName(), u.batchNo() != null ? u.batchNo() : u.extBatchNo(),
+                    u.supplierName(), u.qty(), u.supplyLabel(), u.sourceNo()));
+        }
+        for (DownstreamMoView m : t.downstreamOrders()) {
+            rows.add(row("向下生产", m.fgName(), m.outBatchNo() != null ? m.outBatchNo() : m.moNo(),
+                    m.moTypeLabel(), m.usedQty(), m.statusLabel(), m.moNo()));
+        }
+        for (ShipmentView s : t.shipments()) {
+            rows.add(row("客户出库", s.customerName(), s.batchNo(), s.channel(), s.qty(), s.soNo(),
+                    s.orderDate() + (s.contact() != null ? " · " + s.contact() : "")));
+        }
+        for (ReturnTraceView r : t.returns()) {
+            rows.add(row(r.recallId() != null ? "召回回收" : "客户退货", r.customerName(), r.batchNo(),
+                    r.returnNo(), r.qty(), r.dispositionLabel(), r.returnDate()));
+        }
+        for (RecallBrief rc : t.recalls()) {
+            rows.add(row("关联召回", rc.recallNo(), rc.batchNo(), null, null, rc.statusLabel(), null));
+        }
+        audit.log("导出追溯清单", t.batch().batchNo(), t.batch().itemName() + "，共 " + rows.size() + " 行");
+        byte[] xlsx = com.cosmetic.scm.common.XlsxWriter.write("批次追溯-" + t.batch().batchNo(),
+                List.of("环节", "对象/物料", "批号/单号", "往来单位/渠道", "数量", "状态/单号", "日期/说明"), rows);
+        return new TraceExport("批次追溯-" + t.batch().batchNo() + "-" + time.today() + ".xlsx", xlsx);
+    }
+
+    private static List<Object> row(Object... cells) {
+        List<Object> out = new ArrayList<>(cells.length);
+        for (Object c : cells) {
+            out.add(c);
+        }
+        return out;
     }
 }

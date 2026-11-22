@@ -30,6 +30,12 @@ public class RfqController {
 
     private final RfqService rfqs;
 
+    @GetMapping("/summary")
+    @PreAuthorize("hasAnyRole('ADMIN','PURCHASE','FINANCE')")
+    public RfqService.RfqSummary summary() {
+        return rfqs.summary();
+    }
+
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN','PURCHASE','FINANCE')")
     public List<RfqView> list() {
