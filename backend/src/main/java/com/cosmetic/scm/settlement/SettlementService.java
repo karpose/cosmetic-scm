@@ -76,6 +76,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class SettlementService {
 
     private final SupplierStatementRepository statements;
+    private final CustomerStatementRepository customerStatements;
     private final SupplierStatementLineRepository statementLines;
     private final SupplierStatementInvoiceRepository statementInvoices;
     private final SupplierStatementInvoiceReturnRepository invoiceReturns;
@@ -218,6 +219,62 @@ public class SettlementService {
 
     public enum FollowUp {
         PAY, REFUND, OVERDUE, RECEIPT_DISPUTE
+    }
+
+    public record SettlementSummary(
+            int apPendingApproveCount, int apDisputedCount, int apOverdueCount,
+            BigDecimal apOpenAmount, BigDecimal apOverdueAmount, int apPendingSyncCount,
+            Integer arOpenCount, Integer arOverdueCount, BigDecimal arOpenAmount, BigDecimal arOverdueAmount) {
+    }
+
+    @Transactional(readOnly = true)
+    public SettlementSummary summary() {
+        LocalDate today = time.today();
+        int pendingApprove = 0, disputed = 0, apOverdueCount = 0, apPendingSync = 0;
+        BigDecimal apOpen = BigDecimal.ZERO, apOverdue = BigDecimal.ZERO;
+        for (SupplierStatement s : statements.findAll()) {
+            if (s.getStatus() == StatementStatus.INVOICED) {
+                pendingApprove++;
+            } else if (s.getStatus() == StatementStatus.DISPUTED) {
+                disputed++;
+            }
+            if (s.getStatus() == StatementStatus.APPROVED && s.outstandingAmount().signum() != 0) {
+                apOpen = apOpen.add(s.outstandingAmount());
+                if (s.effectiveDueDate().isBefore(today)) {
+                    apOverdueCount++;
+                    apOverdue = apOverdue.add(s.outstandingAmount());
+                }
+            }
+            if ((s.getStatus() == StatementStatus.APPROVED || s.getStatus() == StatementStatus.PAID)
+                    && s.effectiveFinanceSyncStatus() != com.cosmetic.scm.domain.FinanceSyncStatus.SYNCED) {
+                apPendingSync++;
+            }
+        }
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        boolean arAllowed = auth != null && auth.getAuthorities().stream().anyMatch(a ->
+                "ROLE_ADMIN".equals(a.getAuthority()) || "ROLE_SALES".equals(a.getAuthority()) || "ROLE_FINANCE".equals(a.getAuthority()));
+        Integer arOpenCount = null, arOverdueCount = null;
+        BigDecimal arOpen = null, arOverdue = null;
+        if (arAllowed) {
+            int openC = 0, overdueC = 0;
+            BigDecimal openA = BigDecimal.ZERO, overdueA = BigDecimal.ZERO;
+            for (CustomerStatement cs : customerStatements.findAll()) {
+                if ("APPROVED".equals(cs.getStatus()) && cs.outstandingAmount().signum() > 0) {
+                    openC++;
+                    openA = openA.add(cs.outstandingAmount());
+                    if (cs.getDueDate() != null && cs.getDueDate().isBefore(today)) {
+                        overdueC++;
+                        overdueA = overdueA.add(cs.outstandingAmount());
+                    }
+                }
+            }
+            arOpenCount = openC;
+            arOverdueCount = overdueC;
+            arOpen = openA;
+            arOverdue = overdueA;
+        }
+        return new SettlementSummary(pendingApprove, disputed, apOverdueCount, apOpen, apOverdue, apPendingSync,
+                arOpenCount, arOverdueCount, arOpen, arOverdue);
     }
 
     @Transactional(readOnly = true)

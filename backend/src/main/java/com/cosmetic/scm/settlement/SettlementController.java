@@ -46,6 +46,12 @@ public class SettlementController {
     private final AgingAnalysisService aging;
     private final FinanceIntegrationService financeIntegration;
 
+    @GetMapping("/summary")
+    @PreAuthorize(READ)
+    public SettlementService.SettlementSummary summary() {
+        return settlement.summary();
+    }
+
     @GetMapping
     @PreAuthorize(READ)
     public List<StatementView> list(@RequestParam(required = false) String statementNo,
