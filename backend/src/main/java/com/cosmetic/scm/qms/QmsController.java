@@ -13,6 +13,7 @@ import com.cosmetic.scm.qms.DeviationService.CloseReq;
 import com.cosmetic.scm.qms.DeviationService.DeviationReq;
 import com.cosmetic.scm.qms.DeviationService.DeviationView;
 import com.cosmetic.scm.qms.DeviationService.InvestigateReq;
+import com.cosmetic.scm.qms.DeviationService.QmsClosureBoard;
 import com.cosmetic.scm.qms.RetainService.DestroyReq;
 import com.cosmetic.scm.qms.RetainService.SampleView;
 import com.cosmetic.scm.qms.RetainService.UseReq;
@@ -49,9 +50,19 @@ public class QmsController {
         return qualityGov.qmsSummary();
     }
 
+    @GetMapping("/closure-board")
+    public QmsClosureBoard closureBoard() {
+        return deviations.closureBoard();
+    }
+
     @GetMapping("/deviations")
     public List<DeviationView> deviations() {
         return deviations.list();
+    }
+
+    @GetMapping("/deviations/{id}")
+    public DeviationView getDeviation(@PathVariable Long id) {
+        return deviations.getDeviation(id);
     }
 
     @PostMapping("/deviations")
@@ -75,6 +86,11 @@ public class QmsController {
     @GetMapping("/capas")
     public List<CapaView> capas() {
         return deviations.listCapas();
+    }
+
+    @GetMapping("/capas/{id}")
+    public CapaView getCapa(@PathVariable Long id) {
+        return deviations.getCapa(id);
     }
 
     @PostMapping("/capas")

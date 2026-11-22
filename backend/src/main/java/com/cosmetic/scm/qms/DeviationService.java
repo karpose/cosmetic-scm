@@ -103,6 +103,18 @@ public class DeviationService {
                            LocalDateTime verifiedAt, String createdBy, LocalDateTime createdAt) {
     }
 
+    public record ClosureRow(Long itemId, String itemType, String itemTypeLabel, String refNo, String title,
+                             String levelOrStatus, String ownerOrArea, String batchNo,
+                             LocalDate dueDate, Long daysLeft, boolean blockingRelease, boolean dueSoon,
+                             String riskLevel, String riskLabel,
+                             String escalationAction) {
+    }
+
+    public record QmsClosureBoard(int totalCount, int overdueCount, int blockingCount,
+                                  int verifyPendingCount, int dueSoonCount,
+                                  List<ClosureRow> rows) {
+    }
+
     // ---------- 偏差 ----------
 
     @Transactional(readOnly = true)
@@ -119,6 +131,11 @@ public class DeviationService {
     @Transactional(readOnly = true)
     public List<DeviationView> open() {
         return toViews(deviations.findByStatus(CaseStatus.OPEN));
+    }
+
+    @Transactional(readOnly = true)
+    public DeviationView getDeviation(Long id) {
+        return single(deviations.findById(id).orElseThrow(() -> BizException.notFound("偏差")));
     }
 
     @Transactional
@@ -234,6 +251,110 @@ public class DeviationService {
     @Transactional(readOnly = true)
     public List<CapaView> openCapas() {
         return capas.findByStatusIn(List.of(CapaStatus.OPEN, CapaStatus.DONE)).stream().map(this::toView).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public CapaView getCapa(Long id) {
+        return toView(capas.findById(id).orElseThrow(() -> BizException.notFound("CAPA")));
+    }
+
+    /** 偏差与 CAPA 超期闭环升级监控看板（V70）。 */
+    @Transactional(readOnly = true)
+    public QmsClosureBoard closureBoard() {
+        LocalDate today = time.today();
+        List<ClosureRow> rows = new java.util.ArrayList<>();
+        int overdueCnt = 0;
+        int blockingCnt = 0;
+        int verifyPendingCnt = 0;
+        int dueSoonCnt = 0;
+
+        for (DeviationView d : open()) {
+            long daysLeft = java.time.temporal.ChronoUnit.DAYS.between(today, d.dueDate());
+            boolean major = d.level() != DeviationLevel.MINOR;
+            boolean blocking = major && d.batchId() != null;
+            boolean dueSoon = daysLeft >= 0 && daysLeft <= 3;
+            if (blocking) {
+                blockingCnt++;
+            }
+            if (dueSoon) {
+                dueSoonCnt++;
+            }
+            String riskLevel;
+            String riskLabel;
+            String action;
+            if (d.overdue() || daysLeft < 0) {
+                riskLevel = "OVERDUE";
+                riskLabel = major ? "重大偏差超期" : "偏差超期";
+                action = blocking
+                        ? "已超期 " + (-daysLeft) + " 天且阻断关联批次放行，请升级质量负责人立即督办调查与 CAPA"
+                        : "偏差调查已超期 " + (-daysLeft) + " 天，请尽快完成根本原因分析并关闭";
+                overdueCnt++;
+            } else if (blocking) {
+                riskLevel = "BLOCKING";
+                riskLabel = dueSoon ? "阻断放行·临期" : "阻断批次放行";
+                action = d.rootCause() == null
+                        ? "重大/严重偏差尚未填写根本原因，关联批次不可放行，请优先调查"
+                        : "重大/严重偏差处理中，请确保关联 CAPA 全部验证有效后关闭";
+            } else if (dueSoon) {
+                riskLevel = "DUE_SOON";
+                riskLabel = daysLeft == 0 ? "今日到期" : "3天内到期";
+                action = "距偏差调查期限仅 " + daysLeft + " 天，请尽快完成调查与关闭";
+            } else {
+                riskLevel = "NORMAL";
+                riskLabel = "调查进行中";
+                action = "请于 " + d.dueDate() + " 前完成调查并签批关闭";
+            }
+            rows.add(new ClosureRow(d.id(), "DEVIATION", "偏差调查", d.deviationNo(), d.title(),
+                    d.levelLabel(), d.areaLabel(), d.batchNo(), d.dueDate(), daysLeft, blocking, dueSoon,
+                    riskLevel, riskLabel, action));
+        }
+
+        for (CapaView c : openCapas()) {
+            long daysLeft = java.time.temporal.ChronoUnit.DAYS.between(today, c.dueDate());
+            boolean dueSoon = c.status() == CapaStatus.OPEN && daysLeft >= 0 && daysLeft <= 3;
+            String riskLevel;
+            String riskLabel;
+            String action;
+            if (c.status() == CapaStatus.DONE) {
+                riskLevel = "VERIFY_PENDING";
+                riskLabel = "待 QA 验证";
+                action = "负责人 " + c.owner() + " 已登记完成，请非完成人的质量人员尽快验证有效性";
+                verifyPendingCnt++;
+            } else if (c.overdue() || daysLeft < 0) {
+                riskLevel = "OVERDUE";
+                riskLabel = "CAPA 已超期";
+                action = "CAPA 已超期 " + (-daysLeft) + " 天未完成，请升级督办负责人 " + c.owner() + " 整改";
+                overdueCnt++;
+            } else if (dueSoon) {
+                riskLevel = "DUE_SOON";
+                riskLabel = daysLeft == 0 ? "今日到期" : "3天内到期";
+                action = "距 CAPA 期限仅 " + daysLeft + " 天，请提醒负责人 " + c.owner() + " 按期闭环";
+                dueSoonCnt++;
+            } else {
+                riskLevel = "NORMAL";
+                riskLabel = "整改进行中";
+                action = "负责人 " + c.owner() + " 按计划于 " + c.dueDate() + " 前完成";
+            }
+            rows.add(new ClosureRow(c.id(), "CAPA", "CAPA 整改", c.capaNo(), c.description(),
+                    c.actionLabel() + " · " + c.statusLabel(), c.owner(), c.sourceNo(), c.dueDate(), daysLeft, false, dueSoon,
+                    riskLevel, riskLabel, action));
+        }
+
+        rows.sort(java.util.Comparator.comparingInt((ClosureRow r) -> closureRank(r.riskLevel()))
+                .thenComparing(ClosureRow::daysLeft, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder()))
+                .thenComparing(ClosureRow::refNo));
+
+        return new QmsClosureBoard(rows.size(), overdueCnt, blockingCnt, verifyPendingCnt, dueSoonCnt, rows);
+    }
+
+    private static int closureRank(String level) {
+        return switch (level) {
+            case "OVERDUE" -> 0;
+            case "BLOCKING" -> 1;
+            case "VERIFY_PENDING" -> 2;
+            case "DUE_SOON" -> 3;
+            default -> 4;
+        };
     }
 
     @Transactional

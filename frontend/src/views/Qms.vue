@@ -138,6 +138,51 @@
         </el-card>
       </el-tab-pane>
 
+      <!-- ================= 闭环升级监控 ================= -->
+      <el-tab-pane :label="`闭环升级监控（${closureBoard?.totalCount ?? 0}）`" name="closure">
+        <el-card shadow="never" body-style="padding:0 0 8px">
+          <template #header>
+            <div class="filters">
+              <el-radio-group v-model="closureFilter" size="small">
+                <el-radio-button value="ALL">全部 ({{ closureBoard?.totalCount ?? 0 }})</el-radio-button>
+                <el-radio-button value="OVERDUE">已超期 ({{ closureBoard?.overdueCount ?? 0 }})</el-radio-button>
+                <el-radio-button value="BLOCKING">阻断放行 ({{ closureBoard?.blockingCount ?? 0 }})</el-radio-button>
+                <el-radio-button value="VERIFY_PENDING">待 QA 验证 ({{ closureBoard?.verifyPendingCount ?? 0 }})</el-radio-button>
+                <el-radio-button value="DUE_SOON">3天内到期 ({{ closureBoard?.dueSoonCount ?? 0 }})</el-radio-button>
+              </el-radio-group>
+              <el-button size="small" @click="load">刷新</el-button>
+            </div>
+            <div v-if="closureBoard" class="muted small" style="margin-top:8px">
+              待闭环偏差与 CAPA <b class="mono">{{ closureBoard.totalCount }}</b> 项 · 已超期 <b class="mono" :class="{ bad: closureBoard.overdueCount > 0 }">{{ closureBoard.overdueCount }}</b> · 阻断批次放行 <b class="mono" :class="{ warn: closureBoard.blockingCount > 0 }">{{ closureBoard.blockingCount }}</b> · 待 QA 验证 <b class="mono">{{ closureBoard.verifyPendingCount }}</b> · 3天内到期 <b class="mono">{{ closureBoard.dueSoonCount }}</b>
+            </div>
+          </template>
+          <el-table :data="filteredClosureRows" v-loading="loader.loading.value" size="small" empty-text="没有符合筛选条件的事项" scrollbar-tabindex="0">
+            <el-table-column label="风险分级" width="120" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.riskLevel === 'OVERDUE' ? 'danger' : row.riskLevel === 'BLOCKING' ? 'warning' : row.riskLevel === 'VERIFY_PENDING' ? 'primary' : row.riskLevel === 'DUE_SOON' ? 'warning' : 'info'" disable-transitions>{{ row.riskLabel }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="itemTypeLabel" label="类型" width="95" />
+            <el-table-column label="编号 / 关联" width="160">
+              <template #default="{ row }"><span class="mono">{{ row.refNo }}</span><div v-if="row.batchNo" class="muted small mono">{{ row.batchNo }}</div></template>
+            </el-table-column>
+            <el-table-column label="标题 / 措施" min-width="200">
+              <template #default="{ row }">{{ row.title }}<div class="muted small">{{ row.levelOrStatus }} · {{ row.ownerOrArea }}</div></template>
+            </el-table-column>
+            <el-table-column label="期限 / 剩余" width="125" align="right">
+              <template #default="{ row }">
+                <span class="mono">{{ row.dueDate }}</span>
+                <div v-if="row.daysLeft != null" class="small mono" :class="{ bad: row.daysLeft < 0 }">{{ row.daysLeft < 0 ? `超期 ${-row.daysLeft} 天` : `剩 ${row.daysLeft} 天` }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column prop="escalationAction" label="升级处置建议" min-width="230" />
+            <el-table-column label="" width="85" fixed="right">
+              <template #default="{ row }"><el-button size="small" @click="jumpClosureItem(row)">去处理</el-button></template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </el-tab-pane>
+
       <!-- ================= 供应商审核 ================= -->
       <el-tab-pane :label="`供应商审核${riskPartnerCount ? `（${riskPartnerCount} 家预警）` : ''}`" name="audits">
         <el-card shadow="never" body-style="padding:0 0 8px">
@@ -439,7 +484,7 @@ import { daysFromToday, fmtTime, today } from '../utils/format'
 import { useLoader } from '../utils/loader'
 import { textMatch, usePaged } from '../utils/table'
 
-const EXPORTS = { deviations: 'deviations', capas: 'capas', audits: 'supplier-audits', retains: 'retains', equipment: 'equipment' }
+const EXPORTS = { deviations: 'deviations', capas: 'capas', closure: 'qms-closure', audits: 'supplier-audits', retains: 'retains', equipment: 'equipment' }
 const AREA = { PRODUCTION: '生产', QC: '检验', WAREHOUSE: '仓储', SUPPLIER: '供应商 / 受托厂', OTHER: '其他' }
 const LEVEL = { MINOR: '微小偏差', MAJOR: '重大偏差', CRITICAL: '严重偏差' }
 const LEVEL_TAG = { MINOR: 'info', MAJOR: 'warning', CRITICAL: 'danger' }
@@ -456,6 +501,35 @@ const canReport = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'WAREHOUSE', '
 
 const deviations = ref([])
 const capas = ref([])
+const closureBoard = ref(null)
+const closureFilter = ref('ALL')
+const filteredClosureRows = computed(() => {
+  const list = closureBoard.value?.rows || []
+  const filter = closureFilter.value
+  if (filter === 'ALL') return list
+  if (filter === 'BLOCKING') return list.filter((r) => r.blockingRelease)
+  if (filter === 'DUE_SOON') return list.filter((r) => r.dueSoon)
+  return list.filter((r) => r.riskLevel === filter)
+})
+async function jumpClosureItem(row) {
+  const isDeviation = row.itemType === 'DEVIATION'
+  const targetTab = isDeviation ? 'deviations' : 'capas'
+  const records = isDeviation ? deviations : capas
+  if (!records.value.some((item) => item.id === row.itemId)) {
+    const item = await http.get(`/qms/${targetTab}/${row.itemId}`).catch(() => null)
+    if (!item) return
+    if (!records.value.some((entry) => entry.id === item.id)) records.value.unshift(item)
+  }
+  tab.value = targetTab
+  if (isDeviation) {
+    df.status = ''
+    df.level = ''
+    dt.keyword.value = row.refNo
+  } else {
+    cf.status = ''
+    ct.keyword.value = row.refNo
+  }
+}
 const audits = ref([])
 const partners = ref([])
 const partnerRiskFilter = ref('')
@@ -479,8 +553,8 @@ const openCapaCount = computed(() => capas.value.filter((c) => c.status !== 'VER
 const capasOf = (d) => capas.value.filter((c) => c.deviationId === d.id)
 
 const loader = useLoader(async () => {
-  const [a, b, c, d, e, f, s] = await Promise.all([
-    http.get('/qms/deviations'), http.get('/qms/capas'), http.get('/qms/audits'), http.get('/qms/audit-partners'), http.get('/qms/retains'), http.get('/equipment'), http.get('/qms/summary')
+  const [a, b, c, d, e, f, s, cb] = await Promise.all([
+    http.get('/qms/deviations'), http.get('/qms/capas'), http.get('/qms/audits'), http.get('/qms/audit-partners'), http.get('/qms/retains'), http.get('/equipment'), http.get('/qms/summary'), http.get('/qms/closure-board')
   ])
   equipment.value = f
   deviations.value = a
@@ -489,6 +563,7 @@ const loader = useLoader(async () => {
   partners.value = d
   retains.value = e
   qmsSum.value = s
+  closureBoard.value = cb
 })
 const load = () => loader.run()
 

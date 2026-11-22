@@ -2265,7 +2265,9 @@ test('设备校准：不合格自动停用并生成偏差，批记录不能选�
   await expect(row.getByText('停用')).toBeVisible()
 
   await page.goto('/qms')
-  await expect(page.locator('.el-table__row').filter({ hasText: 'EQ-SC-01' }).getByText('重大偏差')).toBeVisible()
+  const deviations = page.getByRole('tabpanel', { name: /^偏差（/ })
+  const deviation = deviations.getByRole('row').filter({ hasText: 'EQ-SC-01' })
+  await expect(deviation.getByText('重大偏差', { exact: true })).toBeVisible()
 })
 
 test('上线准备：批量导入首版配方，上线检查列出还缺什么', async ({ page }) => {
@@ -2526,6 +2528,40 @@ test('委托生产单的附件区提示受托厂能看到，自产单和批次�
   await page.goto(`/trace?no=${encodeURIComponent((await api(page, '/stock'))[0].batchNo)}`)
   await expect(page.locator('.att').first()).toBeVisible()
   await expect(page.getByText(hint)).toHaveCount(0)
+})
+
+test('偏差闭环看板可筛出超期阻断项并定位旧台账记录', async ({ page }) => {
+  await login(page, 'qa1')
+  const [deviation] = await api(page, '/qms/deviations')
+  const overdue = {
+    itemId: deviation.id, itemType: 'DEVIATION', itemTypeLabel: '偏差调查',
+    refNo: deviation.deviationNo, title: deviation.title, daysLeft: -2,
+    riskLevel: 'OVERDUE', riskLabel: '重大偏差超期', blockingRelease: true, dueSoon: false
+  }
+  const upcoming = {
+    ...overdue, itemId: -1, refNo: 'DEV-CLOSURE-SOON', daysLeft: 2,
+    riskLevel: 'BLOCKING', riskLabel: '阻断放行·临期', dueSoon: true
+  }
+  await page.route('**/api/qms/deviations', (route) => route.fulfill({ json: [] }))
+  await page.route('**/api/qms/closure-board', (route) => route.fulfill({
+    json: { totalCount: 2, overdueCount: 1, blockingCount: 2, dueSoonCount: 1, verifyPendingCount: 0, rows: [overdue, upcoming] }
+  }))
+
+  await page.goto('/qms')
+  await page.getByRole('tab', { name: /^闭环升级监控/ }).click()
+  const overdueRow = page.getByRole('row').filter({ hasText: overdue.refNo })
+  const upcomingRow = page.getByRole('row').filter({ hasText: upcoming.refNo })
+  await page.getByText('阻断放行 (2)', { exact: true }).click()
+  await expect(overdueRow).toBeVisible()
+  await expect(upcomingRow).toBeVisible()
+  await page.getByText('3天内到期 (1)', { exact: true }).click()
+  await expect(upcomingRow).toBeVisible()
+  await expect(overdueRow).toHaveCount(0)
+
+  await page.getByText('阻断放行 (2)', { exact: true }).click()
+  await overdueRow.getByRole('button', { name: '去处理' }).click()
+  await expect(page.getByRole('tab', { name: /^偏差（/, selected: true })).toBeVisible()
+  await expect(overdueRow).toContainText(deviation.title)
 })
 
 test('门户账号进不了内部页面', async ({ page }) => {
