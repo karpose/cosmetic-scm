@@ -40,7 +40,7 @@
       <p class="foot muted small">本页只记录查询次数和时间，不收集您的个人信息。</p>
     </div>
 
-    <el-dialog v-model="cam.visible" title="扫描防伪二维码" width="min(460px, 94vw)" @closed="stopCamera">
+    <el-dialog v-model="cameraVisible" title="扫描防伪二维码" width="min(460px, 94vw)" @close="stopCamera">
       <video ref="video" class="video" playsinline muted />
       <p class="muted small">将防伪二维码对准取景框，识别后自动查询。</p>
     </el-dialog>
@@ -48,7 +48,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Camera, CircleCheckFilled, CircleCloseFilled, QuestionFilled, WarningFilled } from '@element-plus/icons-vue'
@@ -76,7 +76,7 @@ const icon = computed(() => TONES[result.value?.status]?.[1] || QuestionFilled)
 function normalizeCode(raw) {
   const s = String(raw || '').trim()
   // 支持直接扫完整验真链接（取最后一段防伪码）
-  const seg = s.includes('/verify/') ? s.split('/verify/').pop().split(/[?#]/)[0] : s
+  const seg = s.match(/\/(?:v|verify)\/([^/?#]+)(?:[?#]|$)/i)?.[1] ?? s
   return seg.replace(/\s+/g, '').toUpperCase()
 }
 
@@ -115,35 +115,57 @@ async function copySummary() {
 }
 
 const cameraOk = typeof window !== 'undefined' && 'BarcodeDetector' in window && !!navigator.mediaDevices?.getUserMedia
-const cam = reactive({ visible: false, stream: null, timer: null })
+const cameraVisible = ref(false)
 const video = ref(null)
+let cameraSession = null
 
 async function openCamera() {
-  cam.visible = true
+  if (cameraSession) return
+  const session = { stream: null, timer: null }
+  cameraSession = session
+  cameraVisible.value = true
   await nextTick()
   try {
-    cam.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-  } catch {
-    cam.visible = false
-    return ElMessage.warning('无法打开摄像头，请检查权限或手工输入防伪码')
-  }
-  video.value.srcObject = cam.stream
-  await video.value.play()
-  const detector = new window.BarcodeDetector({ formats: ['qr_code'] })
-  cam.timer = setInterval(async () => {
-    const found = await detector.detect(video.value).catch(() => [])
-    if (found.length) {
-      cam.visible = false
-      code.value = normalizeCode(found[0].rawValue)
-      lookup()
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    if (cameraSession !== session || !cameraVisible.value) {
+      stream.getTracks().forEach((track) => track.stop())
+      return
     }
-  }, 300)
+    session.stream = stream
+    video.value.srcObject = stream
+    await video.value.play()
+    if (cameraSession !== session || !cameraVisible.value) return
+
+    const detector = new window.BarcodeDetector({ formats: ['qr_code'] })
+    const read = async () => {
+      if (cameraSession !== session || !cameraVisible.value) return
+      const found = await detector.detect(video.value).catch(() => [])
+      if (cameraSession !== session || !cameraVisible.value) return
+      const scanned = normalizeCode(found[0]?.rawValue)
+      if (scanned) {
+        stopCamera()
+        cameraVisible.value = false
+        code.value = scanned
+        await lookup()
+        return
+      }
+      session.timer = setTimeout(read, 300)
+    }
+    session.timer = setTimeout(read, 300)
+  } catch {
+    if (cameraSession !== session) return
+    stopCamera()
+    cameraVisible.value = false
+    ElMessage.warning('无法打开摄像头，请检查权限或手工输入防伪码')
+  }
 }
 
 function stopCamera() {
-  clearInterval(cam.timer)
-  cam.stream?.getTracks().forEach((t) => t.stop())
-  cam.stream = null
+  const session = cameraSession
+  cameraSession = null
+  if (!session) return
+  clearTimeout(session.timer)
+  session.stream?.getTracks().forEach((track) => track.stop())
 }
 
 onMounted(() => { if (code.value) lookup() })

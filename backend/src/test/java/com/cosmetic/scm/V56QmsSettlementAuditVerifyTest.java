@@ -37,15 +37,21 @@ class V56QmsSettlementAuditVerifyTest {
 
     @Test
     void settlementSummaryEnforcesPriceAndArPermissions() throws Exception {
-        String admin = login("admin");
+        String finance = login("finance1");
+        String purchase = login("purchase1");
         String qa = login("qa1");
 
-        mvc.perform(get("/api/statements/summary").header("Authorization", "Bearer " + admin))
+        mvc.perform(get("/api/statements/summary").header("Authorization", "Bearer " + finance))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.apPendingApproveCount").isNumber())
                 .andExpect(jsonPath("$.apOpenAmount").isNumber())
                 .andExpect(jsonPath("$.arOpenCount").isNumber())
                 .andExpect(jsonPath("$.arOpenAmount").isNumber());
+
+        mvc.perform(get("/api/statements/summary").header("Authorization", "Bearer " + purchase))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.apOpenAmount").isNumber())
+                .andExpect(jsonPath("$.arOpenAmount").doesNotExist());
 
         mvc.perform(get("/api/statements/summary").header("Authorization", "Bearer " + qa))
                 .andExpect(status().isForbidden());
