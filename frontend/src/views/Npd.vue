@@ -6,9 +6,33 @@
         <p>立项由管理员批准；开发中记录小试和中试，关联成品；上市检查从配方、备案、合规资料、稳定性、质量标准实时核对，全部通过才能提交，由质量安全负责人批准上市。</p>
       </div>
       <div class="toolbar">
+        <ExportButton report="npd-projects" label="导出项目台账" />
         <ExportButton report="npd-readiness" label="导出上市就绪度" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="canCreate" type="primary" @click="openCreate">申请立项</el-button>
+      </div>
+    </div>
+
+    <div v-if="summary" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">进行中新品项目</div>
+        <div class="kpi-val mono">{{ summary.proposedCount + summary.activeCount + summary.launchReviewCount }} <span class="kpi-unit">/ {{ summary.totalCount }}</span></div>
+        <div class="kpi-sub">立项待批 {{ summary.proposedCount }} · 开发中 {{ summary.activeCount }}</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.launchReviewCount > 0 }">
+        <div class="kpi-label">待 QSO 批准上市</div>
+        <div class="kpi-val mono">{{ summary.launchReviewCount }}</div>
+        <div class="kpi-sub">上市门禁已全部通过</div>
+      </div>
+      <div class="kpi-card" :class="{ danger: summary.lateCount > 0 }">
+        <div class="kpi-label">超计划上市日期</div>
+        <div class="kpi-val mono">{{ summary.lateCount }}</div>
+        <div class="kpi-sub">进行中项目已超期</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">已批准上市</div>
+        <div class="kpi-val mono">{{ summary.launchedCount }}</div>
+        <div class="kpi-sub">已取消/不予立项 {{ summary.rejectedOrCancelledCount }} 个</div>
       </div>
     </div>
 
@@ -206,12 +230,19 @@ const isQso = computed(() => auth.hasAny('QSO'))
 const projects = ref([])
 const versions = ref([])
 const readiness = ref([])
+const summary = ref(null)
 const openOnly = ref(true)
 const loader = useLoader(async () => {
-  const [p, v, r] = await Promise.all([http.get('/npd/projects'), http.get('/plm/formulas'), http.get('/npd/readiness')])
+  const [p, v, r, s] = await Promise.all([
+    http.get('/npd/projects'),
+    http.get('/plm/formulas'),
+    http.get('/npd/readiness'),
+    http.get('/npd/summary', { silent: true }).catch(() => null)
+  ])
   projects.value = p
   versions.value = v
   readiness.value = r
+  summary.value = s
 })
 const load = () => loader.run()
 const shown = computed(() => openOnly.value ? projects.value.filter((x) => ['PROPOSED', 'ACTIVE', 'LAUNCH_REVIEW'].includes(x.status)) : projects.value)
@@ -314,7 +345,16 @@ async function launch() {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; }
+.kpi-card.danger { border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .late { color: var(--el-color-danger); }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .ok { color: var(--el-color-success); }
 .summary-line { margin: 0 0 6px; line-height: 1.8; }
 .sub-head { display: flex; justify-content: space-between; align-items: center; margin: 14px 0 6px; }
