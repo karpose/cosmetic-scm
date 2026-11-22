@@ -15,14 +15,28 @@
       </div>
     </div>
 
-    <el-card v-if="qmsSum" shadow="never" body-style="padding:10px 16px" style="margin-bottom:12px">
-      <div class="toolbar small">
-        <span>偏差闭环率 <b class="mono">{{ qmsSum.deviationCloseRatePct != null ? `${qmsSum.deviationCloseRatePct}%` : '—' }}</b>（超期 <b class="mono" :class="{ bad: qmsSum.overdueDeviations > 0 }">{{ qmsSum.overdueDeviations }}</b>）</span>
-        <span>CAPA 验证率 <b class="mono">{{ qmsSum.capaVerifyRatePct != null ? `${qmsSum.capaVerifyRatePct}%` : '—' }}</b>（超期 <b class="mono" :class="{ bad: qmsSum.overdueCapas > 0 }">{{ qmsSum.overdueCapas }}</b>）</span>
-        <span>合格供方 <b class="mono">{{ qmsSum.qualifiedPartners }}/{{ qmsSum.auditPartnersTotal }}</b>（审核超期 <b class="mono" :class="{ bad: qmsSum.auditOverdueCount > 0 }">{{ qmsSum.auditOverdueCount }}</b>）</span>
-        <span>在用设备 <b class="mono">{{ qmsSum.equipmentInUse }}/{{ qmsSum.equipmentTotal }}</b>（校准过期 <b class="mono" :class="{ bad: qmsSum.equipmentCalOverdue > 0 }">{{ qmsSum.equipmentCalOverdue }}</b>）</span>
+    <div v-if="qmsSum" class="kpi-grid">
+      <div class="kpi-card" :class="{ danger: qmsSum.overdueDeviations > 0, warn: qmsSum.overdueDeviations === 0 && openDeviationCount > 0 }" @click="tab = 'deviations'">
+        <div class="kpi-label">偏差闭环率</div>
+        <div class="kpi-val mono">{{ qmsSum.deviationCloseRatePct != null ? `${qmsSum.deviationCloseRatePct}%` : '—' }}</div>
+        <div class="kpi-sub">处理中 {{ openDeviationCount }} · 超期 {{ qmsSum.overdueDeviations }}</div>
       </div>
-    </el-card>
+      <div class="kpi-card" :class="{ danger: qmsSum.overdueCapas > 0, warn: qmsSum.overdueCapas === 0 && openCapaCount > 0 }" @click="tab = 'capas'">
+        <div class="kpi-label">CAPA 验证率</div>
+        <div class="kpi-val mono">{{ qmsSum.capaVerifyRatePct != null ? `${qmsSum.capaVerifyRatePct}%` : '—' }}</div>
+        <div class="kpi-sub">未完成 {{ openCapaCount }} · 超期 {{ qmsSum.overdueCapas }}</div>
+      </div>
+      <div class="kpi-card" :class="{ danger: qmsSum.auditOverdueCount > 0 }" @click="tab = 'audits'">
+        <div class="kpi-label">合格供应商 / 受托厂</div>
+        <div class="kpi-val mono">{{ qmsSum.qualifiedPartners }} <span class="kpi-unit">/ {{ qmsSum.auditPartnersTotal }}</span></div>
+        <div class="kpi-sub">审核超期 {{ qmsSum.auditOverdueCount }} 家</div>
+      </div>
+      <div class="kpi-card" :class="{ danger: qmsSum.equipmentCalOverdue > 0, warn: qmsSum.equipmentCalOverdue === 0 && equipDueCount > 0 }" @click="tab = 'equipment'">
+        <div class="kpi-label">在用关键设备</div>
+        <div class="kpi-val mono">{{ qmsSum.equipmentInUse }} <span class="kpi-unit">/ {{ qmsSum.equipmentTotal }}</span></div>
+        <div class="kpi-sub">校准过期 {{ qmsSum.equipmentCalOverdue }} · 待校准 {{ equipDueCount }}</div>
+      </div>
+    </div>
 
     <el-tabs v-model="tab" class="seg">
       <!-- ================= 偏差 ================= -->
@@ -35,6 +49,9 @@
                 <el-radio-button value="CLOSED">已关闭</el-radio-button>
                 <el-radio-button value="">全部</el-radio-button>
               </el-radio-group>
+              <el-select aria-label="按等级筛选" v-model="df.level" placeholder="全部等级" clearable size="small" style="width:130px">
+                <el-option v-for="(v, k) in LEVEL" :key="k" :value="k" :label="v" />
+              </el-select>
               <el-input v-model="dt.keyword.value" placeholder="搜索编号、标题、批号" clearable />
             </div>
           </template>
@@ -424,9 +441,9 @@ const canEquip = computed(() => auth.hasAny('ADMIN', 'PRODUCTION', 'QA', 'QSO'))
 const et = usePaged(equipment, { match: textMatch('code', 'name', 'location') })
 const equipDueCount = computed(() => equipment.value.filter((e) => e.status === 'IN_USE' && (e.dueState === 'OVERDUE' || e.dueState === 'DUE')).length)
 
-const df = reactive({ status: 'OPEN' })
+const df = reactive({ status: 'OPEN', level: '' })
 const cf = reactive({ status: 'ACTIVE' })
-const dt = usePaged(deviations, { match: textMatch('deviationNo', 'title', 'batchNo', 'moNo'), extra: (r) => !df.status || r.status === df.status })
+const dt = usePaged(deviations, { match: textMatch('deviationNo', 'title', 'batchNo', 'moNo'), extra: (r) => (!df.status || r.status === df.status) && (!df.level || r.level === df.level) })
 const ct = usePaged(capas, { match: textMatch('capaNo', 'description', 'owner', 'sourceNo'), extra: (r) => !cf.status || (cf.status === 'ACTIVE' ? r.status !== 'VERIFIED' : r.status === cf.status) })
 const at = usePaged(audits)
 const rt = usePaged(retains, { match: textMatch('batchNo', 'itemName', 'location') })
@@ -639,7 +656,17 @@ onMounted(load)
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: border-color 0.15s; }
+.kpi-card:hover { border-color: var(--el-color-primary-light-5); }
+.kpi-card.danger { border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .detail { display: grid; gap: 6px; padding: 4px 16px 10px 48px; font-size: 13px; }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
 .chip { display: inline-block; margin-right: 8px; }
 .bad { color: var(--el-color-danger); }

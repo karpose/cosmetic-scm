@@ -16,6 +16,29 @@
       </div>
     </div>
 
+    <div v-if="!selectedNo && summary" class="kpi-grid">
+      <div class="kpi-card" :class="{ warn: summary.apPendingApproveCount > 0 || summary.apDisputedCount > 0 }" @click="activeTab = 'statements'; followUp = ''">
+        <div class="kpi-label">未结应付余额</div>
+        <div class="kpi-val mono">¥{{ fmtMoney(summary.apOpenAmount) }}</div>
+        <div class="kpi-sub">待审批 {{ summary.apPendingApproveCount }} · 异议 {{ summary.apDisputedCount }}</div>
+      </div>
+      <div class="kpi-card" :class="{ danger: summary.apOverdueCount > 0 }" @click="activeTab = 'statements'; followUp = 'OVERDUE'">
+        <div class="kpi-label">已逾期应付</div>
+        <div class="kpi-val mono">¥{{ fmtMoney(summary.apOverdueAmount) }}</div>
+        <div class="kpi-sub">逾期 {{ summary.apOverdueCount }} 单（点击直达）</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.apPendingSyncCount > 0 }" @click="activeTab = 'statements'; syncFilter = 'PENDING'">
+        <div class="kpi-label">待同步财务凭证</div>
+        <div class="kpi-val mono">{{ summary.apPendingSyncCount }} <span class="kpi-unit">单</span></div>
+        <div class="kpi-sub">已审批但尚未完成外部制证</div>
+      </div>
+      <div v-if="summary.arOpenAmount != null" class="kpi-card" :class="{ danger: summary.arOverdueCount > 0 }" @click="activeTab = 'ar'; loadAr()">
+        <div class="kpi-label">待回款客户应收</div>
+        <div class="kpi-val mono">¥{{ fmtMoney(summary.arOpenAmount) }}</div>
+        <div class="kpi-sub">未结 {{ summary.arOpenCount }} 单 · 逾期 ¥{{ fmtMoney(summary.arOverdueAmount) }}</div>
+      </div>
+    </div>
+
     <el-tabs v-if="!selectedNo" v-model="activeTab" class="seg" @tab-change="onTabChange">
       <el-tab-pane label="对账单" name="statements" />
       <el-tab-pane label="进项发票台账" name="ledger" />
@@ -618,6 +641,7 @@ async function exportArVouchers() {
   ElMessage.success(`已导出 ${data.length} 张应收凭证`)
 }
 const rows = ref([])
+const summary = ref(null)
 const filterBy = ref('')
 const followUp = ref('')
 const syncFilter = ref('')
@@ -625,12 +649,18 @@ const selectedNo = computed(() => typeof route.query.no === 'string' ? route.que
 const listRequest = latestOnly()
 const loader = useLoader(async () => {
   const current = listRequest()
-  const data = await http.get('/statements', { params: {
-    statementNo: selectedNo.value || undefined,
-    followUp: followUp.value || undefined,
-    financeSyncStatus: syncFilter.value || undefined
-  } })
-  if (current()) rows.value = data
+  const [data, sum] = await Promise.all([
+    http.get('/statements', { params: {
+      statementNo: selectedNo.value || undefined,
+      followUp: followUp.value || undefined,
+      financeSyncStatus: syncFilter.value || undefined
+    } }),
+    http.get('/statements/summary', { silent: true }).catch(() => null)
+  ])
+  if (current()) {
+    rows.value = data
+    summary.value = sum
+  }
 })
 const load = () => loader.run()
 const statuses = { CONFIRMED: '待登记或更正发票', APPROVED: '已审批', PAID: '已结清' }
@@ -858,6 +888,16 @@ async function exportVouchers() {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: border-color 0.15s; }
+.kpi-card:hover { border-color: var(--el-color-primary-light-5); }
+.kpi-card.danger { border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .late { color: var(--el-color-danger); }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .total { margin: 4px 0 0; font-size: 15px; }
 </style>
