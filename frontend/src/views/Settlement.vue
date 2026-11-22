@@ -261,6 +261,16 @@
             [{{ fmtQty(tb.taxRate) }}% 税率：含税 ¥{{ fmtMoney(tb.goodsAmount) }} / 不含税 ¥{{ fmtMoney(tb.netAmount) }} / 税额 ¥{{ fmtMoney(tb.taxAmount) }}]
           </span>
         </div>
+        <el-alert v-if="cr.preview?.oemOveruses?.length" type="warning" :closable="false" show-icon style="margin-top:10px">
+          <template #title>
+            关联委外工单存在 {{ cr.preview.oemOveruses.length }} 项品牌供料超耗
+            <span v-if="Number(cr.preview.suggestedDeduction) > 0">（按标准成本折合 ¥{{ fmtMoney(cr.preview.suggestedDeduction) }}）</span>
+            <el-button v-if="Number(cr.preview.suggestedDeduction) > 0" size="small" type="warning" plain style="margin-left:10px" @click="applyOveruseDeduction">按超耗建议填入扣款</el-button>
+          </template>
+          <div v-for="(o, idx) in cr.preview.oemOveruses" :key="idx" class="small mono">
+            {{ o.moNo }} · {{ o.itemName }}（标耗 {{ fmtQty(o.standardQty) }} / 净发 {{ fmtQty(o.netIssuedQty) }} / 超耗 +{{ fmtQty(o.overuseQty) }} {{ o.unit }}<span v-if="o.overuseAmount != null">，折合 ¥{{ fmtMoney(o.overuseAmount) }}</span>）
+          </div>
+        </el-alert>
         <div v-if="cr.preview?.lines.length" class="form-grid" style="margin-top:12px">
           <el-form-item label="调整金额（扣款填负数，选填）"><el-input-number id="st-adjust" v-model="cr.adjustment" :precision="2" :controls="false" style="width:100%" /></el-form-item>
           <el-form-item label="调整原因"><el-input id="st-adjust-note" v-model="cr.adjustmentNote" maxlength="300" /></el-form-item>
@@ -704,6 +714,13 @@ async function loadPreview() {
   if (!cr.supplierId || !cr.periodTo) return
   const res = await http.get('/statements/preview', { params: { supplierId: cr.supplierId, periodTo: cr.periodTo } })
   if (current()) cr.preview = res
+}
+function applyOveruseDeduction() {
+  const amt = Number(cr.preview?.suggestedDeduction || 0)
+  if (!(amt > 0)) return
+  cr.adjustment = -amt
+  const mos = [...new Set((cr.preview.oemOveruses || []).map((o) => o.moNo))].join('、')
+  cr.adjustmentNote = `委外品牌供料超耗扣款（${mos}）`
 }
 async function submitCreate() {
   if (cr.adjustment && !cr.adjustmentNote.trim()) return ElMessage.warning('有调整金额时要写明原因')

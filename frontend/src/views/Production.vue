@@ -8,6 +8,7 @@
       <div class="toolbar">
         <ExportButton v-if="tab === 'efficiency'" report="production-efficiency" label="导出效率对比" />
         <ExportButton v-else-if="tab === 'consignment'" report="oem-consignment" label="导出委外寄售料账" />
+        <ExportButton v-else-if="tab === 'variance'" report="material-variance" label="导出超耗台账" />
         <ExportButton v-else report="production" />
         <el-button v-if="canCreate" type="primary" @click="openCreate">新建生产 / 委托单</el-button>
       </div>
@@ -35,6 +36,7 @@
     <el-tabs v-model="tab" class="seg">
       <el-tab-pane label="生产与委托单" name="orders" />
       <el-tab-pane :label="`委外寄售料账（${consignment.length}）`" name="consignment" />
+      <el-tab-pane :label="`物料超耗与平衡（${overuseCount}）`" name="variance" />
       <el-tab-pane label="工厂收率对比" name="efficiency" />
     </el-tabs>
 
@@ -65,6 +67,44 @@
         </el-table-column>
       </el-table>
       <ListPager v-model:page="ct.page.value" v-model:size="ct.size.value" :total="ct.total.value" />
+    </el-card>
+
+    <el-card v-else-if="tab === 'variance'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-input v-model="vt.keyword.value" placeholder="搜索单号、生产方、成品、物料" clearable />
+          <el-select v-model="varState" placeholder="全部差异状态" clearable>
+            <el-option value="OVERUSE" label="超耗" />
+            <el-option value="SAVING" label="节余" />
+            <el-option value="BALANCED" label="平衡" />
+          </el-select>
+        </div>
+      </template>
+      <el-table :data="vt.paged.value" v-loading="loading" size="small" empty-text="暂无已发料或已完工生产单的领料数据">
+        <el-table-column label="生产单" width="155">
+          <template #default="{ row }"><span class="mono">{{ row.moNo }}</span><div class="muted small">{{ row.moTypeLabel }} · {{ row.moStatusLabel }}</div></template>
+        </el-table-column>
+        <el-table-column prop="factoryName" label="生产方" min-width="120" />
+        <el-table-column label="成品" min-width="140"><template #default="{ row }">{{ row.fgName }}<div class="muted small mono">{{ row.actualQty ? `实产 ${fmtQty(row.actualQty)}` : `计划 ${fmtQty(row.plannedQty)}` }}</div></template></el-table-column>
+        <el-table-column label="品牌供料" min-width="140"><template #default="{ row }">{{ row.itemName }}<div class="muted small mono">{{ row.itemCode }}</div></template></el-table-column>
+        <el-table-column label="理论标耗" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.standardQty) }} {{ row.unit }}</span></template></el-table-column>
+        <el-table-column label="净发料量" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.netIssuedQty) }} {{ row.unit }}</span></template></el-table-column>
+        <el-table-column label="差异 / 比例" width="130" align="right">
+          <template #default="{ row }">
+            <span class="mono" :style="{ color: row.state === 'OVERUSE' ? 'var(--el-color-danger)' : row.state === 'SAVING' ? 'var(--el-color-success)' : '' }">
+              {{ Number(row.varianceQty) > 0 ? `+${fmtQty(row.varianceQty)}` : fmtQty(row.varianceQty) }} {{ row.unit }}
+            </span>
+            <div v-if="row.variancePct != null" class="muted small mono">{{ Number(row.variancePct) > 0 ? `+${row.variancePct}%` : `${row.variancePct}%` }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="80">
+          <template #default="{ row }"><el-tag size="small" :type="row.state === 'OVERUSE' ? 'danger' : row.state === 'SAVING' ? 'success' : 'info'" disable-transitions>{{ row.stateLabel }}</el-tag></template>
+        </el-table-column>
+        <el-table-column v-if="varianceHasPrice" label="差异金额" width="115" align="right">
+          <template #default="{ row }"><span class="mono" :style="{ color: Number(row.varianceCost) > 0 ? 'var(--el-color-danger)' : '' }">{{ row.varianceCost != null ? `¥${fmtQty(row.varianceCost)}` : '—' }}</span></template>
+        </el-table-column>
+      </el-table>
+      <ListPager v-model:page="vt.page.value" v-model:size="vt.size.value" :total="vt.total.value" />
     </el-card>
 
     <div v-else-if="tab === 'efficiency' && eff" class="ana-grid">
@@ -393,6 +433,8 @@ const rd = useRefData()
 const tab = ref('orders')
 const orders = ref([])
 const consignment = ref([])
+const variances = ref([])
+const varState = ref('')
 const eff = ref(null)
 const loading = ref(false)
 const loadError = ref('')
@@ -406,7 +448,13 @@ const t = usePaged(orders, {
 const ct = usePaged(consignment, {
   match: textMatch('factoryName', 'warehouseName', 'warehouseCode', 'batchNo', 'itemCode', 'itemName')
 })
+const vt = usePaged(variances, {
+  match: textMatch('moNo', 'factoryName', 'fgCode', 'fgName', 'itemCode', 'itemName'),
+  extra: (r) => !varState.value || r.state === varState.value
+})
 const consignmentHasPrice = computed(() => consignment.value.some((r) => r.value != null))
+const varianceHasPrice = computed(() => variances.value.some((r) => r.varianceCost != null))
+const overuseCount = computed(() => variances.value.filter((r) => r.state === 'OVERUSE').length)
 const canCreate = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
 const canOperate = computed(() => auth.hasAny('ADMIN', 'PRODUCTION', 'WAREHOUSE'))
 const canCancel = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
@@ -434,14 +482,16 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const [os, ef, cs] = await Promise.all([
+    const [os, ef, cs, vs] = await Promise.all([
       http.get('/mfg-orders'),
       http.get('/analytics/production-efficiency'),
-      http.get('/mfg-orders/oem-consignment')
+      http.get('/mfg-orders/oem-consignment'),
+      http.get('/mfg-orders/material-variance')
     ])
     orders.value = os
     eff.value = ef
     consignment.value = cs
+    variances.value = vs
   } catch (e) {
     loadError.value = e.message
   } finally {
