@@ -284,10 +284,12 @@ public class ReportService {
         List<List<Object>> rows = new ArrayList<>();
         batchCosting.report().forEach(r -> rows.add(row(
                 r.moNo(), r.moTypeLabel(), r.factoryName(), r.fgCode(), r.fgName(), r.outBatchNo(),
-                r.actualQty(), r.materialCost(), r.processingCost(), r.totalCost(),
-                r.actualUnitCost(), r.stdUnitCost(), r.variancePct(), r.completedAt())));
+                r.actualQty(), r.yieldPct(), r.materialCost(), r.processingCost(), r.totalCost(),
+                r.actualUnitCost(), r.stdUnitCost(), r.variancePct(), r.varianceAmount(),
+                r.anomalyLabel(), r.costDriver(), r.completedAt())));
         return new Table("生产批次实际成本", List.of("生产单号", "类型", "生产方", "成品编码", "成品名称", "产出批号",
-                "实际产量", "领料成本", "委外加工费", "总成本", "实际单位成本", "标准单位成本", "偏差（%）", "完工时间"), rows);
+                "实际产量", "收率（%）", "领料成本", "委外加工费", "总成本", "实际单位成本", "标准单位成本",
+                "偏差（%）", "偏差金额（元）", "异常分级", "主要归因", "完工时间"), rows);
     }
 
     private Table marginReport(LocalDate from, LocalDate to) {

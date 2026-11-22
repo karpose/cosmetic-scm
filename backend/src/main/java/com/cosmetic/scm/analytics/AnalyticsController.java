@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 
 import com.cosmetic.scm.analytics.AnalyticsService.Kpi;
 import com.cosmetic.scm.analytics.BatchCostingService.BatchCostRow;
+import com.cosmetic.scm.analytics.BatchCostingService.BatchCostSummary;
 import com.cosmetic.scm.analytics.ExpiryRiskAndReturnsService.ExpiryRiskReport;
 import com.cosmetic.scm.analytics.ExpiryRiskAndReturnsService.SalesReturnReport;
 import com.cosmetic.scm.analytics.ProductionEfficiencyService.ProductionEfficiencyReport;
@@ -91,6 +92,12 @@ public class AnalyticsController {
     @PreAuthorize(PRICE_ROLE)
     public List<BatchCostRow> batchCosts() {
         return batchCosting.report();
+    }
+
+    @GetMapping("/batch-costs/summary")
+    @PreAuthorize(PRICE_ROLE)
+    public BatchCostSummary batchCostSummary() {
+        return batchCosting.summary();
     }
 
     @GetMapping("/margins")
