@@ -14,7 +14,7 @@
     <div v-if="risk" class="kpi-grid">
       <div class="kpi-card clickable" :class="{ warn: risk.expiredCount > 0, active: riskFilter === 'EXPIRED' }" @click="toggleRisk('EXPIRED')">
         <div class="muted small">已过期批次</div>
-        <div class="kpi-val mono">{{ risk.expiredCount }}</div>
+        <div class="kpi-val mono">{{ risk.expiredCount }} <span v-if="risk.expiredUnfrozenCount > 0" class="muted small">（未隔离 {{ risk.expiredUnfrozenCount }}）</span></div>
         <div v-if="risk.canSeeValue" class="muted small mono">货值 ¥{{ fmtAmt(risk.expiredValue) }}</div>
       </div>
       <div class="kpi-card clickable" :class="{ warn: risk.criticalCount > 0, active: riskFilter === 'CRITICAL' }" @click="toggleRisk('CRITICAL')">
@@ -52,6 +52,7 @@
           <el-input id="st-q" v-model="f.q" placeholder="搜索物料或批号" clearable style="width:220px" @change="load" />
           <el-checkbox id="st-zero" v-model="f.includeZero" @change="load">显示已用完批次</el-checkbox>
           <el-button size="small" :disabled="!picked.length" @click="printLabels">打印标签（{{ picked.length }}）</el-button>
+          <el-button v-if="canFreeze" size="small" type="danger" plain :disabled="!picked.length" @click="openFreeze">批量冻结（{{ picked.length }}）</el-button>
         </div>
       </template>
       <LoadError v-if="error" :message="error" :loading="loading" @retry="load" />
@@ -65,16 +66,38 @@
         <el-table-column label="状态" width="110"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /></template></el-table-column>
         <el-table-column label="有效期至" width="110"><template #default="{ row }"><span class="mono">{{ fmtDate(row.expDate) }}</span></template></el-table-column>
         <el-table-column label="剩余效期" width="130"><template #default="{ row }"><ShelfBar :ratio="row.shelfRatio" /></template></el-table-column>
+        <el-table-column label="效期处置建议" min-width="170">
+          <template #default="{ row }">
+            <template v-if="riskRowOf(row)">
+              <div class="small">{{ riskRowOf(row).recommendedAction }}</div>
+              <router-link :to="riskRowOf(row).actionRoute" class="small">去处置 →</router-link>
+            </template>
+            <span v-else class="muted small">正常</span>
+          </template>
+        </el-table-column>
       </el-table>
       <ListCapHint :count="rows.length" :cap="5000" />
       <ListPager v-model:page="t.page.value" v-model:size="t.size.value" :total="t.total.value" />
     </el-card>
+
+    <el-dialog v-model="fz.visible" title="批量冻结所选批次" width="460px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <p class="muted small" style="margin-top:0">将冻结 {{ fz.batchNos.length }} 个批次（已冻结或已判不合格的将自动跳过）：<span class="mono">{{ fz.batchNos.join('、') }}</span></p>
+        <el-form-item label="冻结原因（必填）"><el-input v-model="fz.reason" type="textarea" :rows="2" maxlength="300" placeholder="如：批次已过有效期，隔离待报废" /></el-form-item>
+        <el-form-item label="签批密码（本人登录密码）"><el-input v-model="fz.password" type="password" show-password autocomplete="current-password" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="fz.visible = false">取消</el-button>
+        <el-button type="danger" :loading="fz.saving" @click="submitFreeze">签批冻结</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
 import ListPager from '../components/ListPager.vue'
@@ -83,10 +106,13 @@ import ShelfBar from '../components/ShelfBar.vue'
 import StatusTag from '../components/StatusTag.vue'
 import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
+import { useAuth } from '../stores/auth'
 import { ITEM_TYPE, fmtDate, fmtQty } from '../utils/format'
 import { latestOnly } from '../utils/latest'
 import { usePaged } from '../utils/table'
 
+const auth = useAuth()
+const canFreeze = computed(() => auth.hasAny('QA', 'QSO'))
 const f = reactive({ type: '', warehouseId: null, q: '', includeZero: false })
 const rows = ref([])
 const risk = ref(null)
@@ -94,19 +120,38 @@ const riskFilter = ref('')
 const warehouses = ref([])
 const loading = ref(false)
 const error = ref('')
-const riskMap = computed(() => {
+const riskRowMap = computed(() => {
   const m = new Map()
-  for (const r of risk.value?.riskRows || []) m.set(`${r.batchNo}|${r.warehouseName}`, r.riskLevel)
+  for (const r of risk.value?.riskRows || []) m.set(`${r.batchNo}|${r.warehouseName}`, r)
   return m
 })
+const riskRowOf = (row) => riskRowMap.value.get(`${row.batchNo}|${row.warehouseName}`) || null
 const t = usePaged(rows, {
   pageSize: 50,
-  extra: (r) => !riskFilter.value || riskMap.value.get(`${r.batchNo}|${r.warehouseName}`) === riskFilter.value
+  extra: (r) => !riskFilter.value || riskRowOf(r)?.riskLevel === riskFilter.value
 })
 const router = useRouter()
 const picked = ref([])
 // 同一批次在多个仓库时只打一次
 const printLabels = () => router.push({ path: '/labels', query: { batches: [...new Set(picked.value.map((r) => r.batchNo))].join(',') } })
+const fz = reactive({ visible: false, saving: false, batchNos: [], reason: '', password: '' })
+function openFreeze() {
+  const nos = [...new Set(picked.value.map((r) => r.batchNo))]
+  if (!nos.length) return
+  Object.assign(fz, { visible: true, saving: false, batchNos: nos, reason: riskFilter.value === 'EXPIRED' ? '批次已过有效期，隔离待报废' : '', password: '' })
+}
+async function submitFreeze() {
+  if (!fz.reason.trim() || !fz.password) return ElMessage.warning('请填写冻结原因和签批密码')
+  fz.saving = true
+  try {
+    const res = await http.post('/quality/freeze', { batchNos: fz.batchNos, reason: fz.reason, password: fz.password })
+    ElMessage.success(`已冻结 ${res.frozen.length} 个批次`)
+    fz.visible = false
+    load()
+  } finally {
+    fz.saving = false
+  }
+}
 const toggleRisk = (level) => { riskFilter.value = riskFilter.value === level ? '' : level }
 const fmtAmt = (v) => (v == null ? '0.00' : Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
 
