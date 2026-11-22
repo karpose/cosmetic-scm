@@ -13,6 +13,7 @@ import com.cosmetic.scm.qms.DeviationService.CloseReq;
 import com.cosmetic.scm.qms.DeviationService.DeviationReq;
 import com.cosmetic.scm.qms.DeviationService.DeviationView;
 import com.cosmetic.scm.qms.DeviationService.InvestigateReq;
+import com.cosmetic.scm.qms.DeviationService.QmsClosureBoard;
 import com.cosmetic.scm.qms.RetainService.DestroyReq;
 import com.cosmetic.scm.qms.RetainService.SampleView;
 import com.cosmetic.scm.qms.RetainService.UseReq;
@@ -47,6 +48,11 @@ public class QmsController {
     @GetMapping("/summary")
     public com.cosmetic.scm.analytics.QualityGovernanceService.QmsSummary summary() {
         return qualityGov.qmsSummary();
+    }
+
+    @GetMapping("/closure-board")
+    public QmsClosureBoard closureBoard() {
+        return deviations.closureBoard();
     }
 
     @GetMapping("/deviations")

@@ -134,6 +134,7 @@ public class ReportService {
         m.put("controlled-docs", this::controlledDocsReport);
         m.put("doc-compliance", this::docComplianceReport);
         m.put("qms-summary", this::qmsSummaryReport);
+        m.put("qms-closure", this::qmsClosureReport);
         m.put("inventory-abc", this::inventoryAbcReport);
         m.put("serial-anomalies", this::serialAnomaliesReport);
         m.put("quality-events-summary", () -> qualityEventsSummaryReport(from, to));
@@ -405,6 +406,15 @@ public class ReportService {
         rows.add(row("供应商审核", s.auditPartnersTotal(), s.auditDueCount(), s.auditOverdueCount(), s.qualifiedPartners(), null));
         rows.add(row("设备校准", s.equipmentTotal(), s.equipmentCalDue(), s.equipmentCalOverdue(), s.equipmentInUse(), null));
         return new Table("质量体系健康度", List.of("维度", "总数", "进行中/将到期", "已超期", "已闭环/在用", "闭环率(%)"), rows);
+    }
+
+    private Table qmsClosureReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        deviations.closureBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.itemTypeLabel(), r.refNo(), r.title(), r.levelOrStatus(),
+                r.ownerOrArea(), r.batchNo(), r.dueDate(), r.daysLeft(), r.escalationAction())));
+        return new Table("偏差与CAPA闭环升级监控", List.of("风险分级", "事项类型", "编号", "标题/措施", "等级/状态",
+                "环节/负责人", "关联批号/来源", "期限", "剩余天数", "升级处置建议"), rows);
     }
 
     private Table inventoryAbcReport() {
