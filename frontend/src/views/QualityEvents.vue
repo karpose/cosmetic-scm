@@ -8,6 +8,7 @@
       <div class="toolbar">
         <ExportButton v-if="tab === 'complaints'" report="complaints" />
         <ExportButton v-if="tab === 'analytics'" report="quality-events-summary" label="导出分析汇总" />
+        <ExportButton v-if="tab === 'closure'" report="quality-event-closure" label="导出闭环监控" />
         <el-button v-if="tab === 'complaints' && canLog" type="primary" @click="openComplaint">登记投诉</el-button>
         <el-button v-if="tab === 'recalls' && isQso" type="danger" @click="openRecall()">发起召回</el-button>
       </div>
@@ -191,6 +192,56 @@
           </el-card>
         </div>
       </el-tab-pane>
+
+      <!-- ================= 合规闭环监控 ================= -->
+      <el-tab-pane :label="`合规闭环监控（${closureBoard?.totalCount ?? 0}）`" name="closure">
+        <el-card shadow="never" body-style="padding:0 0 8px">
+          <template #header>
+            <div class="filters">
+              <el-radio-group v-model="closureFilter" size="small">
+                <el-radio-button value="ALL">全部 ({{ closureBoard?.totalCount ?? 0 }})</el-radio-button>
+                <el-radio-button value="OVERDUE">超期 / 滞后 ({{ closureBoard?.overdueCount ?? 0 }})</el-radio-button>
+                <el-radio-button value="DUE_SOON">3天内须上报 ({{ closureBoard?.dueSoonCount ?? 0 }})</el-radio-button>
+                <el-radio-button value="RECALL_LAG">召回跟进中 ({{ closureBoard?.recallLagCount ?? 0 }})</el-radio-button>
+              </el-radio-group>
+              <el-button size="small" @click="load">刷新</el-button>
+            </div>
+            <div v-if="closureBoard" class="muted small" style="margin-top:8px">
+              待闭环监管与召回事项 <b class="mono">{{ closureBoard.totalCount }}</b> 项 · 超期/通知滞后 <b class="mono" :style="{ color: closureBoard.overdueCount > 0 ? 'var(--el-color-danger)' : undefined }">{{ closureBoard.overdueCount }}</b> 项 · 3天内临期上报 <b class="mono">{{ closureBoard.dueSoonCount }}</b> 项 · 召回跟进中 <b class="mono">{{ closureBoard.recallLagCount }}</b> 项 · 处理中客诉共 <b class="mono">{{ closureBoard.openComplaintCount }}</b> 件
+            </div>
+          </template>
+          <el-table :data="filteredClosureRows" v-loading="loader.loading.value" size="small" empty-text="当前无待上报不良反应或进行中召回事项">
+            <el-table-column label="风险分级" width="120" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.riskLevel === 'OVERDUE' ? 'danger' : row.riskLevel === 'DUE_SOON' ? 'warning' : row.riskLevel === 'RECALL_LAG' ? 'primary' : 'success'" disable-transitions>{{ row.riskLabel }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="itemTypeLabel" label="事项类型" width="115" />
+            <el-table-column label="单号 / 批号" width="165">
+              <template #default="{ row }"><span class="mono">{{ row.refNo }}</span><div v-if="row.batchNo" class="muted small mono">{{ row.batchNo }}</div></template>
+            </el-table-column>
+            <el-table-column label="成品 / 进度明细" min-width="190">
+              <template #default="{ row }">{{ row.itemName }}<div class="muted small">{{ row.detail }}</div></template>
+            </el-table-column>
+            <el-table-column label="时限 / 回收率" width="130" align="right">
+              <template #default="{ row }">
+                <template v-if="row.dueDate">
+                  <span class="mono">{{ row.dueDate }}</span>
+                  <div class="small mono" :style="{ color: row.daysLeft < 0 ? 'var(--el-color-danger)' : undefined }">{{ row.daysLeft < 0 ? `超期 ${-row.daysLeft} 天` : `剩 ${row.daysLeft} 天` }}</div>
+                </template>
+                <span v-else-if="row.progressPct != null" class="mono">回收 {{ row.progressPct }}%</span>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="recommendedAction" label="合规处置建议" min-width="230" />
+            <el-table-column label="" width="90" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" @click="openClosureItem(row)">去处理</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 登记投诉 -->
@@ -359,10 +410,27 @@ const auth = useAuth()
 const route = useRoute()
 const router = useRouter()
 const rd = useRefData()
-const tab = ref(route.query.tab === 'recalls' ? 'recalls' : route.query.tab === 'analytics' ? 'analytics' : 'complaints')
+const tab = ref(['recalls', 'analytics', 'closure'].includes(route.query.tab) ? route.query.tab : 'complaints')
 const complaints = ref([])
 const recalls = ref([])
 const evReport = ref(null)
+const closureBoard = ref(null)
+const closureFilter = ref('ALL')
+const filteredClosureRows = computed(() => {
+  const list = closureBoard.value?.rows || []
+  return closureFilter.value === 'ALL' ? list : list.filter((r) => r.riskLevel === closureFilter.value)
+})
+function openClosureItem(row) {
+  if (row.itemType === 'ADVERSE_REPORT') {
+    tab.value = 'complaints'
+    cf.status = 'OPEN'
+    cf.category = 'ADVERSE'
+  } else {
+    tab.value = 'recalls'
+    const target = recalls.value.find((r) => r.recallNo === row.refNo)
+    if (target) showRecall(target.id)
+  }
+}
 const fgBatches = ref([])
 
 const isQa = computed(() => auth.hasAny('QA', 'QSO'))
@@ -372,14 +440,16 @@ const canNotify = computed(() => auth.hasAny('QA', 'QSO', 'SALES'))
 const canReturn = computed(() => auth.hasAny('ADMIN', 'SALES', 'WAREHOUSE'))
 
 const loader = useLoader(async () => {
-  const [cs, rs, rep] = await Promise.all([
+  const [cs, rs, rep, cb] = await Promise.all([
     http.get('/complaints'),
     http.get('/recalls'),
-    http.get('/analytics/quality-events')
+    http.get('/analytics/quality-events'),
+    http.get('/analytics/quality-events/closure-board')
   ])
   complaints.value = cs
   recalls.value = rs
   evReport.value = rep
+  closureBoard.value = cb
   if (dr.recall) dr.recall = rs.find((r) => r.id === dr.recall.id) || null
 })
 const load = () => loader.run()

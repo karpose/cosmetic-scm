@@ -7,12 +7,14 @@ import lombok.RequiredArgsConstructor;
 
 import com.cosmetic.scm.analytics.AnalyticsService.Kpi;
 import com.cosmetic.scm.analytics.BatchCostingService.BatchCostRow;
+import com.cosmetic.scm.analytics.BatchCostingService.BatchCostSummary;
 import com.cosmetic.scm.analytics.ExpiryRiskAndReturnsService.ExpiryRiskReport;
 import com.cosmetic.scm.analytics.ExpiryRiskAndReturnsService.SalesReturnReport;
 import com.cosmetic.scm.analytics.ProductionEfficiencyService.ProductionEfficiencyReport;
 import com.cosmetic.scm.analytics.FinanceInsightsService.CashFlowReport;
 import com.cosmetic.scm.analytics.FinanceInsightsService.MarginReport;
 import com.cosmetic.scm.analytics.FinanceInsightsService.VarianceReport;
+import com.cosmetic.scm.analytics.QualityEventAnalyticsService.QualityEventClosureBoard;
 import com.cosmetic.scm.analytics.QualityEventAnalyticsService.QualityEventReport;
 import com.cosmetic.scm.analytics.QualityGovernanceService.AbcReport;
 import com.cosmetic.scm.analytics.QualityGovernanceService.PqrReport;
@@ -70,6 +72,11 @@ public class AnalyticsController {
         return qualityEvents.report(from, to);
     }
 
+    @GetMapping("/quality-events/closure-board")
+    public QualityEventClosureBoard qualityEventClosureBoard() {
+        return qualityEvents.closureBoard();
+    }
+
     @GetMapping("/expiry-risk")
     public ExpiryRiskReport expiryRisk() {
         return expiryReturns.expiryRisk();
@@ -91,6 +98,12 @@ public class AnalyticsController {
     @PreAuthorize(PRICE_ROLE)
     public List<BatchCostRow> batchCosts() {
         return batchCosting.report();
+    }
+
+    @GetMapping("/batch-costs/summary")
+    @PreAuthorize(PRICE_ROLE)
+    public BatchCostSummary batchCostSummary() {
+        return batchCosting.summary();
     }
 
     @GetMapping("/margins")

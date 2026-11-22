@@ -121,6 +121,18 @@ public class PlanningService {
                               BigDecimal contractPrice, BigDecimal contractTaxRate) {
     }
 
+    public record KittingShortage(Long itemId, String itemCode, String itemName, String unit,
+                                  BigDecimal requiredQty, BigDecimal allocatedQty, BigDecimal shortQty,
+                                  BigDecimal quarantineQty, BigDecimal onOrderQty, String supplyHint) {
+    }
+
+    public record KittingOrderRow(Long moId, String moNo, MoType moType, String moTypeLabel,
+                                  String factoryName, Long fgItemId, String fgCode, String fgName,
+                                  BigDecimal plannedQty, LocalDate plannedDate,
+                                  int totalBrandItems, int readyItems, BigDecimal kittingPct,
+                                  String status, String statusLabel, List<KittingShortage> shortages) {
+    }
+
     // ---------- 成品 ----------
 
     @Transactional(readOnly = true)
@@ -357,6 +369,98 @@ public class PlanningService {
                     usedBy.getOrDefault(m.getId(), List.of()), m.getStdCost(),
                     showPrice && cp != null ? cp.getUnitPrice() : null,
                     showPrice && cp != null ? cp.getTaxRate() : null));
+        }
+        return out;
+    }
+
+    /** 待发料生产/委托单齐套预检：按计划日期从早到晚模拟扣减自有仓可用库存，识别齐套工单与缺料卡单。 */
+    @Transactional(readOnly = true)
+    public List<KittingOrderRow> kittingCheck() {
+        List<MfgOrder> planned = new ArrayList<>(mfgOrders.findByStatusIn(List.of(MoStatus.PLANNED)));
+        if (planned.isEmpty()) {
+            return List.of();
+        }
+        planned.sort(java.util.Comparator.comparing(MfgOrder::getPlannedDate, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder()))
+                .thenComparing(MfgOrder::getId));
+
+        LocalDate today = time.today();
+        Map<Long, Item> im = lookup.itemMap();
+        Map<Long, Partner> pm = lookup.partnerMap();
+        Map<Long, Warehouse> wm = lookup.warehouseMap();
+        List<Stock> stockRows = stocks.findByQtyGreaterThan(BigDecimal.ZERO);
+        Map<Long, Batch> bm = stockRows.isEmpty() ? Map.of()
+                : batches.findAllById(stockRows.stream().map(Stock::getBatchId).distinct().toList()).stream()
+                        .collect(Collectors.toMap(Batch::getId, Function.identity()));
+        Map<Long, BigDecimal> availPool = new HashMap<>();
+        Map<Long, BigDecimal> quarantinePool = new HashMap<>();
+        for (Stock s : stockRows) {
+            if (wm.get(s.getWarehouseId()).getKind() != WarehouseKind.OWN) {
+                continue;
+            }
+            Batch b = bm.get(s.getBatchId());
+            if (b == null || ShelfLife.isExpired(b.getExpDate(), today)) {
+                continue;
+            }
+            if (b.getStatus() == BatchStatus.RELEASED) {
+                availPool.merge(s.getItemId(), s.getQty(), BigDecimal::add);
+            } else if (b.getStatus() == BatchStatus.QUARANTINE) {
+                quarantinePool.merge(s.getItemId(), s.getQty(), BigDecimal::add);
+            }
+        }
+        List<PurchaseOrder> openPos = purchaseOrders.findByStatusIn(List.of(PoStatus.OPEN, PoStatus.PARTIAL));
+        Map<Long, BigDecimal> onOrderPool = openPos.isEmpty() ? Map.of() : poLines.findByPoIdIn(ids(openPos)).stream()
+                .collect(Collectors.toMap(PoLine::getItemId, l -> l.getQty().subtract(l.getReceivedQty()).max(BigDecimal.ZERO),
+                        BigDecimal::add));
+
+        List<KittingOrderRow> out = new ArrayList<>();
+        for (MfgOrder mo : planned) {
+            Item fg = im.get(mo.getFgItemId());
+            Partner f = pm.get(mo.getFactoryId());
+            List<BomLine> bom = mo.getFormulaVersionId() == null ? master.bomLines(mo.getFgItemId())
+                    : master.versionLines(mo.getFormulaVersionId());
+            int totalBrand = 0;
+            int ready = 0;
+            boolean needPo = false;
+            List<KittingShortage> shortages = new ArrayList<>();
+            for (BomLine l : bom) {
+                SupplyMode mode = mo.getMoType() == MoType.OWN ? SupplyMode.BRAND : l.getSupplyMode();
+                if (mode != SupplyMode.BRAND) {
+                    continue;
+                }
+                totalBrand++;
+                BigDecimal reqQty = l.getQtyPer().multiply(mo.getPlannedQty()).setScale(4, RoundingMode.UP);
+                BigDecimal avail = availPool.getOrDefault(l.getItemId(), BigDecimal.ZERO);
+                BigDecimal alloc = avail.min(reqQty);
+                availPool.put(l.getItemId(), avail.subtract(alloc));
+                if (alloc.compareTo(reqQty) >= 0) {
+                    ready++;
+                } else {
+                    BigDecimal shortQty = reqQty.subtract(alloc);
+                    BigDecimal qQty = quarantinePool.getOrDefault(l.getItemId(), BigDecimal.ZERO);
+                    BigDecimal oQty = onOrderPool.getOrDefault(l.getItemId(), BigDecimal.ZERO);
+                    String hint;
+                    if (qQty.compareTo(shortQty) >= 0) {
+                        hint = "待检库存可补足（催检放行）";
+                    } else if (qQty.add(oQty).compareTo(shortQty) >= 0) {
+                        hint = "在途采购可补足（跟进到货）";
+                    } else {
+                        hint = "库存与在途不足，需补采购";
+                        needPo = true;
+                    }
+                    Item mat = im.get(l.getItemId());
+                    shortages.add(new KittingShortage(l.getItemId(), mat == null ? "-" : mat.getCode(),
+                            mat == null ? "-" : mat.getName(), mat == null ? "" : mat.getUnit(),
+                            reqQty, alloc, shortQty, qQty, oQty, hint));
+                }
+            }
+            BigDecimal pct = totalBrand == 0 ? new BigDecimal("100.0")
+                    : BigDecimal.valueOf(ready * 100L).divide(BigDecimal.valueOf(totalBrand), 1, RoundingMode.HALF_UP);
+            String status = shortages.isEmpty() ? "READY" : needPo ? "SHORTAGE" : "WAIT_INBOUND";
+            String statusLabel = shortages.isEmpty() ? "已齐套" : needPo ? "缺料需采购" : "待检/在途可补";
+            out.add(new KittingOrderRow(mo.getId(), mo.getMoNo(), mo.getMoType(), mo.getMoType().getLabel(),
+                    f == null ? "-" : f.getName(), mo.getFgItemId(), fg == null ? "-" : fg.getCode(),
+                    fg == null ? "-" : fg.getName(), mo.getPlannedQty(), mo.getPlannedDate(),
+                    totalBrand, ready, pct, status, statusLabel, shortages));
         }
         return out;
     }

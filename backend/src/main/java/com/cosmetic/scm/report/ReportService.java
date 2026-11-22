@@ -99,6 +99,7 @@ public class ReportService {
         m.put("stock", this::stock);
         m.put("batches", this::batches);
         m.put("purchases", this::purchases);
+        m.put("purchase-expedite", this::purchaseExpediteReport);
         m.put("production", this::production);
         m.put("shipments", this::shipments);
         m.put("complaints", this::complaints);
@@ -113,6 +114,7 @@ public class ReportService {
         m.put("ar-statements", this::arStatements);
         m.put("ar-invoice-ledger", () -> arInvoiceLedger(from, to));
         m.put("customer-credit", this::customerCreditSummary);
+        m.put("ar-collection", this::arCollectionReport);
         m.put("ap-aging", () -> agingTable(agingAnalysis.apAging(), "应付账龄分析"));
         m.put("ar-aging", () -> agingTable(agingAnalysis.arAging(), "应收账龄分析"));
         m.put("invoice-ledger", () -> invoiceLedger(from, to));
@@ -130,10 +132,12 @@ public class ReportService {
         m.put("npd-readiness", this::npdReadinessReport);
         m.put("pqr", () -> pqrReport(from, to));
         m.put("controlled-docs", this::controlledDocsReport);
+        m.put("doc-compliance", this::docComplianceReport);
         m.put("qms-summary", this::qmsSummaryReport);
         m.put("inventory-abc", this::inventoryAbcReport);
         m.put("serial-anomalies", this::serialAnomaliesReport);
         m.put("quality-events-summary", () -> qualityEventsSummaryReport(from, to));
+        m.put("quality-event-closure", this::qualityEventClosureReport);
         m.put("integration-logs", () -> integrationLogsReport(from, to));
         m.put("golive-checklist", this::goliveChecklistReport);
         m.put("expiry-risk", this::expiryRiskReport);
@@ -155,6 +159,7 @@ public class ReportService {
         m.put("items", this::itemsReport);
         m.put("partners", this::partnersReport);
         m.put("planning-fg", this::planningFgReport);
+        m.put("planning-kitting", this::planningKittingReport);
         m.put("rfqs", this::rfqsReport);
         m.put("notification-logs", this::notificationLogsReport);
         m.put("todos", this::todosReport);
@@ -175,7 +180,7 @@ public class ReportService {
         if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "rfqs".equals(key) || "batch-costs".equals(key) || "margins".equals(key) || "cashflow-forecast".equals(key) || "inventory-variance".equals(key) || "inventory-abc".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与成本数据");
         }
-        if (("ar-statements".equals(key) || "ar-aging".equals(key) || "ar-invoice-ledger".equals(key) || "customer-credit".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
+        if (("ar-statements".equals(key) || "ar-aging".equals(key) || "ar-invoice-ledger".equals(key) || "customer-credit".equals(key) || "ar-collection".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出客户应收对账数据");
         }
         if ("golive-checklist".equals(key) && !goliveReportAllowed()) {
@@ -278,14 +283,27 @@ public class ReportService {
                 "授信额度", "未结单数", "未结应收", "逾期应收", "剩余可用额度", "使用率（%）", "状态"), rows);
     }
 
+    private Table arCollectionReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        arSettlement.collectionBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.statementNo(), r.customerCode(), r.customerName(), r.channel(), r.contact(),
+                r.periodTo(), r.dueDate(), r.overdueDays(), r.totalAmount(), r.receivedAmount(), r.unreceived(),
+                r.creditLimit(), r.customerOpenAr(), r.overLimit() ? "超额" : "正常", r.collectionAction())));
+        return new Table("客户应收催收与信用风控清单", List.of("风险分级", "应收单号", "客户编码", "客户名称", "渠道", "联系方式",
+                "对账截止", "到期日", "逾期天数", "应收合计", "已回款", "待回款",
+                "授信额度", "客户未结应收", "授信状态", "催收建议"), rows);
+    }
+
     private Table batchCosts() {
         List<List<Object>> rows = new ArrayList<>();
         batchCosting.report().forEach(r -> rows.add(row(
                 r.moNo(), r.moTypeLabel(), r.factoryName(), r.fgCode(), r.fgName(), r.outBatchNo(),
-                r.actualQty(), r.materialCost(), r.processingCost(), r.totalCost(),
-                r.actualUnitCost(), r.stdUnitCost(), r.variancePct(), r.completedAt())));
+                r.actualQty(), r.yieldPct(), r.materialCost(), r.processingCost(), r.totalCost(),
+                r.actualUnitCost(), r.stdUnitCost(), r.variancePct(), r.varianceAmount(),
+                r.anomalyLabel(), r.costDriver(), r.completedAt())));
         return new Table("生产批次实际成本", List.of("生产单号", "类型", "生产方", "成品编码", "成品名称", "产出批号",
-                "实际产量", "领料成本", "委外加工费", "总成本", "实际单位成本", "标准单位成本", "偏差（%）", "完工时间"), rows);
+                "实际产量", "收率（%）", "领料成本", "委外加工费", "总成本", "实际单位成本", "标准单位成本",
+                "偏差（%）", "偏差金额（元）", "异常分级", "主要归因", "完工时间"), rows);
     }
 
     private Table marginReport(LocalDate from, LocalDate to) {
@@ -367,6 +385,16 @@ public class ReportService {
                 d.ackPending(), d.copiesOut(), d.copiesToRetrieve())));
         return new Table("受控文件台账", List.of("文件编号", "名称", "类别", "归口部门", "状态",
                 "现行版本", "生效日期", "下次复审", "复审状态", "待确认人数", "在用纸质副本", "待收回副本"), rows);
+    }
+
+    private Table docComplianceReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        docControl.complianceBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.issueTypeLabel(), r.docCode(), r.title(), r.categoryLabel(), r.ownerDept(),
+                r.currentRev() == null ? null : "V" + r.currentRev(), r.dueDate(), r.daysLeft(),
+                r.detail(), r.recommendedAction())));
+        return new Table("受控文件合规闭环监控清单", List.of("风险分级", "合规事项", "文件编号", "文件名称", "类别", "归口部门",
+                "现行版本", "截止日期", "剩余天数", "具体情况", "处置建议"), rows);
     }
 
     private Table qmsSummaryReport() {
@@ -456,6 +484,18 @@ public class ReportService {
         purchases.listAll().forEach(p -> p.lines().forEach(l -> rows.add(row(p.poNo(), p.orderDate(), p.supplierName(), p.statusLabel(),
                 l.itemCode(), l.itemName(), l.qty(), l.receivedQty(), l.unit(), p.expectedDate(), p.promisedDate(), p.lastReceivedOn(), p.closeReason()))));
         return new Table("采购明细", List.of("采购单", "日期", "供应商", "状态", "物料编码", "物料名称", "订购数量", "已收数量", "单位", "期望到货", "供应商交期", "最后收货", "取消 / 关闭原因"), rows);
+    }
+
+    private Table purchaseExpediteReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        purchases.expediteBoard().forEach(r -> rows.add(row(
+                r.riskLabel(), r.poNo(), r.supplierName(), r.supplierContact(), r.orderDate(),
+                r.dueDate(), r.dueSource(), r.daysLeft(), r.itemCode(), r.itemName(),
+                r.qty(), r.receivedQty(), r.remainingQty(), r.unit(),
+                String.join("、", r.openShipmentNos()), r.expediteAction())));
+        return new Table("采购在途催货清单", List.of("交付风险", "采购单号", "供应商", "联系方式", "下单日期",
+                "交期", "交期来源", "剩余天数", "物料编码", "物料名称",
+                "订购数", "已收数", "未收数", "单位", "在途送货通知", "催货建议"), rows);
     }
 
     private Table production() {
@@ -563,6 +603,15 @@ public class ReportService {
         rep.recalls().forEach(r -> rows.add(row("召回效率", r.recallNo() + " " + r.itemName() + "(" + r.batchNo() + ")",
                 r.customerCount(), r.notifiedCount(), null, "召回中".equals(r.statusLabel()) ? 1 : 0, r.notifyRatePct(), r.recoveryRatePct(), r.statusLabel())));
         return new Table("客诉与召回效率分析", List.of("维度", "名称/单号", "总件数/客户数", "不良反应/已通知", "严重件数", "处理中", "占比/通知率(%)", "回收率(%)", "状态"), rows);
+    }
+
+    private Table qualityEventClosureReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        qualityEvents.closureBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.itemTypeLabel(), r.refNo(), r.itemName(), r.batchNo(),
+                r.detail(), r.dueDate(), r.daysLeft(), r.progressPct(), r.recommendedAction())));
+        return new Table("不良反应上报与召回闭环监控", List.of("风险分级", "事项类型", "单号", "成品名称", "批号",
+                "执行进度明细", "上报截止日", "剩余天数", "回收/完成率(%)", "处置建议"), rows);
     }
 
     private Table integrationLogsReport(LocalDate from, LocalDate to) {
@@ -787,6 +836,25 @@ public class ReportService {
                 "可用库存", "其中临期", "待上市放行", "在制生产", "预计可用",
                 "安全库存", "再订货点", "可售天数", "低于再订货点", "建议补产", "建议生产方",
                 "单位成本(元)", "指导价(元)"), rows);
+    }
+
+    private Table planningKittingReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        planning.kittingCheck().forEach(o -> {
+            if (o.shortages().isEmpty()) {
+                rows.add(row(o.moNo(), o.moTypeLabel(), o.factoryName(), o.fgCode(), o.fgName(),
+                        o.plannedQty(), o.plannedDate(), o.kittingPct(), o.statusLabel(),
+                        null, null, null, null, null, null, null, "已齐套，可直接发料"));
+            } else {
+                o.shortages().forEach(s -> rows.add(row(o.moNo(), o.moTypeLabel(), o.factoryName(), o.fgCode(), o.fgName(),
+                        o.plannedQty(), o.plannedDate(), o.kittingPct(), o.statusLabel(),
+                        s.itemCode(), s.itemName(), s.unit(), s.requiredQty(), s.allocatedQty(), s.shortQty(),
+                        s.quarantineQty().add(s.onOrderQty()), s.supplyHint())));
+            }
+        });
+        return new Table("生产排产齐套预检清单", List.of("生产单号", "类型", "生产方", "成品编码", "成品名称",
+                "计划产量", "计划日期", "齐套率(%)", "齐套状态", "缺料编码", "缺料名称", "单位",
+                "需求数量", "可分配数", "缺口数量", "待检+在途", "供应建议"), rows);
     }
 
     private Table rfqsReport() {

@@ -11,6 +11,7 @@ import com.cosmetic.scm.settlement.ArSettlementService.ArInvoiceLedgerView;
 import com.cosmetic.scm.settlement.ArSettlementService.ArInvoiceReq;
 import com.cosmetic.scm.settlement.ArSettlementService.ArReceiptReq;
 import com.cosmetic.scm.settlement.ArSettlementService.ArStatementView;
+import com.cosmetic.scm.settlement.ArSettlementService.ArCollectionBoard;
 import com.cosmetic.scm.settlement.ArSettlementService.CustomerCreditRow;
 
 import jakarta.validation.Valid;
@@ -86,6 +87,12 @@ public class ArSettlementController {
     @PreAuthorize(READ)
     public List<CustomerCreditRow> creditSummary() {
         return ar.creditSummary();
+    }
+
+    @GetMapping("/collection-board")
+    @PreAuthorize(READ)
+    public ArCollectionBoard collectionBoard() {
+        return ar.collectionBoard();
     }
 
     @GetMapping("/finance-vouchers")

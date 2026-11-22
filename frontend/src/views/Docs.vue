@@ -6,7 +6,7 @@
         <p>SOP、工艺规程、记录表格等。每次修订是一个新版本，要上传文件，由质量安全负责人签批（不能是起草人）。现行版本是已签批、已到生效日期的最新一版；按复审周期提醒。</p>
       </div>
       <div class="toolbar">
-        <ExportButton report="controlled-docs" label="导出台账" />
+        <ExportButton :report="activeTab === 'compliance' ? 'doc-compliance' : 'controlled-docs'" :label="activeTab === 'compliance' ? '导出合规清单' : '导出台账'" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="canEdit" type="primary" @click="openCreate">新建文件</el-button>
       </div>
@@ -42,7 +42,56 @@
       </div>
     </el-card>
 
+    <el-tabs v-model="activeTab" class="seg">
+      <el-tab-pane label="受控文件台账" name="list" />
+      <el-tab-pane :label="`合规闭环监控（${compBoard?.totalCount ?? 0}）`" name="compliance" />
+    </el-tabs>
+
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
+    <el-card v-else-if="activeTab === 'compliance'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-radio-group v-model="compFilter" size="small">
+            <el-radio-button value="ALL">全部 ({{ compBoard?.totalCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="OVERDUE">已超期 ({{ compBoard?.overdueCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="DUE_SOON">临期待办</el-radio-button>
+            <el-radio-button value="PENDING">待签收 / 签批</el-radio-button>
+          </el-radio-group>
+        </div>
+        <div v-if="compBoard" class="muted small" style="margin-top:8px">
+          待闭环合规事项 <b class="mono">{{ compBoard.totalCount }}</b> 项 · 已超期 <b class="mono" :class="{ late: compBoard.overdueCount > 0 }">{{ compBoard.overdueCount }}</b> 项 · 复审提醒 <b class="mono">{{ compBoard.reviewDueCount }}</b> · 待签收 <b class="mono">{{ compBoard.ackPendingCount }}</b> · 纸质待收回 <b class="mono">{{ compBoard.copyRetrieveCount }}</b> · 待签批 <b class="mono">{{ compBoard.pendingApproveCount }}</b>
+        </div>
+      </template>
+      <el-table :data="filteredCompRows" v-loading="loader.loading.value" size="small" empty-text="当前所有受控文件均处于合规状态">
+        <el-table-column label="风险分级" width="110" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.riskLevel === 'OVERDUE' ? 'danger' : row.riskLevel === 'DUE_SOON' ? 'warning' : 'primary'" disable-transitions>{{ row.riskLabel }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="issueTypeLabel" label="合规事项" width="115" />
+        <el-table-column label="文件编号 / 名称" min-width="200">
+          <template #default="{ row }">
+            <a href="#" class="mono" @click.prevent="openDetail(row.docId)">{{ row.docCode }}</a>
+            <span style="margin-left:6px">{{ row.title }}</span>
+            <div class="muted small">{{ row.categoryLabel }}<template v-if="row.ownerDept"> · {{ row.ownerDept }}</template><template v-if="row.currentRev"> · V{{ row.currentRev }}</template></div>
+          </template>
+        </el-table-column>
+        <el-table-column label="截止日 / 剩余" width="125" align="right">
+          <template #default="{ row }">
+            <template v-if="row.dueDate">
+              <span class="mono">{{ row.dueDate }}</span>
+              <div class="small mono" :class="{ late: row.daysLeft < 0 }">{{ row.daysLeft < 0 ? `超期 ${-row.daysLeft} 天` : `剩 ${row.daysLeft} 天` }}</div>
+            </template>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="detail" label="具体情况" min-width="180" />
+        <el-table-column prop="recommendedAction" label="合规处置建议" min-width="210" />
+        <el-table-column label="" width="80" :fixed="narrow ? false : 'right'">
+          <template #default="{ row }"><el-button size="small" @click="openDetail(row.docId)">处理</el-button></template>
+        </el-table-column>
+      </el-table>
+    </el-card>
     <el-card v-else shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="filters">
@@ -232,15 +281,28 @@ const roles = ref([])
 const roleLabel = (code) => roles.value.find((r) => r.code === code)?.label || code
 const mine = ref([])
 const isQso = computed(() => auth.hasAny('QSO'))
+const activeTab = ref('list')
 const docs = ref([])
 const docSum = ref(null)
+const compBoard = ref(null)
+const compFilter = ref('ALL')
+const filteredCompRows = computed(() => {
+  const list = compBoard.value?.rows || []
+  return compFilter.value === 'ALL' ? list : list.filter((r) => r.riskLevel === compFilter.value)
+})
 const activeOnly = ref(true)
 const categoryFilter = ref('')
 const loader = useLoader(async () => {
-  const [d, m, s] = await Promise.all([http.get('/docs'), http.get('/docs/my-pending'), http.get('/docs/summary')])
+  const [d, m, s, cb] = await Promise.all([
+    http.get('/docs'),
+    http.get('/docs/my-pending'),
+    http.get('/docs/summary'),
+    http.get('/docs/compliance-board')
+  ])
   docs.value = d
   mine.value = m
   docSum.value = s
+  compBoard.value = cb
 })
 const load = () => loader.run()
 const shown = computed(() => docs.value.filter((x) => {

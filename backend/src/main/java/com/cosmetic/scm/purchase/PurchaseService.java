@@ -137,6 +137,14 @@ public class PurchaseService {
             int overdueCount, int openShipmentsCount, int unresolvedDisputesCount, int unconfirmedPortalCount) {
     }
 
+    public record ExpediteRow(Long poId, String poNo, Long supplierId, String supplierName, String supplierContact,
+                              LocalDate orderDate, LocalDate dueDate, String dueSource, Long daysLeft,
+                              String riskLevel, String riskLabel, String statusLabel,
+                              Long itemId, String itemCode, String itemName, String unit,
+                              BigDecimal qty, BigDecimal receivedQty, BigDecimal remainingQty,
+                              int openShipmentCount, List<String> openShipmentNos, String expediteAction) {
+    }
+
     @Transactional(readOnly = true)
     public PoSummary summary() {
         LocalDate today = time.today();
@@ -187,6 +195,81 @@ public class PurchaseService {
     @Transactional(readOnly = true)
     public List<PoView> listAll() {
         return views(orders.findAllByOrderByIdDesc());
+    }
+
+    /** 采购在途催货与交付逾期追踪看板：汇总所有未收齐采购行，按逾期/7天内到期/已发货待收/正常在途排序。 */
+    @Transactional(readOnly = true)
+    public List<ExpediteRow> expediteBoard() {
+        List<PurchaseOrder> openPos = orders.findByStatusIn(List.of(PoStatus.OPEN, PoStatus.PARTIAL));
+        if (openPos.isEmpty()) {
+            return List.of();
+        }
+        LocalDate today = time.today();
+        List<Long> poIds = openPos.stream().map(PurchaseOrder::getId).toList();
+        Map<Long, List<PoLine>> byPo = lines.findByPoIdIn(poIds).stream()
+                .collect(Collectors.groupingBy(PoLine::getPoId));
+        Map<Long, List<PoShipment>> openShipMap = shipments.findByPoIdInOrderByIdDesc(poIds).stream()
+                .filter(s -> s.getStatus() == ShipmentStatus.OPEN)
+                .collect(Collectors.groupingBy(PoShipment::getPoId));
+        Map<Long, Item> im = lookup.itemMap();
+        Map<Long, Partner> pm = lookup.partnerMap();
+        List<ExpediteRow> out = new ArrayList<>();
+        for (PurchaseOrder po : openPos) {
+            Partner sup = pm.get(po.getSupplierId());
+            LocalDate due = po.getPromisedDate() != null ? po.getPromisedDate() : po.getExpectedDate();
+            String dueSrc = po.getPromisedDate() != null ? "供应商承诺" : po.getExpectedDate() != null ? "采购期望" : "未设交期";
+            Long daysLeft = due == null ? null : java.time.temporal.ChronoUnit.DAYS.between(today, due);
+            List<PoShipment> sh = openShipMap.getOrDefault(po.getId(), List.of());
+            List<String> shNos = sh.stream().map(PoShipment::getShipmentNo).toList();
+            String risk;
+            String riskLabel;
+            String action;
+            if (daysLeft != null && daysLeft < 0) {
+                risk = "OVERDUE";
+                riskLabel = "已超期";
+                action = !sh.isEmpty()
+                        ? "已超期且供应商已发运，催促仓库核对收货"
+                        : "已逾期 " + Math.abs(daysLeft) + " 天，立即催促供应商发货";
+            } else if (!sh.isEmpty()) {
+                risk = "IN_TRANSIT";
+                riskLabel = "已发货待收";
+                action = "供应商已发运（" + String.join("、", shNos) + "），安排仓库核对收货";
+            } else if (daysLeft != null && daysLeft <= 7) {
+                risk = "DUE_SOON";
+                riskLabel = "7天内到期";
+                action = "距交期 " + daysLeft + " 天，确认供应商排产与发运";
+            } else {
+                risk = "ON_TRACK";
+                riskLabel = "正常在途";
+                action = due == null ? "建议补充期望或承诺交期" : "按计划跟进交期";
+            }
+            for (PoLine l : byPo.getOrDefault(po.getId(), List.of())) {
+                BigDecimal rem = l.remaining();
+                if (rem.signum() <= 0) {
+                    continue;
+                }
+                Item it = im.get(l.getItemId());
+                out.add(new ExpediteRow(po.getId(), po.getPoNo(), po.getSupplierId(),
+                        sup == null ? "-" : sup.getName(), sup == null ? null : sup.getContact(),
+                        po.getOrderDate(), due, dueSrc, daysLeft, risk, riskLabel, po.getStatus().getLabel(),
+                        l.getItemId(), it == null ? "-" : it.getCode(), it == null ? "-" : it.getName(),
+                        it == null ? "" : it.getUnit(), l.getQty(), l.getReceivedQty(), rem,
+                        sh.size(), shNos, action));
+            }
+        }
+        out.sort(java.util.Comparator.comparingInt((ExpediteRow r) -> expediteOrder(r.riskLevel()))
+                .thenComparing(r -> r.daysLeft() == null ? Long.MAX_VALUE : r.daysLeft())
+                .thenComparing(ExpediteRow::poNo));
+        return out;
+    }
+
+    private static int expediteOrder(String risk) {
+        return switch (risk) {
+            case "OVERDUE" -> 0;
+            case "DUE_SOON" -> 1;
+            case "IN_TRANSIT" -> 2;
+            default -> 3;
+        };
     }
 
     private List<PoView> views(List<PurchaseOrder> list) {

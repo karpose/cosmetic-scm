@@ -31,6 +31,11 @@ public class PurchaseController {
         return purchase.summary();
     }
 
+    @GetMapping("/expedite")
+    public List<PurchaseService.ExpediteRow> expedite() {
+        return purchase.expediteBoard();
+    }
+
     @GetMapping
     public List<PoView> list() {
         return purchase.list();

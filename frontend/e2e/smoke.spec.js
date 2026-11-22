@@ -714,6 +714,19 @@ test('开错的单据可以取消：生产单退回物料，采购单关闭后�
   await expect(closed.getByRole('button', { name: '收货' })).toHaveCount(0)
 })
 
+test('催货看板可对采购单列表未加载的订单收货', async ({ page }) => {
+  await login(page, 'purchase1')
+  const [order] = await api(page, '/purchase-orders/expedite')
+  expect(order?.poId).toBeTruthy()
+  await page.route('**/api/purchase-orders', (route) => route.fulfill({ json: [] }))
+
+  await page.goto('/purchase')
+  await page.getByRole('tab', { name: /^在途催货看板/ }).click()
+  const row = page.getByRole('row').filter({ hasText: order.poNo }).first()
+  await row.getByRole('button', { name: '收货', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: `收货：${order.poNo}` })).toBeVisible()
+})
+
 test('审计日志按日期查询，补货建议显示预测', async ({ page }) => {
   await login(page, 'prod1')
   await page.goto('/planning')

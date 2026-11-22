@@ -6,7 +6,8 @@
         <p>按近期出库算日均需求，用再订货点法给出成品建议生产 / 委托量；勾选后可按 BOM 展开算品牌供料的净采购量（扣在库、待检、在途和已计划未发料的占用）。生成的生产单、采购单都是草稿，走原有的全部校验。</p>
       </div>
       <div class="toolbar">
-        <ExportButton report="planning-fg" />
+        <ExportButton v-if="tab === 'kitting'" report="planning-kitting" label="导出齐套预检" />
+        <ExportButton v-else report="planning-fg" />
       </div>
     </div>
 
@@ -33,6 +34,60 @@
       </div>
     </div>
 
+    <el-tabs v-model="tab" class="seg">
+      <el-tab-pane label="成品补货与 MRP" name="replenish" />
+      <el-tab-pane :label="`待发料工单齐套预检（${kittingShortageCount} 缺料）`" name="kitting" />
+    </el-tabs>
+
+    <el-card v-if="tab === 'kitting'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="card-h">
+          <span><b>待发料生产 / 委托单齐套预检</b> <span class="muted small">按计划日期先后顺序模拟占用自有仓可用库存</span></span>
+          <span class="toolbar">
+            <el-radio-group v-model="kittingFilter" size="small">
+              <el-radio-button value="">全部（{{ kitting.length }}）</el-radio-button>
+              <el-radio-button value="READY">已齐套</el-radio-button>
+              <el-radio-button value="WAIT_INBOUND">待检/在途可补</el-radio-button>
+              <el-radio-button value="SHORTAGE">缺料需采购</el-radio-button>
+            </el-radio-group>
+            <el-button size="small" :loading="kittingLoading" @click="loadKitting">刷新预检</el-button>
+          </span>
+        </div>
+      </template>
+      <el-table :data="filteredKitting" v-loading="kittingLoading" size="small" empty-text="当前没有待发料的生产或委托单">
+        <el-table-column label="生产单" width="155">
+          <template #default="{ row }"><span class="mono">{{ row.moNo }}</span><div class="muted small">{{ row.moTypeLabel }} · {{ row.plannedDate }}</div></template>
+        </el-table-column>
+        <el-table-column prop="factoryName" label="生产方" min-width="120" />
+        <el-table-column label="成品 / 计划量" min-width="160">
+          <template #default="{ row }">{{ row.fgName }}<div class="muted small mono">{{ row.fgCode }} × {{ fmtQty(row.plannedQty) }}</div></template>
+        </el-table-column>
+        <el-table-column label="齐套率" width="110" align="right">
+          <template #default="{ row }"><span class="mono">{{ row.kittingPct }}%</span><div class="muted small mono">{{ row.readyItems }} / {{ row.totalBrandItems }} 项</div></template>
+        </el-table-column>
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.status === 'READY' ? 'success' : row.status === 'WAIT_INBOUND' ? 'warning' : 'danger'" disable-transitions>{{ row.statusLabel }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="缺料明细与建议" min-width="260">
+          <template #default="{ row }">
+            <template v-if="row.shortages?.length">
+              <div v-for="s in row.shortages" :key="s.itemId" class="small">
+                <b>{{ s.itemName }}</b> 缺 <span class="mono" style="color:var(--el-color-danger)">{{ fmtQty(s.shortQty) }} {{ s.unit }}</span>
+                <span class="muted">（待检 {{ fmtQty(s.quarantineQty) }} / 在途 {{ fmtQty(s.onOrderQty) }} · {{ s.supplyHint }}）</span>
+              </div>
+            </template>
+            <span v-else class="muted small">品牌供料已全部齐套，可直接发料</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="" width="95" fixed="right">
+          <template #default="{ row }"><router-link to="/production" class="small">去发料 →</router-link></template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <template v-else>
     <el-card shadow="never" body-style="padding:14px 18px">
       <div class="params">
         <label>观察近 <el-input-number v-model="p.windowDays" :min="7" :max="365" :controls="false" size="small" /> 天出库</label>
@@ -135,6 +190,7 @@
         </el-table-column>
       </el-table>
     </el-card>
+    </template>
   </div>
 </template>
 
@@ -154,6 +210,16 @@ import { useRefData } from '../utils/refdata'
 const auth = useAuth()
 const router = useRouter()
 const rd = useRefData()
+const tab = ref('replenish')
+const kitting = ref([])
+const kittingLoading = ref(false)
+const kittingFilter = ref('')
+const kittingShortageCount = computed(() => kitting.value.filter((r) => r.status !== 'READY').length)
+const filteredKitting = computed(() => !kittingFilter.value ? kitting.value : kitting.value.filter((r) => r.status === kittingFilter.value))
+async function loadKitting() {
+  kittingLoading.value = true
+  try { kitting.value = await http.get('/planning/kitting') } finally { kittingLoading.value = false }
+}
 const p = reactive({ windowDays: 90, leadDays: 30, safetyDays: 15, coverDays: 60, useForecast: false })
 const rows = ref([])
 const chosen = ref([])
@@ -258,7 +324,7 @@ async function createPos() {
   }
 }
 
-onMounted(() => Promise.all([loader.run(false), rd.load()]))
+onMounted(() => Promise.all([loader.run(false), loadKitting(), rd.load()]))
 </script>
 
 <style scoped>
