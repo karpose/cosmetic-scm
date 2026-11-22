@@ -99,6 +99,7 @@ public class ReportService {
         m.put("stock", this::stock);
         m.put("batches", this::batches);
         m.put("purchases", this::purchases);
+        m.put("purchase-expedite", this::purchaseExpediteReport);
         m.put("production", this::production);
         m.put("shipments", this::shipments);
         m.put("complaints", this::complaints);
@@ -457,6 +458,18 @@ public class ReportService {
         purchases.listAll().forEach(p -> p.lines().forEach(l -> rows.add(row(p.poNo(), p.orderDate(), p.supplierName(), p.statusLabel(),
                 l.itemCode(), l.itemName(), l.qty(), l.receivedQty(), l.unit(), p.expectedDate(), p.promisedDate(), p.lastReceivedOn(), p.closeReason()))));
         return new Table("采购明细", List.of("采购单", "日期", "供应商", "状态", "物料编码", "物料名称", "订购数量", "已收数量", "单位", "期望到货", "供应商交期", "最后收货", "取消 / 关闭原因"), rows);
+    }
+
+    private Table purchaseExpediteReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        purchases.expediteBoard().forEach(r -> rows.add(row(
+                r.riskLabel(), r.poNo(), r.supplierName(), r.supplierContact(), r.orderDate(),
+                r.dueDate(), r.dueSource(), r.daysLeft(), r.itemCode(), r.itemName(),
+                r.qty(), r.receivedQty(), r.remainingQty(), r.unit(),
+                String.join("、", r.openShipmentNos()), r.expediteAction())));
+        return new Table("采购在途催货清单", List.of("交付风险", "采购单号", "供应商", "联系方式", "下单日期",
+                "交期", "交期来源", "剩余天数", "物料编码", "物料名称",
+                "订购数", "已收数", "未收数", "单位", "在途送货通知", "催货建议"), rows);
     }
 
     private Table production() {
