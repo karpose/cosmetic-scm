@@ -192,6 +192,21 @@ public class ArSettlementService {
                                     BigDecimal utilizationPct, boolean overLimit) {
     }
 
+    public record ArCollectionRow(Long statementId, String statementNo, Long customerId,
+                                  String customerCode, String customerName, String channel, String contact,
+                                  LocalDate periodTo, LocalDate dueDate, long overdueDays,
+                                  BigDecimal totalAmount, BigDecimal receivedAmount, BigDecimal unreceived,
+                                  BigDecimal creditLimit, BigDecimal customerOpenAr, boolean overLimit,
+                                  BigDecimal utilizationPct, String riskLevel, String riskLabel,
+                                  String collectionAction) {
+    }
+
+    public record ArCollectionBoard(int totalCount, int criticalCount, int overdueCount,
+                                    int dueSoonCount, int overLimitCustomerCount,
+                                    BigDecimal totalUnreceived, BigDecimal totalOverdueAmount,
+                                    List<ArCollectionRow> rows) {
+    }
+
     @Transactional(readOnly = true)
     public List<ArStatementView> list(String statementNo, FinanceSyncStatus syncStatus) {
         if (statementNo != null && !statementNo.isBlank()) {
@@ -506,6 +521,97 @@ public class ArSettlementService {
         rows.sort(Comparator.comparing(CustomerCreditRow::openAr, Comparator.reverseOrder())
                 .thenComparing(CustomerCreditRow::customerCode));
         return rows;
+    }
+
+    @Transactional(readOnly = true)
+    public ArCollectionBoard collectionBoard() {
+        LocalDate today = time.today();
+        Map<Long, CustomerCreditRow> creditMap = creditSummary().stream()
+                .collect(Collectors.toMap(CustomerCreditRow::customerId, c -> c));
+        int overLimitCustomers = (int) creditMap.values().stream().filter(CustomerCreditRow::overLimit).count();
+
+        List<ArCollectionRow> rows = new ArrayList<>();
+        int critical = 0;
+        int overdue = 0;
+        int dueSoon = 0;
+        BigDecimal totalUnreceived = BigDecimal.ZERO;
+        BigDecimal totalOverdueAmt = BigDecimal.ZERO;
+
+        for (CustomerStatement s : statements.findByStatusInOrderById(List.of("APPROVED"))) {
+            BigDecimal unreceived = s.outstandingAmount();
+            if (unreceived.signum() <= 0) {
+                continue;
+            }
+            Partner c = lookup.partner(s.getCustomerId());
+            CustomerCreditRow cr = creditMap.get(s.getCustomerId());
+            boolean overLimit = cr != null && cr.overLimit();
+            long overdueDays = SettlementRule.overdueDays(s.getDueDate(), today, false);
+            long daysUntilDue = s.getDueDate() == null ? Long.MAX_VALUE
+                    : java.time.temporal.ChronoUnit.DAYS.between(today, s.getDueDate());
+
+            String riskLevel;
+            String riskLabel;
+            String action;
+            if (overdueDays > 30 || (overdueDays > 0 && overLimit)) {
+                riskLevel = "CRITICAL";
+                riskLabel = overdueDays > 30 ? "严重逾期(>30天)" : "超额逾期";
+                action = overLimit
+                        ? "逾期且授信超额，建议暂停赊销发货并升级催收"
+                        : "逾期已超 " + overdueDays + " 天，建议高层或法务介入催收";
+                critical++;
+            } else if (overdueDays > 0) {
+                riskLevel = "OVERDUE";
+                riskLabel = "已逾期";
+                action = "已逾期 " + overdueDays + " 天，请联系客户财务确认回款排期";
+                overdue++;
+            } else if (daysUntilDue <= 7) {
+                riskLevel = "DUE_SOON";
+                riskLabel = daysUntilDue == 0 ? "今日到期" : "7天内到期";
+                action = daysUntilDue == 0
+                        ? "今日到期，请核对回款到账情况"
+                        : "距到期仅 " + daysUntilDue + " 天，建议提前发送催款提醒";
+                dueSoon++;
+            } else if (overLimit) {
+                riskLevel = "OVER_LIMIT";
+                riskLabel = "授信超额";
+                action = "未逾期但客户未结应收已超授信额度，请控制新增赊销";
+            } else {
+                riskLevel = "NORMAL";
+                riskLabel = "账期内";
+                action = "账期内正常跟进";
+            }
+
+            totalUnreceived = totalUnreceived.add(unreceived);
+            if (overdueDays > 0) {
+                totalOverdueAmt = totalOverdueAmt.add(unreceived);
+            }
+            rows.add(new ArCollectionRow(
+                    s.getId(), s.getStatementNo(), c.getId(), c.getCode(), c.getName(),
+                    c.getChannel(), c.getContact(), s.getPeriodTo(), s.getDueDate(), overdueDays,
+                    s.getTotalAmount(), s.getReceivedAmount(), unreceived,
+                    cr == null ? null : cr.creditLimit(),
+                    cr == null ? unreceived : cr.openAr(),
+                    overLimit, cr == null ? null : cr.utilizationPct(),
+                    riskLevel, riskLabel, action));
+        }
+
+        rows.sort(Comparator.comparingInt((ArCollectionRow r) -> riskRank(r.riskLevel()))
+                .thenComparing(ArCollectionRow::overdueDays, Comparator.reverseOrder())
+                .thenComparing(ArCollectionRow::unreceived, Comparator.reverseOrder()));
+
+        return new ArCollectionBoard(rows.size(), critical, overdue, dueSoon, overLimitCustomers,
+                totalUnreceived.setScale(2, RoundingMode.HALF_UP),
+                totalOverdueAmt.setScale(2, RoundingMode.HALF_UP), rows);
+    }
+
+    private static int riskRank(String level) {
+        return switch (level) {
+            case "CRITICAL" -> 0;
+            case "OVERDUE" -> 1;
+            case "DUE_SOON" -> 2;
+            case "OVER_LIMIT" -> 3;
+            default -> 4;
+        };
     }
 
     @Transactional(readOnly = true)

@@ -114,6 +114,7 @@ public class ReportService {
         m.put("ar-statements", this::arStatements);
         m.put("ar-invoice-ledger", () -> arInvoiceLedger(from, to));
         m.put("customer-credit", this::customerCreditSummary);
+        m.put("ar-collection", this::arCollectionReport);
         m.put("ap-aging", () -> agingTable(agingAnalysis.apAging(), "应付账龄分析"));
         m.put("ar-aging", () -> agingTable(agingAnalysis.arAging(), "应收账龄分析"));
         m.put("invoice-ledger", () -> invoiceLedger(from, to));
@@ -177,7 +178,7 @@ public class ReportService {
         if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "rfqs".equals(key) || "batch-costs".equals(key) || "margins".equals(key) || "cashflow-forecast".equals(key) || "inventory-variance".equals(key) || "inventory-abc".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与成本数据");
         }
-        if (("ar-statements".equals(key) || "ar-aging".equals(key) || "ar-invoice-ledger".equals(key) || "customer-credit".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
+        if (("ar-statements".equals(key) || "ar-aging".equals(key) || "ar-invoice-ledger".equals(key) || "customer-credit".equals(key) || "ar-collection".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出客户应收对账数据");
         }
         if ("golive-checklist".equals(key) && !goliveReportAllowed()) {
@@ -278,6 +279,17 @@ public class ReportService {
                 r.utilizationPct(), r.overLimit() ? "超额" : "正常")));
         return new Table("客户授信使用概览", List.of("客户编码", "客户名称", "渠道", "默认账期（天）",
                 "授信额度", "未结单数", "未结应收", "逾期应收", "剩余可用额度", "使用率（%）", "状态"), rows);
+    }
+
+    private Table arCollectionReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        arSettlement.collectionBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.statementNo(), r.customerCode(), r.customerName(), r.channel(), r.contact(),
+                r.periodTo(), r.dueDate(), r.overdueDays(), r.totalAmount(), r.receivedAmount(), r.unreceived(),
+                r.creditLimit(), r.customerOpenAr(), r.overLimit() ? "超额" : "正常", r.collectionAction())));
+        return new Table("客户应收催收与信用风控清单", List.of("风险分级", "应收单号", "客户编码", "客户名称", "渠道", "联系方式",
+                "对账截止", "到期日", "逾期天数", "应收合计", "已回款", "待回款",
+                "授信额度", "客户未结应收", "授信状态", "催收建议"), rows);
     }
 
     private Table batchCosts() {
