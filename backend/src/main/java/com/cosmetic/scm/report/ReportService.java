@@ -585,9 +585,11 @@ public class ReportService {
         salesReturns.listAll().forEach(r -> r.lines().forEach(l -> rows.add(row(
                 r.returnNo(), r.returnDate(), r.customerName(), r.warehouseName(), r.recallNo(),
                 l.batchNo(), l.itemName(), l.qty(), l.unit(), l.dispositionLabel(),
-                l.targetWarehouseName(), l.disposedByName(), l.disposedAt(), l.dispositionNote(), r.reason()))));
+                l.targetWarehouseName(), l.disposedByName(), l.disposedAt(), l.dispositionNote(),
+                l.arStatementNo(), r.reason()))));
         return new Table("销售退货明细", List.of("退货单", "退货日期", "客户", "隔离仓", "关联召回",
-                "批号", "成品", "数量", "单位", "处置结论", "转入仓", "签批人", "处置时间", "处置说明", "退货原因"), rows);
+                "批号", "成品", "数量", "单位", "处置结论", "转入仓", "签批人", "处置时间", "处置说明",
+                "关联应收冲减单", "退货原因"), rows);
     }
 
     private Table changesReport() {

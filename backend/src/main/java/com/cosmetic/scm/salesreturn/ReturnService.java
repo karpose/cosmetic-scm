@@ -74,6 +74,7 @@ public class ReturnService {
     private final AuditService audit;
     private final TimeProvider time;
     private final CurrentUser currentUser;
+    private final com.cosmetic.scm.settlement.CustomerStatementLineRepository arStatementLines;
 
     public record ReturnLineReq(@NotNull Long batchId, @NotNull @Positive @Qty BigDecimal qty) {
     }
@@ -99,12 +100,17 @@ public class ReturnService {
     public record LineView(Long id, Long batchId, String batchNo, String itemName, String unit, BigDecimal qty,
                            String batchStatusLabel, ReturnDisposition disposition, String dispositionLabel,
                            String targetWarehouseName, String dispositionNote, String disposedByName,
-                           LocalDateTime disposedAt) {
+                           LocalDateTime disposedAt, String arStatementNo) {
     }
 
     public record ReturnView(Long id, String returnNo, Long customerId, String customerName, Long warehouseId,
                              String warehouseName, Long recallId, String recallNo, LocalDate returnDate, String reason,
-                             String createdBy, LocalDateTime createdAt, long pendingLines, List<LineView> lines) {
+                             String createdBy, LocalDateTime createdAt, long pendingLines, long unbilledArLines,
+                             List<LineView> lines) {
+    }
+
+    public record ClosureSummary(long totalReturns, long recallLinkedReturns, long pendingDispositionLines,
+                                 long disposedUnbilledArLines, long arOffsetDoneLines) {
     }
 
     @Transactional(readOnly = true)
@@ -120,6 +126,23 @@ public class ReturnService {
     @Transactional(readOnly = true)
     public long pendingLines() {
         return lines.countByDisposition(ReturnDisposition.PENDING);
+    }
+
+    /** 客退隔离处置与客户应收冲减闭环概览。 */
+    @Transactional(readOnly = true)
+    public ClosureSummary closureSummary() {
+        List<SalesReturn> allReturns = returns.findAll();
+        List<SalesReturnLine> allLines = lines.findAll();
+        long recallLinked = allReturns.stream().filter(r -> r.getRecallId() != null).count();
+        long pending = allLines.stream().filter(l -> l.getDisposition() == ReturnDisposition.PENDING).count();
+        List<Long> disposedIds = allLines.stream()
+                .filter(l -> l.getDisposition() != ReturnDisposition.PENDING)
+                .map(SalesReturnLine::getId).toList();
+        Set<Long> billed = disposedIds.isEmpty() ? Set.of()
+                : Set.copyOf(arStatementLines.billedReturnLineIds(disposedIds));
+        long offsetDone = billed.size();
+        long unbilled = disposedIds.size() - offsetDone;
+        return new ClosureSummary(allReturns.size(), recallLinked, pending, unbilled, offsetDone);
     }
 
     /** 某客户可退的批次：已出库 - 已退。 */
@@ -288,6 +311,12 @@ public class ReturnService {
             return List.of();
         }
         List<SalesReturnLine> all = lines.findByReturnIdIn(list.stream().map(SalesReturn::getId).toList());
+        Map<Long, String> arRefByLine = new java.util.HashMap<>();
+        if (!all.isEmpty()) {
+            for (Object[] row : arStatementLines.activeReturnStatementRefs(all.stream().map(SalesReturnLine::getId).toList())) {
+                arRefByLine.put((Long) row[0], (String) row[1]);
+            }
+        }
         Map<Long, List<SalesReturnLine>> lm = all.stream().collect(Collectors.groupingBy(SalesReturnLine::getReturnId));
         Map<Long, Batch> bm = batches.findAllById(all.stream().map(SalesReturnLine::getBatchId).distinct().toList())
                 .stream().collect(Collectors.toMap(Batch::getId, Function.identity()));
@@ -307,12 +336,14 @@ public class ReturnService {
                         return new LineView(l.getId(), b.getId(), b.getBatchNo(), i.getName(), i.getUnit(), l.getQty(),
                                 b.getStatus().getLabel(), l.getDisposition(), l.getDisposition().getLabel(),
                                 t == null ? null : t.getName(), l.getDispositionNote(), l.getDisposedByName(),
-                                l.getDisposedAt());
+                                l.getDisposedAt(), arRefByLine.get(l.getId()));
                     }).toList();
+            long pendingCount = lv.stream().filter(l -> l.disposition() == ReturnDisposition.PENDING).count();
+            long unbilledAr = lv.stream().filter(l -> l.disposition() != ReturnDisposition.PENDING && l.arStatementNo() == null).count();
             return new ReturnView(r.getId(), r.getReturnNo(), r.getCustomerId(), pm.get(r.getCustomerId()).getName(),
                     r.getWarehouseId(), wm.get(r.getWarehouseId()).getName(), r.getRecallId(),
                     recallNos.get(r.getRecallId()), r.getReturnDate(), r.getReason(), r.getCreatedBy(), r.getCreatedAt(),
-                    lv.stream().filter(l -> l.disposition() == ReturnDisposition.PENDING).count(), lv);
+                    pendingCount, unbilledAr, lv);
         }).toList();
     }
 
