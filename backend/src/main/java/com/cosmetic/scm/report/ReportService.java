@@ -146,6 +146,7 @@ public class ReportService {
         m.put("dealer-orders", this::dealerOrdersReport);
         m.put("production-efficiency", this::productionEfficiencyReport);
         m.put("oem-consignment", this::oemConsignmentReport);
+        m.put("material-variance", this::materialVarianceReport);
         m.put("quality-specs", this::qualitySpecsReport);
         m.put("inventory-ops", this::inventoryOpsReport);
         m.put("users", this::usersReport);
@@ -672,6 +673,19 @@ public class ReportService {
         return new Table("委外寄售料账", List.of("受托厂", "寄存仓编码", "寄存仓名称", "批号",
                 "物料编码", "物料名称", "类型", "在厂余料", "单位",
                 "批次状态", "有效期至", "单位成本(元)", "余料货值(元)"), rows);
+    }
+
+    private Table materialVarianceReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        production.materialVariance().forEach(r -> rows.add(row(
+                r.moNo(), r.moTypeLabel(), r.factoryName(), r.fgCode(), r.fgName(), r.moStatusLabel(),
+                r.plannedQty(), r.actualQty(), r.itemCode(), r.itemName(), r.unit(),
+                r.standardQty(), r.netIssuedQty(), r.varianceQty(), r.variancePct(), r.stateLabel(),
+                r.unitCost(), r.varianceCost())));
+        return new Table("生产物料超耗与平衡台账", List.of("生产单号", "类型", "生产方", "成品编码", "成品名称", "工单状态",
+                "计划产量", "实际产量", "物料编码", "物料名称", "单位",
+                "理论标耗", "净发料量", "差异数量", "差异率(%)", "状态",
+                "标准单价(元)", "差异金额(元)"), rows);
     }
 
     private Table qualitySpecsReport() {

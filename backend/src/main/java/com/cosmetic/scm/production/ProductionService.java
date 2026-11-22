@@ -150,6 +150,15 @@ public class ProductionService {
                                     BigDecimal unitCost, BigDecimal value) {
     }
 
+    public record MaterialVarianceRow(Long moId, String moNo, MoType moType, String moTypeLabel,
+                                      Long factoryId, String factoryName, Long fgItemId, String fgCode, String fgName,
+                                      MoStatus moStatus, String moStatusLabel, BigDecimal plannedQty, BigDecimal actualQty,
+                                      Long itemId, String itemCode, String itemName, String unit,
+                                      BigDecimal standardQty, BigDecimal netIssuedQty, BigDecimal varianceQty,
+                                      BigDecimal variancePct, String state, String stateLabel,
+                                      BigDecimal unitCost, BigDecimal varianceCost) {
+    }
+
     public record RequirementView(Long itemId, String itemCode, String itemName, String unit, SupplyMode supplyMode,
                                   String supplyLabel, BigDecimal requiredQty, BigDecimal issuedQty,
                                   List<PickView> picks, BigDecimal shortQty, String extBatchNo, BigDecimal extQty) {
@@ -311,6 +320,77 @@ public class ProductionService {
                     w.getId(), w.getCode(), w.getName(), s.batchId(), s.batchNo(), s.itemId(), s.itemCode(),
                     s.itemName(), s.itemType(), s.unit(), s.qty(), s.status(), s.statusLabel(), s.expDate(),
                     unitCost, val));
+        }
+        return rows;
+    }
+
+    /** 生产与委外物料超耗与平衡台账：对比每张已发料/已完工工单的品牌供料理论标耗与净发料量（差异金额按 PriceAccess 权限控制）。 */
+    @Transactional(readOnly = true)
+    public List<MaterialVarianceRow> materialVariance() {
+        List<MfgOrder> mos = orders.findAllByOrderByIdDesc().stream()
+                .filter(m -> m.getStatus() == MoStatus.ISSUED || m.getStatus() == MoStatus.COMPLETED)
+                .toList();
+        return computeMaterialVariance(mos, com.cosmetic.scm.security.PriceAccess.allowed(), false);
+    }
+
+    /** 供委外对账单预览调用：返回指定已完工委外工单中存在品牌供料超耗（netIssued > standard）的明细及超耗金额。 */
+    @Transactional(readOnly = true)
+    public List<MaterialVarianceRow> overuseForSettlement(java.util.Collection<Long> moIds) {
+        if (moIds == null || moIds.isEmpty()) {
+            return List.of();
+        }
+        return computeMaterialVariance(orders.findAllById(moIds), true, true);
+    }
+
+    private List<MaterialVarianceRow> computeMaterialVariance(List<MfgOrder> mos, boolean showPrice, boolean onlyOveruse) {
+        if (mos.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, Item> im = lookup.itemMap();
+        Map<Long, Partner> pm = lookup.partnerMap();
+        Map<Long, BigDecimal> costs = showPrice ? master.unitCosts() : Map.of();
+        List<Long> moIds = mos.stream().map(MfgOrder::getId).toList();
+        Map<String, BigDecimal> netByMoItem = new java.util.HashMap<>();
+        for (MfgIssue i : issues.findByMoIdIn(moIds)) {
+            netByMoItem.merge(i.getMoId() + ":" + i.getItemId(), i.getQty(), BigDecimal::add);
+        }
+        List<MaterialVarianceRow> rows = new ArrayList<>();
+        for (MfgOrder mo : mos) {
+            Item fg = im.get(mo.getFgItemId());
+            Partner f = pm.get(mo.getFactoryId());
+            BigDecimal baseQty = (mo.getStatus() == MoStatus.COMPLETED && mo.getActualQty() != null && mo.getActualQty().signum() > 0)
+                    ? mo.getActualQty() : mo.getPlannedQty();
+            List<BomLine> lines = mo.getFormulaVersionId() == null ? master.bomLines(mo.getFgItemId())
+                    : master.versionLines(mo.getFormulaVersionId());
+            for (BomLine l : lines) {
+                SupplyMode mode = mo.getMoType() == MoType.OWN ? SupplyMode.BRAND : l.getSupplyMode();
+                if (mode != SupplyMode.BRAND) {
+                    continue;
+                }
+                Item mat = im.get(l.getItemId());
+                if (mat == null) {
+                    continue;
+                }
+                BigDecimal stdQty = l.getQtyPer().multiply(baseQty).setScale(4, RoundingMode.UP);
+                BigDecimal netIssued = netByMoItem.getOrDefault(mo.getId() + ":" + l.getItemId(), BigDecimal.ZERO);
+                BigDecimal variance = netIssued.subtract(stdQty);
+                if (onlyOveruse && variance.signum() <= 0) {
+                    continue;
+                }
+                BigDecimal varPct = stdQty.signum() > 0
+                        ? variance.multiply(BigDecimal.valueOf(100)).divide(stdQty, 1, RoundingMode.HALF_UP)
+                        : null;
+                String state = variance.signum() > 0 ? "OVERUSE" : variance.signum() < 0 ? "SAVING" : "BALANCED";
+                String stateLabel = variance.signum() > 0 ? "超耗" : variance.signum() < 0 ? "节余" : "平衡";
+                BigDecimal unitCost = showPrice ? costs.get(l.getItemId()) : null;
+                BigDecimal varCost = unitCost == null ? null : variance.multiply(unitCost).setScale(2, RoundingMode.HALF_UP);
+                rows.add(new MaterialVarianceRow(mo.getId(), mo.getMoNo(), mo.getMoType(), mo.getMoType().getLabel(),
+                        mo.getFactoryId(), f == null ? "-" : f.getName(), mo.getFgItemId(),
+                        fg == null ? "-" : fg.getCode(), fg == null ? "-" : fg.getName(),
+                        mo.getStatus(), mo.getStatus().getLabel(), mo.getPlannedQty(), mo.getActualQty(),
+                        mat.getId(), mat.getCode(), mat.getName(), mat.getUnit(),
+                        stdQty, netIssued, variance, varPct, state, stateLabel, unitCost, varCost));
+            }
         }
         return rows;
     }

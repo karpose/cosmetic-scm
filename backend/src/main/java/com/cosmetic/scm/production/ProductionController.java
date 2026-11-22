@@ -76,6 +76,11 @@ public class ProductionController {
         return production.oemConsignment();
     }
 
+    @GetMapping("/material-variance")
+    public List<ProductionService.MaterialVarianceRow> materialVariance() {
+        return production.materialVariance();
+    }
+
     @PostMapping("/{id}/complete")
     @PreAuthorize("hasAnyRole('ADMIN','PRODUCTION','WAREHOUSE')")
     public MoView complete(@PathVariable Long id, @Valid @RequestBody CompleteReq req) {
