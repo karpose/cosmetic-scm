@@ -122,9 +122,16 @@ class ChangeArtworkLinkTest {
         // 关联的设计稿没批准，变更不能关闭；批准后可以
         JsonNode detail = read(qa, "/api/changes/" + label);
         assertThat(detail.get("artworks").get(0).get("artworkNo").asText()).isEqualTo(v2.get("artworkNo").asText());
+        String boardState = "$.rows[?(@.changeId == " + label + ")].closureState";
+        mvc.perform(get("/api/changes/closure-board").header("Authorization", "Bearer " + qa))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath(boardState, org.hamcrest.Matchers.contains("PENDING_LINKED_APPROVAL")));
         call(qso, "/api/changes/" + label + "/close", Map.of("note", "完成", "password", PWD)).andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString(v2.get("artworkNo").asText())));
         approve(qa, qso, v2.get("id").asLong());
+        mvc.perform(get("/api/changes/closure-board").header("Authorization", "Bearer " + qa))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath(boardState, org.hamcrest.Matchers.contains("READY_TO_CLOSE")));
         ok(call(qso, "/api/changes/" + label + "/close", Map.of("note", "完成", "password", PWD)));
         // 关闭后不能再关联
         call(qa, "/api/artworks", Map.of("pkItemId", pk, "fgItemId", fg, "changeNote", "再改", "changeId", label)).andExpect(status().isBadRequest())

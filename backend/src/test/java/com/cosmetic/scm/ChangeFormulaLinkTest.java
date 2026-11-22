@@ -95,8 +95,15 @@ class ChangeFormulaLinkTest {
         assertThat(cd.get("formulas").get(0).get("status").asText()).isEqualTo("DRAFT");
 
         // 配方还在草稿：变更关不了；放弃草稿后能关；关了以后不能再挂配方
+        String boardState = "$.rows[?(@.changeId == " + cid + ")].closureState";
+        mvc.perform(get("/api/changes/closure-board").header("Authorization", "Bearer " + qa))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath(boardState, org.hamcrest.Matchers.contains("PENDING_LINKED_APPROVAL")));
         call(qso, "/api/changes/" + cid + "/close", Map.of("note", "x", "password", PWD)).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("CL-FG V2")));
         ok(call(admin, "/api/plm/versions/" + v.get("id").asLong() + "/discard", Map.of()));
+        mvc.perform(get("/api/changes/closure-board").header("Authorization", "Bearer " + qa))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath(boardState, org.hamcrest.Matchers.contains("READY_TO_CLOSE")));
         ok(call(qso, "/api/changes/" + cid + "/close", Map.of("note", "方案取消", "password", PWD)));
         call(admin, url, draft).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("已关闭")));
     }

@@ -3,16 +3,20 @@ package com.cosmetic.scm.plm;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.cosmetic.scm.audit.AuditService;
 import com.cosmetic.scm.common.BizException;
 import com.cosmetic.scm.common.DocNoService;
 import com.cosmetic.scm.common.TimeProvider;
+import com.cosmetic.scm.domain.ArtworkStatus;
 import com.cosmetic.scm.domain.ChangeStatus;
 import com.cosmetic.scm.domain.ChangeType;
+import com.cosmetic.scm.domain.FormulaStatus;
 import com.cosmetic.scm.domain.RiskLevel;
 import com.cosmetic.scm.domain.Role;
 import com.cosmetic.scm.security.AppUser;
@@ -40,6 +44,7 @@ public class ChangeService {
 
     /** 自动生成的行动项默认期限。 */
     public static final int DEFAULT_ACTION_DAYS = 30;
+    private static final Set<FormulaStatus> UNCLOSED_FORMULA_STATES = Set.of(FormulaStatus.DRAFT, FormulaStatus.PENDING);
 
     private final ChangeRequestRepository changes;
     private final ChangeActionRepository actions;
@@ -136,7 +141,7 @@ public class ChangeService {
     }
 
     public record ChangeClosureBoard(int totalCount, int actionOverdueCount, int readyToCloseCount,
-                                     int pendingApproveCount, int pendingAssessCount,
+                                     int pendingLinkedApprovalCount, int pendingApproveCount, int pendingAssessCount,
                                      List<ChangeClosureRow> rows) {
     }
 
@@ -202,6 +207,14 @@ public class ChangeService {
     public ChangeClosureBoard closureBoard() {
         List<ChangeRow> open = rows(changes.findByStatusInOrderById(
                 List.of(ChangeStatus.SUBMITTED, ChangeStatus.ASSESSED, ChangeStatus.APPROVED)));
+        List<Long> candidates = open.stream()
+                .filter(c -> c.status() == ChangeStatus.APPROVED && c.actionsOpen() == 0)
+                .map(ChangeRow::id).toList();
+        Set<Long> pendingLinkedApproval = new HashSet<>();
+        if (!candidates.isEmpty()) {
+            pendingLinkedApproval.addAll(formulaVersions.findChangeIdsByStatus(candidates, UNCLOSED_FORMULA_STATES));
+            pendingLinkedApproval.addAll(labelArtworks.findChangeIdsByStatus(candidates, ArtworkStatus.PENDING));
+        }
         List<ChangeClosureRow> items = new ArrayList<>();
         int overdueCnt = 0;
         int readyCnt = 0;
@@ -217,6 +230,10 @@ public class ChangeService {
                 label = "行动已超期";
                 action = "有 " + c.actionsOverdue() + " 项行动已超期（共 " + c.actionsOpen() + " 项未完成），请督办负责人立即整改闭环";
                 overdueCnt++;
+            } else if (pendingLinkedApproval.contains(c.id())) {
+                state = "PENDING_LINKED_APPROVAL";
+                label = "关联资料待签批";
+                action = "行动项已完成，请先处理未签批的关联配方或设计稿";
             } else if (c.status() == ChangeStatus.APPROVED && c.actionsOpen() == 0) {
                 state = "READY_TO_CLOSE";
                 label = "待 QSO 确认关闭";
@@ -247,16 +264,17 @@ public class ChangeService {
                 .thenComparing(ChangeClosureRow::actionsOverdue, java.util.Comparator.reverseOrder())
                 .thenComparing(ChangeClosureRow::changeNo));
 
-        return new ChangeClosureBoard(items.size(), overdueCnt, readyCnt, approveCnt, assessCnt, items);
+        return new ChangeClosureBoard(items.size(), overdueCnt, readyCnt, pendingLinkedApproval.size(), approveCnt, assessCnt, items);
     }
 
     private static int closureRank(String state) {
         return switch (state) {
             case "ACTION_OVERDUE" -> 0;
-            case "READY_TO_CLOSE" -> 1;
-            case "PENDING_APPROVE" -> 2;
-            case "PENDING_ASSESS" -> 3;
-            default -> 4;
+            case "PENDING_LINKED_APPROVAL" -> 1;
+            case "READY_TO_CLOSE" -> 2;
+            case "PENDING_APPROVE" -> 3;
+            case "PENDING_ASSESS" -> 4;
+            default -> 5;
         };
     }
 
@@ -389,12 +407,12 @@ public class ChangeService {
         }
         // 关联的配方还在草稿或待签批，说明变更还没落地
         List<String> pendingFormulas = formulaVersions.findByChangeIdOrderById(c.getId()).stream()
-                .filter(v -> v.getStatus() == com.cosmetic.scm.domain.FormulaStatus.DRAFT || v.getStatus() == com.cosmetic.scm.domain.FormulaStatus.PENDING)
+                .filter(v -> UNCLOSED_FORMULA_STATES.contains(v.getStatus()))
                 .map(v -> lookup.item(v.getFgItemId()).getCode() + " V" + v.getVersionNo()).toList();
         if (!pendingFormulas.isEmpty()) {
             throw new BizException("关联的配方 " + String.join("、", pendingFormulas) + " 还没签批或放弃，不能关闭");
         }
-        List<String> pendingArtworks = labelArtworks.findByChangeIdOrderById(c.getId()).stream().filter(a -> a.getStatus() == com.cosmetic.scm.domain.ArtworkStatus.PENDING)
+        List<String> pendingArtworks = labelArtworks.findByChangeIdOrderById(c.getId()).stream().filter(a -> a.getStatus() == ArtworkStatus.PENDING)
                 .map(LabelArtwork::getArtworkNo).toList();
         if (!pendingArtworks.isEmpty()) {
             throw new BizException("关联的设计稿 " + String.join("、", pendingArtworks) + " 还没批准或退回，不能关闭");

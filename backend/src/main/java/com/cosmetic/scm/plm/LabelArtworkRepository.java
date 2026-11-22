@@ -21,6 +21,9 @@ public interface LabelArtworkRepository extends JpaRepository<LabelArtwork, Long
 
     List<LabelArtwork> findByChangeIdOrderById(Long changeId);
 
+    @Query("select distinct a.changeId from LabelArtwork a where a.changeId in :ids and a.status = :status")
+    List<Long> findChangeIdsByStatus(@Param("ids") Collection<Long> changeIds, @Param("status") ArtworkStatus status);
+
     List<LabelArtwork> findByStatusInOrderById(Collection<ArtworkStatus> statuses);
 
     Optional<LabelArtwork> findFirstByPkItemIdAndStatus(Long pkItemId, ArtworkStatus status);

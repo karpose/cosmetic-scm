@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
 import com.cosmetic.scm.domain.ChangeStatus;
 import com.cosmetic.scm.domain.ChangeType;
@@ -48,6 +49,7 @@ class V72ChangeClosureBoardTest {
     @Autowired ChangeService changeService;
     @Autowired ChangeRequestRepository changeRepo;
     @Autowired ChangeActionRepository actionRepo;
+    @Autowired TimeProvider time;
 
     private <T> T as(String user, Supplier<T> s) {
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(user, null, List.of()));
@@ -66,7 +68,8 @@ class V72ChangeClosureBoardTest {
 
     @Test
     void closureBoardClassifiesActionOverdueReadyToCloseAndPendingAssessAndExportsReport() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = time.today();
+        LocalDateTime now = time.now();
         // 1) 实施中且含超期行动项的变更 -> ACTION_OVERDUE
         ChangeRequest overdueChange = new ChangeRequest();
         overdueChange.setChangeNo("CC-V72-OVER");
@@ -78,7 +81,7 @@ class V72ChangeClosureBoardTest {
         overdueChange.setRisk(RiskLevel.HIGH);
         overdueChange.setImpact("需验证连续三批工艺一致性");
         overdueChange.setCreatedBy("prod1");
-        overdueChange.setCreatedAt(LocalDateTime.now().minusDays(15));
+        overdueChange.setCreatedAt(now.minusDays(15));
         overdueChange.setAssessedBy("qa1");
         overdueChange.setApprovedBy("qso1");
         overdueChange = changeRepo.save(overdueChange);
@@ -103,7 +106,7 @@ class V72ChangeClosureBoardTest {
         readyChange.setRisk(RiskLevel.LOW);
         readyChange.setImpact("不影响配方与合规成分表");
         readyChange.setCreatedBy("prod1");
-        readyChange.setCreatedAt(LocalDateTime.now().minusDays(5));
+        readyChange.setCreatedAt(now.minusDays(5));
         readyChange.setAssessedBy("qa1");
         readyChange.setApprovedBy("qso1");
         readyChange = changeRepo.save(readyChange);
@@ -116,7 +119,7 @@ class V72ChangeClosureBoardTest {
         doneAct.setDueDate(today.plusDays(5));
         doneAct.setDone(true);
         doneAct.setDoneBy("qa1");
-        doneAct.setDoneAt(LocalDateTime.now());
+        doneAct.setDoneAt(now);
         doneAct.setDoneNote("已签样确认");
         actionRepo.save(doneAct);
 

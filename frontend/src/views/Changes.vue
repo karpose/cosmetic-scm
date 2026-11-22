@@ -43,19 +43,20 @@
           <el-radio-group v-model="closureFilter" size="small">
             <el-radio-button value="ALL">全部 ({{ closureBoard?.totalCount ?? 0 }})</el-radio-button>
             <el-radio-button value="ACTION_OVERDUE">行动超期 ({{ closureBoard?.actionOverdueCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="PENDING_LINKED_APPROVAL">关联资料待签批 ({{ closureBoard?.pendingLinkedApprovalCount ?? 0 }})</el-radio-button>
             <el-radio-button value="READY_TO_CLOSE">待确认关闭 ({{ closureBoard?.readyToCloseCount ?? 0 }})</el-radio-button>
             <el-radio-button value="PENDING_APPROVE">待 QSO 批准 ({{ closureBoard?.pendingApproveCount ?? 0 }})</el-radio-button>
             <el-radio-button value="PENDING_ASSESS">待 QA 评估 ({{ closureBoard?.pendingAssessCount ?? 0 }})</el-radio-button>
           </el-radio-group>
         </div>
         <div v-if="closureBoard" class="muted small" style="margin-top:8px">
-          进行中变更 <b class="mono">{{ closureBoard.totalCount }}</b> 项 · 行动超期 <b class="mono" :class="{ late: closureBoard.actionOverdueCount > 0 }">{{ closureBoard.actionOverdueCount }}</b> · 行动全完待关闭 <b class="mono">{{ closureBoard.readyToCloseCount }}</b> · 待批准 <b class="mono">{{ closureBoard.pendingApproveCount }}</b> · 待评估 <b class="mono">{{ closureBoard.pendingAssessCount }}</b>
+          进行中变更 <b class="mono">{{ closureBoard.totalCount }}</b> 项 · 行动超期 <b class="mono" :class="{ late: closureBoard.actionOverdueCount > 0 }">{{ closureBoard.actionOverdueCount }}</b> · 关联资料待签批 <b class="mono">{{ closureBoard.pendingLinkedApprovalCount }}</b> · 待关闭 <b class="mono">{{ closureBoard.readyToCloseCount }}</b> · 待批准 <b class="mono">{{ closureBoard.pendingApproveCount }}</b> · 待评估 <b class="mono">{{ closureBoard.pendingAssessCount }}</b>
         </div>
       </template>
-      <el-table :data="filteredClosureRows" v-loading="loader.loading.value" size="small" empty-text="当前无进行中的变更事项">
+      <el-table :data="filteredClosureRows" v-loading="loader.loading.value" size="small" empty-text="没有符合筛选条件的变更事项" scrollbar-tabindex="0">
         <el-table-column label="闭环优先级" width="125" align="center">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.closureState === 'ACTION_OVERDUE' ? 'danger' : row.closureState === 'READY_TO_CLOSE' ? 'success' : row.closureState === 'PENDING_APPROVE' ? 'warning' : 'primary'" disable-transitions>{{ row.closureLabel }}</el-tag>
+            <el-tag size="small" :type="CLOSURE_TAG[row.closureState] ?? 'info'" disable-transitions>{{ row.closureLabel }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="变更编号 / 类型" width="155">
@@ -241,6 +242,7 @@ const changes = ref([])
 const summary = ref(null)
 const closureBoard = ref(null)
 const closureFilter = ref('ALL')
+const CLOSURE_TAG = { ACTION_OVERDUE: 'danger', PENDING_LINKED_APPROVAL: 'warning', READY_TO_CLOSE: 'success', PENDING_APPROVE: 'warning', PENDING_ASSESS: 'primary' }
 const filteredClosureRows = computed(() => {
   const list = closureBoard.value?.rows || []
   return closureFilter.value === 'ALL' ? list : list.filter((r) => r.closureState === closureFilter.value)

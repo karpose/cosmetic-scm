@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
 import com.cosmetic.scm.domain.FormulaStatus;
 import com.cosmetic.scm.domain.StabilityType;
@@ -44,6 +45,7 @@ class V71StabilityRiskBoardTest {
     @Autowired ObjectMapper json;
     @Autowired StabilityService stabilityService;
     @Autowired FormulaVersionRepository formulaVersions;
+    @Autowired TimeProvider time;
 
     private <T> T as(String user, Supplier<T> s) {
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(user, null, List.of()));
@@ -62,7 +64,7 @@ class V71StabilityRiskBoardTest {
 
     @Test
     void riskBoardTracksOverdueAndDueSoonPullsAndExportsReport() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = time.today();
         FormulaVersion effective = formulaVersions.findByStatus(FormulaStatus.EFFECTIVE).get(0);
 
         // 10天前开始的试验，设两个时间点：+5天（已超期 5 天）与 +13天（3天后到期）
