@@ -60,6 +60,11 @@ public class QmsController {
         return deviations.list();
     }
 
+    @GetMapping("/deviations/{id}")
+    public DeviationView getDeviation(@PathVariable Long id) {
+        return deviations.getDeviation(id);
+    }
+
     @PostMapping("/deviations")
     @PreAuthorize(CAN_REPORT)
     public DeviationView createDeviation(@Valid @RequestBody DeviationReq req) {
@@ -81,6 +86,11 @@ public class QmsController {
     @GetMapping("/capas")
     public List<CapaView> capas() {
         return deviations.listCapas();
+    }
+
+    @GetMapping("/capas/{id}")
+    public CapaView getCapa(@PathVariable Long id) {
+        return deviations.getCapa(id);
     }
 
     @PostMapping("/capas")

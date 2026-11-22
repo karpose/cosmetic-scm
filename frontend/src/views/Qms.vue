@@ -156,7 +156,7 @@
               待闭环偏差与 CAPA <b class="mono">{{ closureBoard.totalCount }}</b> 项 · 已超期 <b class="mono" :class="{ bad: closureBoard.overdueCount > 0 }">{{ closureBoard.overdueCount }}</b> · 阻断批次放行 <b class="mono" :class="{ warn: closureBoard.blockingCount > 0 }">{{ closureBoard.blockingCount }}</b> · 待 QA 验证 <b class="mono">{{ closureBoard.verifyPendingCount }}</b> · 3天内到期 <b class="mono">{{ closureBoard.dueSoonCount }}</b>
             </div>
           </template>
-          <el-table :data="filteredClosureRows" v-loading="loader.loading.value" size="small" empty-text="当前无未关闭偏差或未验证 CAPA">
+          <el-table :data="filteredClosureRows" v-loading="loader.loading.value" size="small" empty-text="没有符合筛选条件的事项" scrollbar-tabindex="0">
             <el-table-column label="风险分级" width="120" align="center">
               <template #default="{ row }">
                 <el-tag size="small" :type="row.riskLevel === 'OVERDUE' ? 'danger' : row.riskLevel === 'BLOCKING' ? 'warning' : row.riskLevel === 'VERIFY_PENDING' ? 'primary' : row.riskLevel === 'DUE_SOON' ? 'warning' : 'info'" disable-transitions>{{ row.riskLabel }}</el-tag>
@@ -505,16 +505,28 @@ const closureBoard = ref(null)
 const closureFilter = ref('ALL')
 const filteredClosureRows = computed(() => {
   const list = closureBoard.value?.rows || []
-  return closureFilter.value === 'ALL' ? list : list.filter((r) => r.riskLevel === closureFilter.value)
+  const filter = closureFilter.value
+  if (filter === 'ALL') return list
+  if (filter === 'BLOCKING') return list.filter((r) => r.blockingRelease)
+  if (filter === 'DUE_SOON') return list.filter((r) => r.dueSoon)
+  return list.filter((r) => r.riskLevel === filter)
 })
-function jumpClosureItem(row) {
-  if (row.itemType === 'DEVIATION') {
-    tab.value = 'deviations'
-    df.status = 'OPEN'
+async function jumpClosureItem(row) {
+  const isDeviation = row.itemType === 'DEVIATION'
+  const targetTab = isDeviation ? 'deviations' : 'capas'
+  const records = isDeviation ? deviations : capas
+  if (!records.value.some((item) => item.id === row.itemId)) {
+    const item = await http.get(`/qms/${targetTab}/${row.itemId}`).catch(() => null)
+    if (!item) return
+    if (!records.value.some((entry) => entry.id === item.id)) records.value.unshift(item)
+  }
+  tab.value = targetTab
+  if (isDeviation) {
+    df.status = ''
+    df.level = ''
     dt.keyword.value = row.refNo
   } else {
-    tab.value = 'capas'
-    cf.status = 'ACTIVE'
+    cf.status = ''
     ct.keyword.value = row.refNo
   }
 }

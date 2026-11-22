@@ -3,6 +3,7 @@ package com.cosmetic.scm;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.LocalDate;
@@ -10,11 +11,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
 import com.cosmetic.scm.domain.CapaSource;
 import com.cosmetic.scm.domain.CapaType;
 import com.cosmetic.scm.domain.DeviationArea;
 import com.cosmetic.scm.domain.DeviationLevel;
+import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.qms.DeviationService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,6 +45,8 @@ class V70QmsClosureBoardTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired DeviationService deviationService;
+    @Autowired BatchRepository batches;
+    @Autowired TimeProvider time;
 
     private <T> T as(String user, Supplier<T> s) {
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(user, null, List.of()));
@@ -60,10 +65,11 @@ class V70QmsClosureBoardTest {
 
     @Test
     void closureBoardClassifiesOverdueBlockingVerifyPendingAndExportsReport() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = time.today();
+        String batchNo = batches.findAll().get(0).getBatchNo();
         // 1) 重大偏差已超期 2 天 -> OVERDUE 且计入 blockingCount
         var overdueMajor = as("prod1", () -> deviationService.create(new DeviationService.DeviationReq(
-                today.minusDays(5), DeviationArea.PRODUCTION, DeviationLevel.MAJOR, null,
+                today.minusDays(5), DeviationArea.PRODUCTION, DeviationLevel.MAJOR, batchNo,
                 "V70 乳化温度超限", "均质锅温度高于工艺上限 3℃", "立即暂停灌装隔离", today.minusDays(2))));
 
         // 2) 关联 CAPA 已完成待 QA 验证 -> VERIFY_PENDING
@@ -76,6 +82,12 @@ class V70QmsClosureBoardTest {
         var dueSoonMinor = as("prod1", () -> deviationService.create(new DeviationService.DeviationReq(
                 today.minusDays(1), DeviationArea.WAREHOUSE, DeviationLevel.MINOR, null,
                 "V70 外箱标签轻微歪斜", "抽检发现 2 箱外箱贴标偏斜", "现场重新贴标", today.plusDays(2))));
+        var dueSoonMajor = as("prod1", () -> deviationService.create(new DeviationService.DeviationReq(
+                today, DeviationArea.PRODUCTION, DeviationLevel.MAJOR, batchNo,
+                "V70 批次临期复核", "批次记录需要复核", null, today.plusDays(1))));
+        var unlinkedMajor = as("prod1", () -> deviationService.create(new DeviationService.DeviationReq(
+                today, DeviationArea.PRODUCTION, DeviationLevel.MAJOR, null,
+                "V70 未关联批次的重大偏差", "改进生产检查流程", null, today.plusDays(10))));
 
         String qaToken = login("qa1");
         JsonNode board = json.readTree(mvc.perform(get("/api/qms/closure-board")
@@ -83,9 +95,9 @@ class V70QmsClosureBoardTest {
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
 
         assertThat(board.get("overdueCount").asInt()).isGreaterThanOrEqualTo(1);
-        assertThat(board.get("blockingCount").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(board.get("blockingCount").asInt()).isGreaterThanOrEqualTo(2);
         assertThat(board.get("verifyPendingCount").asInt()).isGreaterThanOrEqualTo(1);
-        assertThat(board.get("dueSoonCount").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(board.get("dueSoonCount").asInt()).isGreaterThanOrEqualTo(2);
 
         JsonNode overRow = findByRefNo(board.get("rows"), overdueMajor.deviationNo());
         JsonNode capaRow = findByRefNo(board.get("rows"), capa.capaNo());
@@ -93,6 +105,7 @@ class V70QmsClosureBoardTest {
         assertThat(overRow).isNotNull();
         assertThat(overRow.get("riskLevel").asText()).isEqualTo("OVERDUE");
         assertThat(overRow.get("daysLeft").asLong()).isEqualTo(-2L);
+        assertThat(overRow.get("blockingRelease").asBoolean()).isTrue();
 
         assertThat(capaRow).isNotNull();
         assertThat(capaRow.get("riskLevel").asText()).isEqualTo("VERIFY_PENDING");
@@ -100,6 +113,15 @@ class V70QmsClosureBoardTest {
         assertThat(soonRow).isNotNull();
         assertThat(soonRow.get("riskLevel").asText()).isEqualTo("DUE_SOON");
         assertThat(soonRow.get("daysLeft").asLong()).isEqualTo(2L);
+        JsonNode nearBlocker = findByRefNo(board.get("rows"), dueSoonMajor.deviationNo());
+        assertThat(nearBlocker.get("blockingRelease").asBoolean()).isTrue();
+        assertThat(nearBlocker.get("dueSoon").asBoolean()).isTrue();
+        assertThat(findByRefNo(board.get("rows"), unlinkedMajor.deviationNo()).get("blockingRelease").asBoolean()).isFalse();
+
+        mvc.perform(get("/api/qms/deviations/{id}", overRow.get("itemId").asLong()).header("Authorization", "Bearer " + qaToken))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.deviationNo").value(overdueMajor.deviationNo()));
+        mvc.perform(get("/api/qms/capas/{id}", capaRow.get("itemId").asLong()).header("Authorization", "Bearer " + qaToken))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.capaNo").value(capa.capaNo()));
 
         byte[] xlsx = mvc.perform(get("/api/reports/qms-closure").header("Authorization", "Bearer " + qaToken))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
