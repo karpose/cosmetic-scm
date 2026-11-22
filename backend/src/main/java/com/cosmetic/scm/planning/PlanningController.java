@@ -48,6 +48,11 @@ public class PlanningController {
         return planning.materials(req);
     }
 
+    @GetMapping("/kitting")
+    public List<PlanningService.KittingOrderRow> kitting() {
+        return planning.kittingCheck();
+    }
+
     private static PlanParams validParams(int windowDays, int leadDays, int safetyDays, int coverDays, boolean useForecast) {
         if (windowDays < 7 || windowDays > 365 || leadDays < 0 || leadDays > 180 || safetyDays < 0 || safetyDays > 180
                 || coverDays < 0 || coverDays > 365) {

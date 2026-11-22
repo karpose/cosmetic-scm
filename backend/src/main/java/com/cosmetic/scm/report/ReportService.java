@@ -155,6 +155,7 @@ public class ReportService {
         m.put("items", this::itemsReport);
         m.put("partners", this::partnersReport);
         m.put("planning-fg", this::planningFgReport);
+        m.put("planning-kitting", this::planningKittingReport);
         m.put("rfqs", this::rfqsReport);
         m.put("notification-logs", this::notificationLogsReport);
         m.put("todos", this::todosReport);
@@ -787,6 +788,25 @@ public class ReportService {
                 "可用库存", "其中临期", "待上市放行", "在制生产", "预计可用",
                 "安全库存", "再订货点", "可售天数", "低于再订货点", "建议补产", "建议生产方",
                 "单位成本(元)", "指导价(元)"), rows);
+    }
+
+    private Table planningKittingReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        planning.kittingCheck().forEach(o -> {
+            if (o.shortages().isEmpty()) {
+                rows.add(row(o.moNo(), o.moTypeLabel(), o.factoryName(), o.fgCode(), o.fgName(),
+                        o.plannedQty(), o.plannedDate(), o.kittingPct(), o.statusLabel(),
+                        null, null, null, null, null, null, null, "已齐套，可直接发料"));
+            } else {
+                o.shortages().forEach(s -> rows.add(row(o.moNo(), o.moTypeLabel(), o.factoryName(), o.fgCode(), o.fgName(),
+                        o.plannedQty(), o.plannedDate(), o.kittingPct(), o.statusLabel(),
+                        s.itemCode(), s.itemName(), s.unit(), s.requiredQty(), s.allocatedQty(), s.shortQty(),
+                        s.quarantineQty().add(s.onOrderQty()), s.supplyHint())));
+            }
+        });
+        return new Table("生产排产齐套预检清单", List.of("生产单号", "类型", "生产方", "成品编码", "成品名称",
+                "计划产量", "计划日期", "齐套率(%)", "齐套状态", "缺料编码", "缺料名称", "单位",
+                "需求数量", "可分配数", "缺口数量", "待检+在途", "供应建议"), rows);
     }
 
     private Table rfqsReport() {
