@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
 import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.Decision;
@@ -52,6 +53,7 @@ class V58OemVarianceSettlementTest {
 
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
+    @Autowired TimeProvider time;
     @Autowired MasterService master;
     @Autowired MasterImportService imports;
     @Autowired OpeningStockService opening;
@@ -76,7 +78,7 @@ class V58OemVarianceSettlementTest {
 
     @Test
     void oemMaterialOveruseSurfacesInVarianceLedgerAndSettlementPreview() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = time.today();
         Long ownWh = master.listWarehouses().stream().filter(w -> "WH-MAIN".equals(w.code())).findFirst().orElseThrow().id();
 
         var ctx = as("admin", () -> {

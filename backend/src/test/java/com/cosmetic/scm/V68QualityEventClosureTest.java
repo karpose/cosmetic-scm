@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.complaint.ComplaintService;
 import com.cosmetic.scm.demo.DemoDataLoader;
 import com.cosmetic.scm.domain.ComplaintCategory;
@@ -44,6 +45,7 @@ class V68QualityEventClosureTest {
 
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
+    @Autowired TimeProvider time;
     @Autowired MasterService master;
     @Autowired ComplaintService complaintService;
 
@@ -64,7 +66,7 @@ class V68QualityEventClosureTest {
 
     @Test
     void closureBoardTracksAdverseReportDeadlinesAndExportsReport() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = time.today();
         Long fgId = as("admin", () -> {
             Item fg = master.createItem(new MasterDtos.ItemReq(
                     "FG-V68", "V68 修护精华液", ItemType.FG, "瓶", null, null, false, 36,
