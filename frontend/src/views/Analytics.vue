@@ -206,35 +206,55 @@
         </el-table>
       </el-card>
 
-      <!-- 生产批次实际成本核算（仅价格权限角色可见） -->
+      <!-- 生产批次实际成本核算与异常监控（仅价格权限角色可见） -->
       <el-card v-if="canPrice" shadow="never" body-style="padding:0 0 8px">
         <template #header>
           <div class="ch">
-            <b>生产批次实际成本核算</b>
+            <b>生产批次实际成本核算与异常监控</b>
             <div class="toolbar">
+              <el-radio-group v-model="bc.filter" size="small">
+                <el-radio-button value="ALL">全部 ({{ bc.rows.length }})</el-radio-button>
+                <el-radio-button value="OVERRUN">超标 ({{ bc.summary?.overrunCount ?? 0 }})</el-radio-button>
+                <el-radio-button value="SAVING">节约 ({{ bc.summary?.savingCount ?? 0 }})</el-radio-button>
+                <el-radio-button value="INCOMPLETE">数据不全 ({{ bc.summary?.incompleteCount ?? 0 }})</el-radio-button>
+              </el-radio-group>
               <el-button size="small" @click="loadBatchCosts">刷新</el-button>
               <ExportButton report="batch-costs" />
             </div>
           </div>
+          <div v-if="bc.summary" class="muted small" style="margin-top:6px">
+            已核算 <b class="mono">{{ bc.summary.totalBatches }}</b> 批 · 超标(&gt;5%) <b class="mono" :class="{ bad: bc.summary.overrunCount > 0 }">{{ bc.summary.overrunCount }}</b> 批 · 节约(&lt;-5%) <b class="mono">{{ bc.summary.savingCount }}</b> 批 · 平均偏差 <b class="mono">{{ bc.summary.avgVariancePct == null ? '—' : `${Number(bc.summary.avgVariancePct) > 0 ? '+' : ''}${bc.summary.avgVariancePct}%` }}</b> · 超标累计超支 <b class="mono" :class="{ bad: Number(bc.summary.totalOverrunAmount) > 0 }">¥{{ fmtMoney(bc.summary.totalOverrunAmount) }}</b>
+          </div>
         </template>
-        <el-table :data="bc.rows" v-loading="bc.loading" size="small" empty-text="暂无已完工生产单成本数据">
-          <el-table-column label="生产单 / 批号" width="165">
-            <template #default="{ row }"><span class="mono">{{ row.moNo }}</span><div class="muted small mono">{{ row.outBatchNo }}</div></template>
-          </el-table-column>
-          <el-table-column label="成品 / 生产方" min-width="170">
-            <template #default="{ row }">{{ row.fgName }}<div class="muted small">{{ row.moTypeLabel }} · {{ row.factoryName }}</div></template>
-          </el-table-column>
-          <el-table-column label="实际产量" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.actualQty) }}</span></template></el-table-column>
-          <el-table-column label="领料成本" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.materialCost) }}</span></template></el-table-column>
-          <el-table-column label="委外加工费" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.processingCost) }}</span></template></el-table-column>
-          <el-table-column label="实际单位成本" width="115" align="right"><template #default="{ row }"><b class="mono">{{ fmtMoney(row.actualUnitCost) }}</b></template></el-table-column>
-          <el-table-column label="标准成本" width="100" align="right"><template #default="{ row }"><span class="mono">{{ row.stdUnitCost != null ? fmtMoney(row.stdUnitCost) : '—' }}</span></template></el-table-column>
-          <el-table-column label="偏差" width="90" align="right">
+        <el-table :data="filteredBatchCosts" v-loading="bc.loading" size="small" empty-text="暂无符合条件的已完工生产单成本数据">
+          <el-table-column label="异常分级" width="95" align="center">
             <template #default="{ row }">
-              <span v-if="row.variancePct != null" class="mono" :class="{ bad: Number(row.variancePct) > 5 }">{{ Number(row.variancePct) > 0 ? '+' : '' }}{{ row.variancePct }}%</span>
-              <span v-else class="muted">—</span>
+              <el-tag size="small" :type="row.anomalyLevel === 'OVERRUN' ? 'danger' : row.anomalyLevel === 'SAVING' ? 'success' : row.anomalyLevel === 'INCOMPLETE' ? 'warning' : 'info'" disable-transitions>{{ row.anomalyLabel }}</el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="生产单 / 批号" width="160">
+            <template #default="{ row }"><span class="mono">{{ row.moNo }}</span><div class="muted small mono">{{ row.outBatchNo }}</div></template>
+          </el-table-column>
+          <el-table-column label="成品 / 生产方" min-width="165">
+            <template #default="{ row }">{{ row.fgName }}<div class="muted small">{{ row.moTypeLabel }} · {{ row.factoryName }}</div></template>
+          </el-table-column>
+          <el-table-column label="实际产量 / 收率" width="115" align="right">
+            <template #default="{ row }"><span class="mono">{{ fmtQty(row.actualQty) }}</span><div v-if="row.yieldPct != null" class="muted small mono">收率 {{ row.yieldPct }}%</div></template>
+          </el-table-column>
+          <el-table-column label="领料 / 加工费" width="120" align="right">
+            <template #default="{ row }"><span class="mono">{{ fmtMoney(row.materialCost) }}</span><div class="muted small mono">加工 {{ fmtMoney(row.processingCost) }}</div></template>
+          </el-table-column>
+          <el-table-column label="实际 / 标准单价" width="125" align="right">
+            <template #default="{ row }"><b class="mono">{{ fmtMoney(row.actualUnitCost) }}</b><div class="muted small mono">标 {{ row.stdUnitCost != null ? fmtMoney(row.stdUnitCost) : '—' }}</div></template>
+          </el-table-column>
+          <el-table-column label="偏差率 / 金额" width="120" align="right">
+            <template #default="{ row }">
+              <span v-if="row.variancePct != null" class="mono" :class="{ bad: Number(row.variancePct) > 5, ok: Number(row.variancePct) < -5 }">{{ Number(row.variancePct) > 0 ? '+' : '' }}{{ row.variancePct }}%</span>
+              <span v-else class="muted">—</span>
+              <div v-if="row.varianceAmount != null" class="muted small mono">{{ Number(row.varianceAmount) > 0 ? '+' : '' }}¥{{ fmtMoney(row.varianceAmount) }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column prop="costDriver" label="偏差归因" min-width="145" />
         </el-table>
       </el-card>
 
@@ -405,11 +425,23 @@ async function loadPerf() {
 
 const auth = useAuth()
 const canPrice = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE'))
-const bc = reactive({ loading: false, rows: [] })
+const bc = reactive({ loading: false, filter: 'ALL', rows: [], summary: null })
+const filteredBatchCosts = computed(() =>
+  bc.filter === 'ALL' ? bc.rows : bc.rows.filter((r) => r.anomalyLevel === bc.filter)
+)
 async function loadBatchCosts() {
   if (!canPrice.value) return
   bc.loading = true
-  try { bc.rows = await http.get('/analytics/batch-costs') } finally { bc.loading = false }
+  try {
+    const [rows, summary] = await Promise.all([
+      http.get('/analytics/batch-costs'),
+      http.get('/analytics/batch-costs/summary')
+    ])
+    bc.rows = rows
+    bc.summary = summary
+  } finally {
+    bc.loading = false
+  }
 }
 
 const mg = reactive({ loading: false, dim: 'item', data: null })
