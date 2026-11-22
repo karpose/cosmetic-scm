@@ -39,6 +39,8 @@ public interface SupplierReturnRepository extends JpaRepository<SupplierReturn, 
 
     List<SupplierReturn> findByBatchIdOrderById(Long batchId);
 
+    List<SupplierReturn> findByBatchIdInOrderByIdDesc(Collection<Long> batchIds);
+
     List<SupplierReturn> findByBatchIdInAndStatus(Collection<Long> batchIds, SupplierReturnStatus status);
 
     List<SupplierReturn> findBySettledStatementId(Long statementId);

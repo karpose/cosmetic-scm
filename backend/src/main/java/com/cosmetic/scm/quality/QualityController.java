@@ -43,6 +43,11 @@ public class QualityController {
         return quality.summary();
     }
 
+    @GetMapping("/ncr-dispositions")
+    public List<QualityService.NcrDispositionRow> ncrDispositions() {
+        return quality.ncrDispositions();
+    }
+
     @PostMapping("/batches/{id}/material-decision")
     @PreAuthorize("hasAnyRole('QA','QSO')")
     public BatchView materialDecision(@PathVariable Long id, @Valid @RequestBody MaterialDecisionReq req) {

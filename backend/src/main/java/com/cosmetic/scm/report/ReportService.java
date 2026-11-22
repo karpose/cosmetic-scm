@@ -143,6 +143,7 @@ public class ReportService {
         m.put("regulatory-violations", this::regulatoryViolationsReport);
         m.put("stability-coverage", this::stabilityCoverageReport);
         m.put("release-decisions", this::releaseDecisionsReport);
+        m.put("ncr-disposition", this::ncrDispositionReport);
         m.put("dealer-orders", this::dealerOrdersReport);
         m.put("production-efficiency", this::productionEfficiencyReport);
         m.put("oem-consignment", this::oemConsignmentReport);
@@ -641,6 +642,18 @@ public class ReportService {
                 d.signedByName(), d.signedAt(), d.retainQty(), d.retainLocation(), d.retainUntil(), d.note())));
         return new Table("质量检验与上市放行签批台账", List.of("批号", "物料/成品", "放行环节", "签批结论", "检验报告号",
                 "签批人", "签批时间", "留样数量", "留样地点", "留样保存至", "签批说明"), rows);
+    }
+
+    private Table ncrDispositionReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        quality.ncrDispositions().forEach(r -> rows.add(row(
+                r.batchNo(), r.itemCode(), r.itemName(), r.itemType(), r.batchStatusLabel(),
+                r.partnerName(), r.sourceNo(), r.qtyIn(), r.onHand(), r.unit(), r.returnedQty(),
+                String.join("、", r.supplierReturnNos()), r.openDeviationCount(), String.join("、", r.deviationNos()),
+                r.closureStateLabel(), r.recommendedAction(), r.reason())));
+        return new Table("不合格品与冻结批次处置闭环台账", List.of("批号", "编码", "物料/成品", "类型", "批次状态",
+                "往来单位", "来源单号", "入库数量", "在库待处置", "单位", "已退供数量",
+                "关联退供单", "未关闭偏差数", "关联偏差单", "闭环状态", "建议处置动作", "不合格/冻结原因"), rows);
     }
 
     private Table dealerOrdersReport() {
