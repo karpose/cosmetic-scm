@@ -412,6 +412,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import ListPager from '../components/ListPager.vue'
@@ -429,8 +430,10 @@ import { fmtQty, fmtTime, today } from '../utils/format'
 import { latestOnly } from '../utils/latest'
 
 const auth = useAuth()
+const route = useRoute()
 const rd = useRefData()
-const tab = ref('orders')
+const VALID_TABS = new Set(['orders', 'consignment', 'variance', 'efficiency'])
+const tab = ref(VALID_TABS.has(route.query.tab) ? route.query.tab : 'orders')
 const orders = ref([])
 const consignment = ref([])
 const variances = ref([])

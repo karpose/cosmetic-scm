@@ -253,6 +253,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
@@ -264,7 +265,8 @@ import { fmtDate, fmtQty, fmtTime } from '../utils/format'
 import { latestOnly } from '../utils/latest'
 
 const auth = useAuth()
-const tab = ref('queue')
+const route = useRoute()
+const tab = ref(route.query.tab === 'ncr' ? 'ncr' : 'queue')
 const loading = ref(false)
 const q = reactive({ quarantine: [], pendingRelease: [], frozen: [], recent: [] })
 const ncr = ref([])
