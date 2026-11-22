@@ -9,6 +9,8 @@ public interface MfgIssueRepository extends JpaRepository<MfgIssue, Long> {
 
     List<MfgIssue> findByMoId(Long moId);
 
+    List<MfgIssue> findByMoIdOrderByIdAsc(Long moId);
+
     List<MfgIssue> findByMoIdIn(Collection<Long> moIds);
 
     List<MfgIssue> findByBatchId(Long batchId);

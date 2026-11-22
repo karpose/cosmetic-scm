@@ -72,4 +72,7 @@ public class MfgOrder {
 
     /** 委外加工费税率（%）。 */
     private BigDecimal processingTaxRate;
+
+    /** 委外发料转入的受托厂寄存仓 ID（仅受托厂配置了寄存仓时非空，完工核销或取消时从此仓扣减）。 */
+    private Long oemWarehouseId;
 }

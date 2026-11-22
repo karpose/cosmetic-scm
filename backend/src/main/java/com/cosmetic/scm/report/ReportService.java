@@ -145,6 +145,7 @@ public class ReportService {
         m.put("release-decisions", this::releaseDecisionsReport);
         m.put("dealer-orders", this::dealerOrdersReport);
         m.put("production-efficiency", this::productionEfficiencyReport);
+        m.put("oem-consignment", this::oemConsignmentReport);
         m.put("quality-specs", this::qualitySpecsReport);
         m.put("inventory-ops", this::inventoryOpsReport);
         m.put("users", this::usersReport);
@@ -660,6 +661,17 @@ public class ReportService {
                 i.completedCount(), null, null, i.totalPlannedQty(), i.totalActualQty(), i.avgYieldPct())));
         return new Table("生产收率与工厂效率对比", List.of("维度", "名称", "类型/编码", "完工批数", "在制批数",
                 "超期在制", "计划总产量", "实际总产量", "平均收率(%)"), rows);
+    }
+
+    private Table oemConsignmentReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        production.oemConsignment().forEach(r -> rows.add(row(
+                r.factoryName(), r.warehouseCode(), r.warehouseName(), r.batchNo(),
+                r.itemCode(), r.itemName(), r.itemType(), r.qty(), r.unit(),
+                r.statusLabel(), r.expDate(), r.unitCost(), r.value())));
+        return new Table("委外寄售料账", List.of("受托厂", "寄存仓编码", "寄存仓名称", "批号",
+                "物料编码", "物料名称", "类型", "在厂余料", "单位",
+                "批次状态", "有效期至", "单位成本(元)", "余料货值(元)"), rows);
     }
 
     private Table qualitySpecsReport() {

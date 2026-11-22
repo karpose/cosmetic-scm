@@ -59,6 +59,23 @@ public class ProductionController {
         return production.issue(id);
     }
 
+    @PostMapping("/{id}/supplement")
+    @PreAuthorize("hasAnyRole('ADMIN','PRODUCTION','WAREHOUSE')")
+    public MoDetail supplement(@PathVariable Long id, @Valid @RequestBody ProductionService.SupplementReq req) {
+        return production.supplement(id, req);
+    }
+
+    @PostMapping("/{id}/return-material")
+    @PreAuthorize("hasAnyRole('ADMIN','PRODUCTION','WAREHOUSE')")
+    public MoDetail returnMaterial(@PathVariable Long id, @Valid @RequestBody ProductionService.ReturnMaterialReq req) {
+        return production.returnMaterial(id, req);
+    }
+
+    @GetMapping("/oem-consignment")
+    public List<ProductionService.OemConsignmentRow> oemConsignment() {
+        return production.oemConsignment();
+    }
+
     @PostMapping("/{id}/complete")
     @PreAuthorize("hasAnyRole('ADMIN','PRODUCTION','WAREHOUSE')")
     public MoView complete(@PathVariable Long id, @Valid @RequestBody CompleteReq req) {
