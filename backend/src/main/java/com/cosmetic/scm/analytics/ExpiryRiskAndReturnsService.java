@@ -41,10 +41,11 @@ public class ExpiryRiskAndReturnsService {
     // ---------- 库存效期风险 ----------
 
     /** riskLevel: EXPIRED / CRITICAL(<1/3) / NEAR(1/3~50%) / DUE_90D / HEALTHY */
-    public record ExpiryRiskRow(String batchNo, String itemCode, String itemName, String itemType,
-                                String warehouseName, BigDecimal qty, String unit, String statusLabel,
+    public record ExpiryRiskRow(Long batchId, String batchNo, String itemCode, String itemName, String itemType,
+                                Long warehouseId, String warehouseName, BigDecimal qty, String unit, String statusLabel,
                                 LocalDate mfgDate, LocalDate expDate, Long daysLeft, Double shelfRatio,
-                                String riskLevel, String riskLabel, BigDecimal unitCost, BigDecimal value) {
+                                String riskLevel, String riskLabel, BigDecimal unitCost, BigDecimal value,
+                                String recommendedAction, String actionRoute) {
     }
 
     public record ExpiryRiskReport(LocalDate asOf, boolean canSeeValue,
@@ -53,6 +54,7 @@ public class ExpiryRiskAndReturnsService {
                                    long criticalCount, BigDecimal criticalValue,
                                    long nearCount, BigDecimal nearValue,
                                    long due90dCount, BigDecimal due90dValue,
+                                   BigDecimal totalRiskValue, long expiredUnfrozenCount,
                                    List<ExpiryRiskRow> riskRows) {
     }
 
@@ -64,6 +66,7 @@ public class ExpiryRiskAndReturnsService {
         List<StockRow> stock = inventory.listStock(null, null, null, false);
 
         long expiredCount = 0;
+        long expiredUnfrozenCount = 0;
         BigDecimal expiredVal = BigDecimal.ZERO;
         long criticalCount = 0;
         BigDecimal criticalVal = BigDecimal.ZERO;
@@ -106,6 +109,10 @@ public class ExpiryRiskAndReturnsService {
             switch (level) {
                 case "EXPIRED" -> {
                     expiredCount++;
+                    if (s.status() != com.cosmetic.scm.domain.BatchStatus.FROZEN
+                            && s.status() != com.cosmetic.scm.domain.BatchStatus.REJECTED) {
+                        expiredUnfrozenCount++;
+                    }
                     if (val != null) expiredVal = expiredVal.add(val);
                 }
                 case "CRITICAL" -> {
@@ -124,19 +131,42 @@ public class ExpiryRiskAndReturnsService {
             }
 
             if (!"HEALTHY".equals(level)) {
-                riskRows.add(new ExpiryRiskRow(s.batchNo(), s.itemCode(), s.itemName(), s.itemType(),
-                        s.warehouseName(), s.qty(), s.unit(), s.statusLabel(), s.mfgDate(), s.expDate(),
-                        daysLeft, ratio, level, label, cost, val));
+                boolean isFg = "FG".equals(s.itemType());
+                String action;
+                String route;
+                switch (level) {
+                    case "EXPIRED" -> {
+                        action = "立即冻结或报废清零";
+                        route = "/inventory-ops";
+                    }
+                    case "CRITICAL" -> {
+                        action = isFg ? "低效期渠道促销出清或报废" : "优先排产消耗或报废评估";
+                        route = isFg ? "/sales" : "/production";
+                    }
+                    case "NEAR" -> {
+                        action = isFg ? "优先发往效期宽松渠道" : "优先安排生产领用";
+                        route = isFg ? "/sales" : "/production";
+                    }
+                    default -> {
+                        action = "纳入效期跟踪与消耗计划";
+                        route = "/planning";
+                    }
+                }
+                riskRows.add(new ExpiryRiskRow(s.batchId(), s.batchNo(), s.itemCode(), s.itemName(), s.itemType(),
+                        s.warehouseId(), s.warehouseName(), s.qty(), s.unit(), s.statusLabel(), s.mfgDate(), s.expDate(),
+                        daysLeft, ratio, level, label, cost, val, action, route));
             }
         }
         riskRows.sort(Comparator.comparing((ExpiryRiskRow r) -> riskOrder(r.riskLevel()))
                 .thenComparing(r -> r.daysLeft() == null ? Long.MAX_VALUE : r.daysLeft()));
 
+        BigDecimal totalRiskVal = expiredVal.add(criticalVal).add(nearVal).add(due90Val);
         return new ExpiryRiskReport(today, canSeePrice, stock.size(),
                 expiredCount, canSeePrice ? expiredVal : null,
                 criticalCount, canSeePrice ? criticalVal : null,
                 nearCount, canSeePrice ? nearVal : null,
                 due90Count, canSeePrice ? due90Val : null,
+                canSeePrice ? totalRiskVal : null, expiredUnfrozenCount,
                 riskRows);
     }
 

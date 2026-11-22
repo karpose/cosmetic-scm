@@ -575,9 +575,9 @@ public class ReportService {
                 r.riskLabel(), r.batchNo(), r.itemCode(), r.itemName(), r.itemType(), r.warehouseName(),
                 r.qty(), r.unit(), r.statusLabel(), r.mfgDate(), r.expDate(), r.daysLeft(),
                 r.shelfRatio() == null ? null : Math.round(r.shelfRatio() * 1000.0) / 10.0,
-                r.unitCost(), r.value())));
+                r.unitCost(), r.value(), r.recommendedAction())));
         return new Table("库存效期风险清单", List.of("风险等级", "批号", "物料编码", "物料名称", "类型", "仓库",
-                "结存数量", "单位", "批次状态", "生产日期", "有效期至", "剩余天数", "剩余效期(%)", "单位成本（元）", "风险货值（元）"), rows);
+                "结存数量", "单位", "批次状态", "生产日期", "有效期至", "剩余天数", "剩余效期(%)", "单位成本（元）", "风险货值（元）", "建议处置动作"), rows);
     }
 
     private Table salesReturnsReport() {
