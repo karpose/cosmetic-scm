@@ -117,6 +117,18 @@ public class DocControlService {
     public record DocDetail(DocRow doc, List<RevisionView> revisions, AckStatus ack, List<CopyView> copies) {
     }
 
+    public record DocComplianceItem(Long docId, String docCode, String title, String categoryLabel,
+                                    String ownerDept, Integer currentRev, String issueType,
+                                    String issueTypeLabel, LocalDate dueDate, Long daysLeft,
+                                    String detail, String riskLevel, String riskLabel,
+                                    String recommendedAction) {
+    }
+
+    public record DocComplianceBoard(int totalCount, int overdueCount, int reviewDueCount,
+                                     int ackPendingCount, int copyRetrieveCount, int pendingApproveCount,
+                                     List<DocComplianceItem> rows) {
+    }
+
     public record IssueReq(@NotBlank(message = "请填写持有人或存放地点") @Size(max = 100) String holder,
                            @jakarta.validation.constraints.Min(value = 1, message = "份数至少 1") @jakarta.validation.constraints.Max(value = MAX_COPIES_PER_ISSUE, message = "一次最多发 20 份") int quantity) {
     }
@@ -145,6 +157,93 @@ public class DocControlService {
     public List<DocRow> reviewDue() {
         LocalDate until = time.today().plusDays(REVIEW_WARN_DAYS);
         return rows(docs.findByStatus(DocStatus.ACTIVE)).stream().filter(d -> d.reviewDue() != null && !d.reviewDue().isAfter(until)).toList();
+    }
+
+    /** 受控文件合规闭环监控看板（V69）：汇聚复审到期/超期、培训签收超期/未完成、旧版纸质副本待收回与待签批事项。 */
+    @Transactional(readOnly = true)
+    public DocComplianceBoard complianceBoard() {
+        LocalDate today = time.today();
+        LocalDate reviewWarnUntil = today.plusDays(REVIEW_WARN_DAYS);
+        List<DocRow> all = rows(docs.findAll());
+        List<DocComplianceItem> items = new java.util.ArrayList<>();
+        int overdueCnt = 0;
+        int reviewDueCnt = 0;
+        int ackPendingCnt = 0;
+        int copyRetrieveCnt = 0;
+        int pendingApproveCnt = 0;
+
+        for (DocRow d : all) {
+            if (d.copiesToRetrieve() > 0) {
+                Long daysLeft = d.retrieveDue() == null ? null : java.time.temporal.ChronoUnit.DAYS.between(today, d.retrieveDue());
+                boolean overdue = d.retrieveOverdue() || (daysLeft != null && daysLeft < 0);
+                if (overdue) {
+                    overdueCnt++;
+                }
+                copyRetrieveCnt++;
+                items.add(new DocComplianceItem(
+                        d.id(), d.docCode(), d.title(), d.categoryLabel(), d.ownerDept(), d.currentRev(),
+                        "COPY_RETRIEVE", "纸质副本回收", d.retrieveDue(), daysLeft,
+                        d.copiesToRetrieve() + " 份旧版/作废纸质副本未收回（在用共 " + d.copiesOut() + " 份）",
+                        overdue ? "OVERDUE" : "DUE_SOON", overdue ? "回收已超期" : "纸质待回收",
+                        overdue ? "旧版纸质副本已超期未收回，请立即到使用现场收回销毁防止误用"
+                                : "请于 " + d.retrieveDue() + " 前收回全部旧版纸质副本"));
+            }
+            if (d.status() == DocStatus.ACTIVE && d.reviewDue() != null && !d.reviewDue().isAfter(reviewWarnUntil)) {
+                long daysLeft = java.time.temporal.ChronoUnit.DAYS.between(today, d.reviewDue());
+                boolean overdue = d.reviewOverdue() || daysLeft < 0;
+                if (overdue) {
+                    overdueCnt++;
+                }
+                reviewDueCnt++;
+                items.add(new DocComplianceItem(
+                        d.id(), d.docCode(), d.title(), d.categoryLabel(), d.ownerDept(), d.currentRev(),
+                        "REVIEW_DUE", "定期复审", d.reviewDue(), daysLeft,
+                        "复审周期 " + d.reviewMonths() + " 个月，到期日 " + d.reviewDue(),
+                        overdue ? "OVERDUE" : "DUE_SOON", overdue ? "复审已超期" : "复审将到期",
+                        overdue ? "定期复审已超期，请质量安全负责人尽快复审确认或启动修订"
+                                : "距复审到期仅 " + daysLeft + " 天，请提前安排文件复审"));
+            }
+            if (d.status() == DocStatus.ACTIVE && d.ackPending() > 0 && d.currentRev() != null) {
+                LocalDate ackDue = d.currentEffective() == null ? null : d.currentEffective().plusDays(ACK_DAYS);
+                Long daysLeft = ackDue == null ? null : java.time.temporal.ChronoUnit.DAYS.between(today, ackDue);
+                boolean overdue = d.ackOverdue() || (daysLeft != null && daysLeft < 0);
+                if (overdue) {
+                    overdueCnt++;
+                }
+                ackPendingCnt++;
+                items.add(new DocComplianceItem(
+                        d.id(), d.docCode(), d.title(), d.categoryLabel(), d.ownerDept(), d.currentRev(),
+                        "ACK_PENDING", "岗位培训签收", ackDue, daysLeft,
+                        "第 " + d.currentRev() + " 版还有 " + d.ackPending() + " 人未确认已读",
+                        overdue ? "OVERDUE" : "PENDING", overdue ? "签收已超期" : "待岗位签收",
+                        overdue ? "新版文件生效超 " + ACK_DAYS + " 天仍有岗位未签收，请立即催办培训确认"
+                                : "请提醒相关岗位人员于 " + ackDue + " 前完成已读确认"));
+            }
+            if (d.status() == DocStatus.ACTIVE && d.pendingRevisionId() != null) {
+                pendingApproveCnt++;
+                items.add(new DocComplianceItem(
+                        d.id(), d.docCode(), d.title(), d.categoryLabel(), d.ownerDept(), d.currentRev(),
+                        "PENDING_APPROVAL", "版本待签批", null, null,
+                        "存在修订草稿等待质量安全负责人签批生效",
+                        "PENDING", "待 QSO 签批",
+                        "请核对已上传文件附件并由质量安全负责人完成电子签批"));
+            }
+        }
+
+        items.sort(Comparator.comparingInt((DocComplianceItem x) -> complianceRiskRank(x.riskLevel()))
+                .thenComparing(DocComplianceItem::daysLeft, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(DocComplianceItem::docCode));
+
+        return new DocComplianceBoard(items.size(), overdueCnt, reviewDueCnt, ackPendingCnt,
+                copyRetrieveCnt, pendingApproveCnt, items);
+    }
+
+    private static int complianceRiskRank(String level) {
+        return switch (level) {
+            case "OVERDUE" -> 0;
+            case "DUE_SOON" -> 1;
+            default -> 2;
+        };
     }
 
     @Transactional

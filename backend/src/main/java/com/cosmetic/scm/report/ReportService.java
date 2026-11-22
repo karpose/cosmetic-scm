@@ -132,6 +132,7 @@ public class ReportService {
         m.put("npd-readiness", this::npdReadinessReport);
         m.put("pqr", () -> pqrReport(from, to));
         m.put("controlled-docs", this::controlledDocsReport);
+        m.put("doc-compliance", this::docComplianceReport);
         m.put("qms-summary", this::qmsSummaryReport);
         m.put("inventory-abc", this::inventoryAbcReport);
         m.put("serial-anomalies", this::serialAnomaliesReport);
@@ -384,6 +385,16 @@ public class ReportService {
                 d.ackPending(), d.copiesOut(), d.copiesToRetrieve())));
         return new Table("受控文件台账", List.of("文件编号", "名称", "类别", "归口部门", "状态",
                 "现行版本", "生效日期", "下次复审", "复审状态", "待确认人数", "在用纸质副本", "待收回副本"), rows);
+    }
+
+    private Table docComplianceReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        docControl.complianceBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.issueTypeLabel(), r.docCode(), r.title(), r.categoryLabel(), r.ownerDept(),
+                r.currentRev() == null ? null : "V" + r.currentRev(), r.dueDate(), r.daysLeft(),
+                r.detail(), r.recommendedAction())));
+        return new Table("受控文件合规闭环监控清单", List.of("风险分级", "合规事项", "文件编号", "文件名称", "类别", "归口部门",
+                "现行版本", "截止日期", "剩余天数", "具体情况", "处置建议"), rows);
     }
 
     private Table qmsSummaryReport() {

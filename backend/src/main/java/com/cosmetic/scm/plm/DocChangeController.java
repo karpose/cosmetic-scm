@@ -40,6 +40,11 @@ public class DocChangeController {
         return qualityGov.docsSummary();
     }
 
+    @GetMapping("/docs/compliance-board")
+    public DocControlService.DocComplianceBoard docsComplianceBoard() {
+        return docs.complianceBoard();
+    }
+
     @GetMapping("/docs/my-pending")
     public List<DocControlService.MyAck> myPending() {
         return docs.myPending();
