@@ -1,6 +1,7 @@
 package com.cosmetic.scm.production;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -11,7 +12,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-/** 生产发料明细：哪张生产单用了哪个物料批次多少。 */
+/** 生产发料明细：记录首次发料（INITIAL）、超耗补料（SUPPLEMENT）及余料退库（RETURN，qty 为负）。 */
 @Entity
 @Table(name = "mfg_issue")
 @Getter
@@ -32,4 +33,12 @@ public class MfgIssue {
     private Long itemId;
 
     private BigDecimal qty;
+
+    private String issueType = "INITIAL";
+
+    private String reason;
+
+    private String createdBy;
+
+    private LocalDateTime createdAt;
 }

@@ -28,6 +28,10 @@
         <div class="muted small">报废率 / 召回回收单</div>
         <div class="kpi-val mono">{{ retReport.scrapRatePct != null ? `${retReport.scrapRatePct}%` : '—' }} <span class="muted small">（召回 {{ retReport.recallReturns }} 单）</span></div>
       </div>
+      <div v-if="closure" class="kpi-card" :class="{ warn: closure.disposedUnbilledArLines > 0 }">
+        <div class="muted small">已处置待冲减应收 / 已冲减</div>
+        <div class="kpi-val mono">{{ closure.disposedUnbilledArLines }} <span class="muted small">/ {{ closure.arOffsetDoneLines }} 行</span></div>
+      </div>
     </div>
 
     <el-tabs v-model="tab" class="seg">
@@ -66,6 +70,7 @@
           <el-radio-group v-model="state" size="small">
             <el-radio-button value="">全部</el-radio-button>
             <el-radio-button value="PENDING">待处置</el-radio-button>
+            <el-radio-button value="UNBILLED_AR">待冲减应收</el-radio-button>
             <el-radio-button value="DONE">已处置</el-radio-button>
           </el-radio-group>
           <el-input v-model="t.keyword.value" placeholder="搜索退货单、客户、批号" clearable />
@@ -89,6 +94,8 @@
               <span v-if="l.disposition !== 'PENDING'" class="muted small">
                 {{ l.targetWarehouseName ? `→ ${l.targetWarehouseName}` : '' }} {{ l.disposedByName }} · {{ l.dispositionNote }}
               </span>
+              <el-tag v-if="l.arStatementNo" size="small" type="success" disable-transitions>应收已冲减 {{ l.arStatementNo }}</el-tag>
+              <router-link v-else-if="l.disposition !== 'PENDING'" to="/settlement?tab=ar" class="small">去冲减应收</router-link>
               <el-button v-else-if="canDispose" size="small" type="primary" plain @click="openDispose(row, l)">处置</el-button>
             </div>
           </template>
@@ -211,24 +218,27 @@ const tab = ref('list')
 const list = ref([])
 const recalls = ref([])
 const retReport = ref(null)
+const closure = ref(null)
 const state = ref('')
 const canCreate = computed(() => auth.hasAny('ADMIN', 'SALES', 'WAREHOUSE'))
 const canDispose = computed(() => auth.hasAny('QA', 'QSO'))
 
 const loader = useLoader(async () => {
-  const [rs, rc, rep] = await Promise.all([
+  const [rs, rc, rep, cl] = await Promise.all([
     http.get('/sales-returns'),
     http.get('/recalls'),
-    http.get('/analytics/sales-returns')
+    http.get('/analytics/sales-returns'),
+    http.get('/sales-returns/closure-summary')
   ])
   list.value = rs
   recalls.value = rc
   retReport.value = rep
+  closure.value = cl
 })
 const load = () => loader.run()
 const t = usePaged(list, {
   match: textMatch('returnNo', 'customerName', 'reason', 'recallNo', (r) => r.lines.map((l) => l.batchNo + l.itemName).join(' ')),
-  extra: (r) => !state.value || (state.value === 'PENDING' ? r.pendingLines > 0 : r.pendingLines === 0)
+  extra: (r) => !state.value || (state.value === 'PENDING' ? r.pendingLines > 0 : state.value === 'UNBILLED_AR' ? r.unbilledArLines > 0 : r.pendingLines === 0)
 })
 const openRecalls = computed(() => recalls.value.filter((r) => r.status === 'OPEN'))
 

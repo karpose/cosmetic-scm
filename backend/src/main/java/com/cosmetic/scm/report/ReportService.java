@@ -105,6 +105,7 @@ public class ReportService {
         m.put("deviations", this::deviations);
         m.put("capas", this::capas);
         m.put("supplier-audits", this::supplierAudits);
+        m.put("partner-compliance", this::partnerComplianceReport);
         m.put("retains", this::retainSamples);
         m.put("equipment", this::equipmentList);
         m.put("audit", () -> auditLogs(from, to, q, action));
@@ -143,8 +144,11 @@ public class ReportService {
         m.put("regulatory-violations", this::regulatoryViolationsReport);
         m.put("stability-coverage", this::stabilityCoverageReport);
         m.put("release-decisions", this::releaseDecisionsReport);
+        m.put("ncr-disposition", this::ncrDispositionReport);
         m.put("dealer-orders", this::dealerOrdersReport);
         m.put("production-efficiency", this::productionEfficiencyReport);
+        m.put("oem-consignment", this::oemConsignmentReport);
+        m.put("material-variance", this::materialVarianceReport);
         m.put("quality-specs", this::qualitySpecsReport);
         m.put("inventory-ops", this::inventoryOpsReport);
         m.put("users", this::usersReport);
@@ -496,6 +500,20 @@ public class ReportService {
         return new Table("供应商审核", List.of("编号", "单位", "审核日期", "类型", "得分", "结论", "发现的问题", "审核员", "下次审核", "签批人"), rows);
     }
 
+    private Table partnerComplianceReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        audits.partnerRows().forEach(p -> rows.add(row(
+                p.complianceRiskLabel(), p.code(), p.name(), p.kindLabel(), p.qualified() ? "在名录" : "已移出",
+                p.critical() ? "是" : "否", p.licenseNo(), p.licenseExpiry(),
+                "EXPIRED".equals(p.licenseState()) ? "已过期" : "EXPIRING".equals(p.licenseState()) ? "60天内到期" : "OK".equals(p.licenseState()) ? "有效" : "未登记",
+                p.licenseDaysLeft(), p.lastAuditDate(), p.lastResultLabel(), p.nextAuditDate(),
+                "OVERDUE".equals(p.dueState()) ? "已超期" : "DUE".equals(p.dueState()) ? "30天内到期" : "NONE".equals(p.dueState()) ? "未审核" : "正常",
+                p.dueDaysLeft(), p.rejected(), p.received(), p.grade(), p.score())));
+        return new Table("往来单位资质与审核合规预警", List.of("合规风险", "编码", "单位名称", "类别", "合格名录",
+                "关键供应商", "资质证照号", "证照有效期", "证照状态", "证照剩余天数", "最近审核", "最近结论",
+                "下次审核", "审核状态", "审核剩余天数", "近12月拒收批", "近12月来料批", "综合等级", "综合得分"), rows);
+    }
+
     private Table inspectionResults(LocalDate from, LocalDate to) {
         List<List<Object>> rows = new ArrayList<>();
         qualitySpecs.exportRows(from, to).forEach(r -> rows.add(row(r.inspectionNo(), r.batchNo(), r.itemCode(), r.itemName(), r.itemType(), r.supplierName(), r.extBatchNo(), r.spec(),
@@ -572,9 +590,9 @@ public class ReportService {
                 r.riskLabel(), r.batchNo(), r.itemCode(), r.itemName(), r.itemType(), r.warehouseName(),
                 r.qty(), r.unit(), r.statusLabel(), r.mfgDate(), r.expDate(), r.daysLeft(),
                 r.shelfRatio() == null ? null : Math.round(r.shelfRatio() * 1000.0) / 10.0,
-                r.unitCost(), r.value())));
+                r.unitCost(), r.value(), r.recommendedAction())));
         return new Table("库存效期风险清单", List.of("风险等级", "批号", "物料编码", "物料名称", "类型", "仓库",
-                "结存数量", "单位", "批次状态", "生产日期", "有效期至", "剩余天数", "剩余效期(%)", "单位成本（元）", "风险货值（元）"), rows);
+                "结存数量", "单位", "批次状态", "生产日期", "有效期至", "剩余天数", "剩余效期(%)", "单位成本（元）", "风险货值（元）", "建议处置动作"), rows);
     }
 
     private Table salesReturnsReport() {
@@ -582,9 +600,11 @@ public class ReportService {
         salesReturns.listAll().forEach(r -> r.lines().forEach(l -> rows.add(row(
                 r.returnNo(), r.returnDate(), r.customerName(), r.warehouseName(), r.recallNo(),
                 l.batchNo(), l.itemName(), l.qty(), l.unit(), l.dispositionLabel(),
-                l.targetWarehouseName(), l.disposedByName(), l.disposedAt(), l.dispositionNote(), r.reason()))));
+                l.targetWarehouseName(), l.disposedByName(), l.disposedAt(), l.dispositionNote(),
+                l.arStatementNo(), r.reason()))));
         return new Table("销售退货明细", List.of("退货单", "退货日期", "客户", "隔离仓", "关联召回",
-                "批号", "成品", "数量", "单位", "处置结论", "转入仓", "签批人", "处置时间", "处置说明", "退货原因"), rows);
+                "批号", "成品", "数量", "单位", "处置结论", "转入仓", "签批人", "处置时间", "处置说明",
+                "关联应收冲减单", "退货原因"), rows);
     }
 
     private Table changesReport() {
@@ -641,6 +661,18 @@ public class ReportService {
                 "签批人", "签批时间", "留样数量", "留样地点", "留样保存至", "签批说明"), rows);
     }
 
+    private Table ncrDispositionReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        quality.ncrDispositions().forEach(r -> rows.add(row(
+                r.batchNo(), r.itemCode(), r.itemName(), r.itemType(), r.batchStatusLabel(),
+                r.partnerName(), r.sourceNo(), r.qtyIn(), r.onHand(), r.unit(), r.returnedQty(),
+                String.join("、", r.supplierReturnNos()), r.openDeviationCount(), String.join("、", r.deviationNos()),
+                r.closureStateLabel(), r.recommendedAction(), r.reason())));
+        return new Table("不合格品与冻结批次处置闭环台账", List.of("批号", "编码", "物料/成品", "类型", "批次状态",
+                "往来单位", "来源单号", "入库数量", "在库待处置", "单位", "已退供数量",
+                "关联退供单", "未关闭偏差数", "关联偏差单", "闭环状态", "建议处置动作", "不合格/冻结原因"), rows);
+    }
+
     private Table dealerOrdersReport() {
         List<List<Object>> rows = new ArrayList<>();
         dealers.listAll().forEach(o -> o.lines().forEach(l -> rows.add(row(
@@ -660,6 +692,30 @@ public class ReportService {
                 i.completedCount(), null, null, i.totalPlannedQty(), i.totalActualQty(), i.avgYieldPct())));
         return new Table("生产收率与工厂效率对比", List.of("维度", "名称", "类型/编码", "完工批数", "在制批数",
                 "超期在制", "计划总产量", "实际总产量", "平均收率(%)"), rows);
+    }
+
+    private Table oemConsignmentReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        production.oemConsignment().forEach(r -> rows.add(row(
+                r.factoryName(), r.warehouseCode(), r.warehouseName(), r.batchNo(),
+                r.itemCode(), r.itemName(), r.itemType(), r.qty(), r.unit(),
+                r.statusLabel(), r.expDate(), r.unitCost(), r.value())));
+        return new Table("委外寄售料账", List.of("受托厂", "寄存仓编码", "寄存仓名称", "批号",
+                "物料编码", "物料名称", "类型", "在厂余料", "单位",
+                "批次状态", "有效期至", "单位成本(元)", "余料货值(元)"), rows);
+    }
+
+    private Table materialVarianceReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        production.materialVariance().forEach(r -> rows.add(row(
+                r.moNo(), r.moTypeLabel(), r.factoryName(), r.fgCode(), r.fgName(), r.moStatusLabel(),
+                r.plannedQty(), r.actualQty(), r.itemCode(), r.itemName(), r.unit(),
+                r.standardQty(), r.netIssuedQty(), r.varianceQty(), r.variancePct(), r.stateLabel(),
+                r.unitCost(), r.varianceCost())));
+        return new Table("生产物料超耗与平衡台账", List.of("生产单号", "类型", "生产方", "成品编码", "成品名称", "工单状态",
+                "计划产量", "实际产量", "物料编码", "物料名称", "单位",
+                "理论标耗", "净发料量", "差异数量", "差异率(%)", "状态",
+                "标准单价(元)", "差异金额(元)"), rows);
     }
 
     private Table qualitySpecsReport() {

@@ -200,7 +200,9 @@ class MainLineIntegrationTest {
         Long main = warehouseId("WH-MAIN");
         Long oem = warehouseId("WH-A3");
         Stock row = inventory.listStock(null, main, null, false).stream()
-                .filter(r -> !"FG".equals(r.itemType())).findFirst()
+                .filter(r -> !"FG".equals(r.itemType()))
+                .filter(r -> inventory.stockOfBatch(r.batchId()).stream().noneMatch(st -> st.getWarehouseId().equals(oem)))
+                .findFirst()
                 .map(r -> inventory.stockOfBatch(r.batchId()).stream()
                         .filter(st -> st.getWarehouseId().equals(main)).findFirst().orElseThrow())
                 .orElseThrow();

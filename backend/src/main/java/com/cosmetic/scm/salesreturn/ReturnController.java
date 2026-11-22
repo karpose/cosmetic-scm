@@ -34,6 +34,11 @@ public class ReturnController {
         return returns.list();
     }
 
+    @GetMapping("/closure-summary")
+    public ReturnService.ClosureSummary closureSummary() {
+        return returns.closureSummary();
+    }
+
     @GetMapping("/returnable")
     public List<ReturnableView> returnable(@RequestParam Long customerId) {
         return returns.returnable(customerId);

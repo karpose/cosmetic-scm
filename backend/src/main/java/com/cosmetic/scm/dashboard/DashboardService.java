@@ -87,6 +87,8 @@ public class DashboardService {
     private final ComplaintService complaints;
     private final RecallService recalls;
     private final ReturnService returns;
+    private final com.cosmetic.scm.quality.QualityService quality;
+    private final com.cosmetic.scm.production.ProductionService production;
     private final OemReportRepository oemReports;
     private final DealerService dealers;
     private final IntegrationService integration;
@@ -370,6 +372,25 @@ public class DashboardService {
         if (pendingReturns > 0) {
             todos.add(new Todo("RETURN", "退货待处置", "warn", pendingReturns + " 行退货在隔离区", "—",
                     "由质量人员判定转可售或报废", "/returns"));
+        }
+        long ncrPending = quality.ncrDispositions().stream()
+                .filter(r -> !"CLOSED".equals(r.closureState()) && r.onHand() != null && r.onHand().signum() > 0)
+                .count();
+        if (ncrPending > 0) {
+            todos.add(new Todo("NCR_DISPOSITION", "不合格品待处置", "bad", ncrPending + " 个不合格/冻结批次在库", "—",
+                    "请及时发起退供、登记偏差或报废清零", "/quality?tab=ncr"));
+        }
+        long unbilledArReturns = returns.closureSummary().disposedUnbilledArLines();
+        if (unbilledArReturns > 0) {
+            todos.add(new Todo("RETURN_AR_OFFSET", "客退待冲减应收", "warn", unbilledArReturns + " 行已处置客退未冲减应收", "—",
+                    "请到客户应收对账单核对冲减", "/returns"));
+        }
+        long overuseItems = production.materialVariance().stream()
+                .filter(v -> "OVERUSE".equals(v.state()))
+                .count();
+        if (overuseItems > 0) {
+            todos.add(new Todo("MATERIAL_OVERUSE", "生产物料超耗预警", "warn", overuseItems + " 项生产/委外领料超耗", "—",
+                    "请核对物料平衡并在委外对账时评估扣款", "/production?tab=variance"));
         }
         for (BatchView b : inventory.listBatches(List.of(BatchStatus.QUARANTINE), null)) {
             todos.add(new Todo("QC", "物料待检", "warn", b.itemName(), b.batchNo(),

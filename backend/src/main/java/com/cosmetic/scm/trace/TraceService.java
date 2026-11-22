@@ -188,11 +188,15 @@ public class TraceService {
                             .filter(java.util.Objects::nonNull).toList())
                     .stream().collect(Collectors.toMap(Batch::getId, Function.identity()));
             for (MfgOrder m : mos) {
+                BigDecimal netUsed = usedByMo.get(m.getId());
+                if (netUsed == null || netUsed.signum() <= 0) {
+                    continue;
+                }
                 Batch out = m.getOutBatchId() == null ? null : outs.get(m.getOutBatchId());
                 if (out != null) {
                     finishedIds.add(out.getId());
                 }
-                downstream.add(new DownstreamMoView(m.getMoNo(), m.getMoType().getLabel(), usedByMo.get(m.getId()),
+                downstream.add(new DownstreamMoView(m.getMoNo(), m.getMoType().getLabel(), netUsed,
                         out == null ? null : out.getBatchNo(), im.get(m.getFgItemId()).getName(), m.getStatus().getLabel()));
             }
         }

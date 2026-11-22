@@ -7,6 +7,7 @@
       </div>
       <div class="toolbar">
         <ExportButton :report="EXPORTS[tab]" />
+        <ExportButton v-if="tab === 'audits'" report="partner-compliance" label="导出合规预警" />
         <ExportButton report="qms-summary" label="导出健康度" />
         <el-button v-if="tab === 'deviations' && canReport" type="primary" @click="openDeviation">登记偏差</el-button>
         <el-button v-if="tab === 'capas' && isQa" type="primary" @click="openCapa(null)">新建 CAPA</el-button>
@@ -138,12 +139,40 @@
       </el-tab-pane>
 
       <!-- ================= 供应商审核 ================= -->
-      <el-tab-pane label="供应商审核" name="audits">
+      <el-tab-pane :label="`供应商审核${riskPartnerCount ? `（${riskPartnerCount} 家预警）` : ''}`" name="audits">
         <el-card shadow="never" body-style="padding:0 0 8px">
-          <template #header><b>供应商和受托厂</b> <span class="muted small">来料数据为近 12 个月</span></template>
-          <el-table :data="partners" empty-text="还没有供应商或受托厂">
+          <template #header>
+            <div class="filters">
+              <b>供应商和受托厂合规预警</b>
+              <el-radio-group v-model="partnerRiskFilter" size="small">
+                <el-radio-button value="">全部（{{ partners.length }}）</el-radio-button>
+                <el-radio-button value="HIGH">高风险</el-radio-button>
+                <el-radio-button value="MEDIUM">需关注</el-radio-button>
+                <el-radio-button value="OK">合规</el-radio-button>
+              </el-radio-group>
+              <span class="muted small">来料数据为近 12 个月</span>
+            </div>
+          </template>
+          <el-table :data="filteredPartners" empty-text="还没有符合条件的供应商或受托厂" scrollbar-tabindex="0">
+            <el-table-column label="合规风险" width="95">
+              <template #default="{ row }"><el-tag :type="row.complianceRisk === 'HIGH' ? 'danger' : row.complianceRisk === 'MEDIUM' ? 'warning' : 'success'" size="small" disable-transitions>{{ row.complianceRiskLabel }}</el-tag></template>
+            </el-table-column>
             <el-table-column label="单位" min-width="200"><template #default="{ row }">{{ row.name }} <el-tag v-if="row.critical" size="small" type="warning" disable-transitions>关键</el-tag><div class="muted small mono">{{ row.code }} · {{ row.kindLabel }}</div></template></el-table-column>
-            <el-table-column label="合格名录" width="100"><template #default="{ row }"><el-tag :type="row.qualified ? 'success' : 'danger'" size="small" disable-transitions>{{ row.qualified ? '在名录' : '已移出' }}</el-tag></template></el-table-column>
+            <el-table-column label="合格名录" width="95"><template #default="{ row }"><el-tag :type="row.qualified ? 'success' : 'danger'" size="small" disable-transitions>{{ row.qualified ? '在名录' : '已移出' }}</el-tag></template></el-table-column>
+            <el-table-column label="准时（按时 / 到期）" width="140" align="right"><template #default="{ row }"><span v-if="row.dueTotal" class="mono">{{ row.onTime }} / {{ row.dueTotal }}</span><span v-else class="muted">—</span></template></el-table-column>
+            <el-table-column width="110" align="center">
+              <template #header><el-tooltip content="质量 50、交货 30、审核 20，没有数据的项不计。只作参考，不影响下单" placement="top"><span>综合评分</span></el-tooltip></template>
+              <template #default="{ row }"><template v-if="row.grade"><el-tag :type="GRADE_TAG[row.grade]" size="small" disable-transitions>{{ row.grade }}</el-tag> <span class="mono small">{{ row.score }}</span></template><span v-else class="muted">—</span></template>
+            </el-table-column>
+            <el-table-column label="资质证照" width="150">
+              <template #default="{ row }">
+                <span v-if="row.licenseExpiry" class="mono" :class="{ bad: row.licenseState === 'EXPIRED', warn: row.licenseState === 'EXPIRING' }">{{ row.licenseExpiry }}</span>
+                <span v-else class="muted">未登记</span>
+                <div v-if="row.licenseState === 'EXPIRED'" class="bad small">已过期</div>
+                <div v-else-if="row.licenseState === 'EXPIRING'" class="warn small">{{ row.licenseDaysLeft }} 天后到期</div>
+                <div v-else-if="row.licenseNo" class="muted small mono">{{ row.licenseNo }}</div>
+              </template>
+            </el-table-column>
             <el-table-column label="最近审核" width="130"><template #default="{ row }"><template v-if="row.lastAuditDate"><span class="mono">{{ row.lastAuditDate }}</span><div class="muted small">{{ row.lastResultLabel }}</div></template><span v-else class="muted">没有记录</span></template></el-table-column>
             <el-table-column label="下次审核" width="120">
               <template #default="{ row }"><span class="mono" :class="{ bad: row.dueState === 'OVERDUE', warn: row.dueState === 'DUE' }">{{ row.nextAuditDate || '—' }}</span>
@@ -151,11 +180,6 @@
               </template>
             </el-table-column>
             <el-table-column label="来料（拒收 / 总数）" width="140" align="right"><template #default="{ row }"><span class="mono" :class="{ bad: row.rejected > 0 }">{{ row.rejected }}</span><span class="mono"> / {{ row.received }}</span></template></el-table-column>
-            <el-table-column label="准时（按时 / 到期）" width="140" align="right"><template #default="{ row }"><span v-if="row.dueTotal" class="mono">{{ row.onTime }} / {{ row.dueTotal }}</span><span v-else class="muted">—</span></template></el-table-column>
-            <el-table-column width="110" align="center">
-              <template #header><el-tooltip content="质量 50、交货 30、审核 20，没有数据的项不计。只作参考，不影响下单" placement="top"><span>综合评分</span></el-tooltip></template>
-              <template #default="{ row }"><template v-if="row.grade"><el-tag :type="GRADE_TAG[row.grade]" size="small" disable-transitions>{{ row.grade }}</el-tag> <span class="mono small">{{ row.score }}</span></template><span v-else class="muted">—</span></template>
-            </el-table-column>
             <el-table-column v-if="isQa" label="" width="100" fixed="right"><template #default="{ row }"><el-button size="small" @click="openAudit(row)">登记审核</el-button></template></el-table-column>
           </el-table>
         </el-card>
@@ -434,6 +458,9 @@ const deviations = ref([])
 const capas = ref([])
 const audits = ref([])
 const partners = ref([])
+const partnerRiskFilter = ref('')
+const filteredPartners = computed(() => !partnerRiskFilter.value ? partners.value : partners.value.filter((p) => p.complianceRisk === partnerRiskFilter.value))
+const riskPartnerCount = computed(() => partners.value.filter((p) => p.complianceRisk !== 'OK').length)
 const retains = ref([])
 const equipment = ref([])
 const qmsSum = ref(null)

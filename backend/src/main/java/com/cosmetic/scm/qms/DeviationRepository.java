@@ -21,6 +21,8 @@ public interface DeviationRepository extends JpaRepository<Deviation, Long> {
 
     List<Deviation> findByBatchIdAndStatus(Long batchId, CaseStatus status);
 
+    List<Deviation> findByBatchIdIn(java.util.Collection<Long> batchIds);
+
     List<Deviation> findByMoId(Long moId);
 
     /** 状态流转前先锁行：并发时第二个请求排队，读到新状态后按业务规则拒绝。只在写事务里用。 */

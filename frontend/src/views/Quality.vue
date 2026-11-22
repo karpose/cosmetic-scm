@@ -6,7 +6,8 @@
         <p>物料须检验放行后才能发料；成品在受托厂出厂放行之后，还须由品牌方质量安全负责人审核签批才可上市销售。每次签批都要再次输入本人密码，并记录签批人、时间和理由。</p>
       </div>
       <div class="toolbar">
-        <ExportButton report="release-decisions" label="导出签批台账" />
+        <ExportButton v-if="tab === 'ncr'" report="ncr-disposition" label="导出不合格品处置台账" />
+        <ExportButton v-else report="release-decisions" label="导出签批台账" />
         <el-button :loading="loading" @click="load">刷新</el-button>
       </div>
     </div>
@@ -30,6 +31,59 @@
       </div>
     </div>
 
+    <el-tabs v-model="tab" class="seg">
+      <el-tab-pane label="检验与放行队列" name="queue" />
+      <el-tab-pane :label="`不合格品处置闭环（${pendingNcrCount}）`" name="ncr" />
+    </el-tabs>
+
+    <el-card v-if="tab === 'ncr'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-input v-model="ncrKeyword" placeholder="搜索批号、物料、往来单位、原因" clearable />
+          <el-select v-model="ncrState" placeholder="全部闭环状态" clearable>
+            <el-option value="PENDING" label="待处置" />
+            <el-option value="IN_PROGRESS" label="处置中 / 待关偏差" />
+            <el-option value="CLOSED" label="已清零闭环" />
+          </el-select>
+        </div>
+      </template>
+      <el-table :data="filteredNcr" v-loading="loading" size="small" empty-text="当前没有不合格或冻结批次">
+        <el-table-column label="批号" width="150"><template #default="{ row }"><BatchNo :no="row.batchNo" /></template></el-table-column>
+        <el-table-column label="物料 / 成品" min-width="160">
+          <template #default="{ row }">{{ row.itemName }}<div class="muted small mono">{{ row.itemCode }} · {{ row.partnerName || '—' }}</div></template>
+        </el-table-column>
+        <el-table-column label="批次状态" width="95">
+          <template #default="{ row }"><el-tag size="small" :type="row.batchStatus === 'REJECTED' ? 'danger' : 'warning'" disable-transitions>{{ row.batchStatusLabel }}</el-tag></template>
+        </el-table-column>
+        <el-table-column label="在库待处置" width="115" align="right">
+          <template #default="{ row }"><span class="mono" :style="{ color: Number(row.onHand) > 0 ? 'var(--el-color-danger)' : '' }">{{ fmtQty(row.onHand) }} {{ row.unit }}</span></template>
+        </el-table-column>
+        <el-table-column label="关联退供 / 偏差" min-width="180">
+          <template #default="{ row }">
+            <div v-if="row.supplierReturnNos?.length" class="small">退供：<span class="mono">{{ row.supplierReturnNos.join('、') }}</span>（{{ fmtQty(row.returnedQty) }}）</div>
+            <div v-if="row.deviationNos?.length" class="small">偏差：<span class="mono">{{ row.deviationNos.join('、') }}</span><span v-if="row.openDeviationCount > 0" style="color:var(--el-color-danger)">（未关 {{ row.openDeviationCount }}）</span></div>
+            <span v-if="!row.supplierReturnNos?.length && !row.deviationNos?.length" class="muted small">尚未发起退供或偏差</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="闭环状态" width="105">
+          <template #default="{ row }"><el-tag size="small" :type="row.closureState === 'CLOSED' ? 'success' : row.closureState === 'PENDING' ? 'danger' : 'warning'" disable-transitions>{{ row.closureStateLabel }}</el-tag></template>
+        </el-table-column>
+        <el-table-column label="建议处置 / 原因" min-width="180">
+          <template #default="{ row }"><div>{{ row.recommendedAction }}</div><div v-if="row.reason" class="muted small">{{ row.reason }}</div></template>
+        </el-table-column>
+        <el-table-column label="" width="190" fixed="right">
+          <template #default="{ row }">
+            <div class="toolbar">
+              <router-link v-if="row.sourceType === 'PO' && Number(row.onHand) > 0" to="/supplier-returns" class="small">发起退供</router-link>
+              <router-link v-if="row.closureState !== 'CLOSED'" to="/deviations" class="small">偏差管理</router-link>
+              <router-link v-if="Number(row.onHand) > 0" to="/inventory-ops" class="small">报废清零</router-link>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <template v-else>
     <el-card shadow="never" body-style="padding:0">
       <template #header><b>物料待检</b> <span class="muted small">{{ q.quarantine.length }} 个批次</span></template>
       <el-table :data="q.quarantine" empty-text="没有待检物料">
@@ -98,6 +152,7 @@
         <el-table-column prop="note" label="说明" min-width="200" />
       </el-table>
     </el-card>
+    </template>
 
     <!-- 物料检验 -->
     <el-dialog v-model="qc.visible" :title="`物料检验放行：${qc.batch?.batchNo || ''}`" width="520px">
@@ -198,6 +253,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
@@ -209,9 +265,23 @@ import { fmtDate, fmtQty, fmtTime } from '../utils/format'
 import { latestOnly } from '../utils/latest'
 
 const auth = useAuth()
+const route = useRoute()
+const tab = ref(route.query.tab === 'ncr' ? 'ncr' : 'queue')
 const loading = ref(false)
 const q = reactive({ quarantine: [], pendingRelease: [], frozen: [], recent: [] })
+const ncr = ref([])
+const ncrKeyword = ref('')
+const ncrState = ref('')
 const summary = ref(null)
+const pendingNcrCount = computed(() => ncr.value.filter((r) => r.closureState !== 'CLOSED').length)
+const filteredNcr = computed(() => {
+  const kw = ncrKeyword.value.trim().toLowerCase()
+  return ncr.value.filter((r) => {
+    if (ncrState.value && r.closureState !== ncrState.value) return false
+    if (!kw) return true
+    return [r.batchNo, r.itemCode, r.itemName, r.partnerName, r.reason].filter(Boolean).join(' ').toLowerCase().includes(kw)
+  })
+})
 const canQc = computed(() => auth.hasAny('QA', 'QSO'))
 const canRelease = computed(() => auth.hasAny('QSO'))
 
@@ -255,9 +325,14 @@ function openInspect(batch) {
 async function load() {
   loading.value = true
   try {
-    const [queueData, sum] = await Promise.all([http.get('/quality/queue'), http.get('/quality/summary')])
+    const [queueData, sum, ncrData] = await Promise.all([
+      http.get('/quality/queue'),
+      http.get('/quality/summary'),
+      http.get('/quality/ncr-dispositions')
+    ])
     Object.assign(q, queueData)
     summary.value = sum
+    ncr.value = ncrData
   } finally {
     loading.value = false
   }

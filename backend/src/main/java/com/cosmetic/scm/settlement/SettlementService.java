@@ -86,6 +86,7 @@ public class SettlementService {
     private final PurchaseOrderRepository orders;
     private final PoLineRepository poLines;
     private final com.cosmetic.scm.production.MfgOrderRepository mfgOrders;
+    private final com.cosmetic.scm.production.ProductionService production;
     private final PoShipmentRepository shipments;
     private final PartnerRepository partners;
     private final MasterLookup lookup;
@@ -170,9 +171,15 @@ public class SettlementService {
                                     String invoiceNo, LocalDate invoiceDate, BigDecimal invoiceAmount, List<InvoiceView> invoices) {
     }
 
-    /** 生成前预览。missingPrice：放行了但采购单没单价的批次，不会进这张对账单；taxBreakdown：多税率拆分汇总。 */
+    public record OemOveruseHint(String moNo, String fgName, String itemCode, String itemName, String unit,
+                                 BigDecimal standardQty, BigDecimal netIssuedQty, BigDecimal overuseQty,
+                                 BigDecimal unitCost, BigDecimal overuseAmount) {
+    }
+
+    /** 生成前预览。missingPrice：放行了但采购单没单价的批次，不会进这张对账单；taxBreakdown：多税率拆分汇总；oemOveruses：委外工单品牌供料超耗提示。 */
     public record PreviewView(List<LineView> lines, List<MissingPrice> missingPrice, BigDecimal goodsAmount, BigDecimal taxAmount,
-                              List<TaxBreakdown> taxBreakdown, List<ReceiptDisputeFlag> receiptDisputes) {
+                              List<TaxBreakdown> taxBreakdown, List<ReceiptDisputeFlag> receiptDisputes,
+                              List<OemOveruseHint> oemOveruses, BigDecimal suggestedDeduction) {
     }
 
     public record PaymentView(String paymentType, String paymentTypeLabel, LocalDate payDate, BigDecimal amount, String referenceNo,
@@ -389,11 +396,19 @@ public class SettlementService {
         List<TaxBreakdown> taxBreakdown = SettlementRule.breakdownByTaxRate(
                 u.priced().stream().map(p -> new TaxLineInput(p.taxRate(), p.amount(), p.tax())).toList());
         List<Batch> included = u.priced().stream().map(Priced::batch).toList();
+        List<Long> moIds = u.priced().stream().map(Priced::mfgOrderId).filter(Objects::nonNull).distinct().toList();
+        List<OemOveruseHint> oemOveruses = moIds.isEmpty() ? List.of()
+                : production.overuseForSettlement(moIds).stream().map(v -> new OemOveruseHint(
+                        v.moNo(), v.fgName(), v.itemCode(), v.itemName(), v.unit(),
+                        v.standardQty(), v.netIssuedQty(), v.varianceQty(), v.unitCost(), v.varianceCost())).toList();
+        BigDecimal suggestedDeduction = oemOveruses.stream().map(OemOveruseHint::overuseAmount)
+                .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
         return new PreviewView(u.priced().stream().map(p -> {
             Item i = items.get(p.batch().getItemId());
             return new LineView(p.batch().getBatchNo(), p.batch().getExtBatchNo(), p.poNo(), i.getCode(), i.getName(), i.getUnit(), p.qty(),
                     p.unitPrice(), p.taxRate(), p.amount(), p.tax(), p.batch().getCreatedAt().toLocalDate(), p.ret() == null ? null : p.ret().getReturnNo());
-        }).toList(), u.missing(), goods, tax, taxBreakdown, receiptDisputeFlags(included, pendingReceiptShipments(included)));
+        }).toList(), u.missing(), goods, tax, taxBreakdown, receiptDisputeFlags(included, pendingReceiptShipments(included)),
+                oemOveruses, suggestedDeduction);
     }
 
     /**

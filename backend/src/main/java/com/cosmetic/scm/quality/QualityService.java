@@ -70,6 +70,7 @@ public class QualityService {
     private final InventoryService inventory;
     private final MfgOrderRepository mfgOrders;
     private final DeviationRepository deviations;
+    private final com.cosmetic.scm.supplierreturn.SupplierReturnRepository supplierReturns;
     private final RetainSampleRepository retainSamples;
     private final ProductFilingRepository filings;
     private final MasterLookup lookup;
@@ -123,6 +124,15 @@ public class QualityService {
                                  Double market30dPassRatePct) {
     }
 
+    public record NcrDispositionRow(Long batchId, String batchNo, String itemCode, String itemName, String itemType,
+                                    String unit, BatchStatus batchStatus, String batchStatusLabel,
+                                    SourceType sourceType, String sourceNo, String partnerName,
+                                    java.math.BigDecimal qtyIn, java.math.BigDecimal onHand,
+                                    String reason, java.math.BigDecimal returnedQty,
+                                    List<String> supplierReturnNos, int openDeviationCount, List<String> deviationNos,
+                                    String closureState, String closureStateLabel, String recommendedAction) {
+    }
+
     @Transactional(readOnly = true)
     public QueueView queue() {
         return new QueueView(
@@ -135,6 +145,64 @@ public class QualityService {
     @Transactional(readOnly = true)
     public List<DecisionView> listAllDecisions() {
         return toViews(decisions.findAllByOrderByIdDesc());
+    }
+
+    /** 不合格品与冻结批次处置闭环台账：关联在库结存、退供单与质量偏差，识别待处置风险。 */
+    @Transactional(readOnly = true)
+    public List<NcrDispositionRow> ncrDispositions() {
+        List<Batch> list = batches.findByStatusInOrderByIdDesc(List.of(BatchStatus.REJECTED, BatchStatus.FROZEN));
+        if (list.isEmpty()) {
+            return List.of();
+        }
+        List<BatchView> views = inventory.toViews(list);
+        List<Long> batchIds = list.stream().map(Batch::getId).toList();
+        Map<Long, List<Deviation>> devByBatch = deviations.findByBatchIdIn(batchIds).stream()
+                .collect(Collectors.groupingBy(Deviation::getBatchId));
+        Map<Long, List<com.cosmetic.scm.supplierreturn.SupplierReturn>> retByBatch = supplierReturns
+                .findByBatchIdInOrderByIdDesc(batchIds).stream()
+                .filter(r -> r.getStatus() != com.cosmetic.scm.domain.SupplierReturnStatus.CANCELLED)
+                .collect(Collectors.groupingBy(com.cosmetic.scm.supplierreturn.SupplierReturn::getBatchId));
+        List<NcrDispositionRow> rows = new ArrayList<>();
+        for (BatchView v : views) {
+            List<Deviation> devs = devByBatch.getOrDefault(v.id(), List.of());
+            int openDevs = (int) devs.stream().filter(d -> d.getStatus() == CaseStatus.OPEN).count();
+            List<String> devNos = devs.stream().map(Deviation::getDeviationNo).toList();
+            List<com.cosmetic.scm.supplierreturn.SupplierReturn> rets = retByBatch.getOrDefault(v.id(), List.of());
+            java.math.BigDecimal retQty = rets.stream().map(com.cosmetic.scm.supplierreturn.SupplierReturn::getQty)
+                    .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
+            List<String> retNos = rets.stream().map(com.cosmetic.scm.supplierreturn.SupplierReturn::getReturnNo).toList();
+            String reason = v.freezeReason();
+            if (reason == null || reason.isBlank()) {
+                reason = decisions.findByBatchIdOrderByIdDesc(v.id()).stream()
+                        .filter(d -> d.getDecision() == Decision.REJECTED)
+                        .map(QualityDecision::getNote).findFirst().orElse(null);
+            }
+            boolean hasStock = v.onHand() != null && v.onHand().signum() > 0;
+            String state;
+            String stateLabel;
+            String action;
+            if (!hasStock && openDevs == 0) {
+                state = "CLOSED";
+                stateLabel = "已清零闭环";
+                action = "已闭环";
+            } else if (!hasStock) {
+                state = "IN_PROGRESS";
+                stateLabel = "待关偏差";
+                action = "跟进关闭关联质量偏差";
+            } else if (openDevs > 0 || !retNos.isEmpty()) {
+                state = "IN_PROGRESS";
+                stateLabel = "处置中";
+                action = v.status() == BatchStatus.FROZEN ? "调查后解冻或判不合格" : (v.sourceType() == SourceType.PO ? "跟进退供或报废清零" : "跟进偏差并报废清零");
+            } else {
+                state = "PENDING";
+                stateLabel = "待处置";
+                action = v.status() == BatchStatus.FROZEN ? "核查冻结原因并登记偏差" : (v.sourceType() == SourceType.PO ? "发起退供或报废清零" : "登记偏差并评估报废");
+            }
+            rows.add(new NcrDispositionRow(v.id(), v.batchNo(), v.itemCode(), v.itemName(), v.itemType(),
+                    v.unit(), v.status(), v.statusLabel(), v.sourceType(), v.sourceNo(), v.partnerName(),
+                    v.qtyIn(), v.onHand(), reason, retQty, retNos, openDevs, devNos, state, stateLabel, action));
+        }
+        return rows;
     }
 
     @Transactional(readOnly = true)

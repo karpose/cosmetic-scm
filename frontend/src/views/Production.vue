@@ -3,10 +3,12 @@
     <div class="page-head">
       <div>
         <h2>生产与委托</h2>
-        <p>委托代工和自有工厂走同一张单：品牌供料部分按“先到期先出”从自有仓发料，工厂代采部分在完工时登记受托厂的原料批号。完工批次一律进入“待上市放行”。</p>
+        <p>委托代工和自有工厂走同一张单：品牌供料部分按“先到期先出”从自有仓发料（受托厂配置寄存仓时同步记入寄售料账，完工自动核销），已发料工单支持超耗补料与余料退库。完工批次一律进入“待上市放行”。</p>
       </div>
       <div class="toolbar">
         <ExportButton v-if="tab === 'efficiency'" report="production-efficiency" label="导出效率对比" />
+        <ExportButton v-else-if="tab === 'consignment'" report="oem-consignment" label="导出委外寄售料账" />
+        <ExportButton v-else-if="tab === 'variance'" report="material-variance" label="导出超耗台账" />
         <ExportButton v-else report="production" />
         <el-button v-if="canCreate" type="primary" @click="openCreate">新建生产 / 委托单</el-button>
       </div>
@@ -33,10 +35,79 @@
 
     <el-tabs v-model="tab" class="seg">
       <el-tab-pane label="生产与委托单" name="orders" />
+      <el-tab-pane :label="`委外寄售料账（${consignment.length}）`" name="consignment" />
+      <el-tab-pane :label="`物料超耗与平衡（${overuseCount}）`" name="variance" />
       <el-tab-pane label="工厂收率对比" name="efficiency" />
     </el-tabs>
 
-    <div v-if="tab === 'efficiency' && eff" class="ana-grid">
+    <el-card v-if="tab === 'consignment'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-input v-model="ct.keyword.value" placeholder="搜索受托厂、寄存仓、物料、批号" clearable />
+        </div>
+      </template>
+      <el-table :data="ct.paged.value" v-loading="loading" size="small" empty-text="各受托厂寄存仓当前无在厂余料">
+        <el-table-column prop="factoryName" label="受托厂" min-width="140" />
+        <el-table-column label="寄存仓" min-width="140">
+          <template #default="{ row }">{{ row.warehouseName }} <span class="muted small mono">{{ row.warehouseCode }}</span></template>
+        </el-table-column>
+        <el-table-column label="批号" width="160"><template #default="{ row }"><BatchNo :no="row.batchNo" /></template></el-table-column>
+        <el-table-column label="物料" min-width="170">
+          <template #default="{ row }">{{ row.itemName }} <div class="muted small mono">{{ row.itemCode }} · {{ row.itemType }}</div></template>
+        </el-table-column>
+        <el-table-column label="在厂余料" width="120" align="right">
+          <template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }} {{ row.unit }}</span></template>
+        </el-table-column>
+        <el-table-column label="批次状态" width="110">
+          <template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /></template>
+        </el-table-column>
+        <el-table-column label="有效期至" width="115"><template #default="{ row }"><span class="mono">{{ row.expDate || '—' }}</span></template></el-table-column>
+        <el-table-column v-if="consignmentHasPrice" label="余料货值" width="120" align="right">
+          <template #default="{ row }"><span class="mono">{{ row.value != null ? `¥${fmtQty(row.value)}` : '—' }}</span></template>
+        </el-table-column>
+      </el-table>
+      <ListPager v-model:page="ct.page.value" v-model:size="ct.size.value" :total="ct.total.value" />
+    </el-card>
+
+    <el-card v-else-if="tab === 'variance'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-input v-model="vt.keyword.value" placeholder="搜索单号、生产方、成品、物料" clearable />
+          <el-select v-model="varState" placeholder="全部差异状态" clearable>
+            <el-option value="OVERUSE" label="超耗" />
+            <el-option value="SAVING" label="节余" />
+            <el-option value="BALANCED" label="平衡" />
+          </el-select>
+        </div>
+      </template>
+      <el-table :data="vt.paged.value" v-loading="loading" size="small" empty-text="暂无已发料或已完工生产单的领料数据">
+        <el-table-column label="生产单" width="155">
+          <template #default="{ row }"><span class="mono">{{ row.moNo }}</span><div class="muted small">{{ row.moTypeLabel }} · {{ row.moStatusLabel }}</div></template>
+        </el-table-column>
+        <el-table-column prop="factoryName" label="生产方" min-width="120" />
+        <el-table-column label="成品" min-width="140"><template #default="{ row }">{{ row.fgName }}<div class="muted small mono">{{ row.actualQty ? `实产 ${fmtQty(row.actualQty)}` : `计划 ${fmtQty(row.plannedQty)}` }}</div></template></el-table-column>
+        <el-table-column label="品牌供料" min-width="140"><template #default="{ row }">{{ row.itemName }}<div class="muted small mono">{{ row.itemCode }}</div></template></el-table-column>
+        <el-table-column label="理论标耗" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.standardQty) }} {{ row.unit }}</span></template></el-table-column>
+        <el-table-column label="净发料量" width="105" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.netIssuedQty) }} {{ row.unit }}</span></template></el-table-column>
+        <el-table-column label="差异 / 比例" width="130" align="right">
+          <template #default="{ row }">
+            <span class="mono" :style="{ color: row.state === 'OVERUSE' ? 'var(--el-color-danger)' : row.state === 'SAVING' ? 'var(--el-color-success)' : '' }">
+              {{ Number(row.varianceQty) > 0 ? `+${fmtQty(row.varianceQty)}` : fmtQty(row.varianceQty) }} {{ row.unit }}
+            </span>
+            <div v-if="row.variancePct != null" class="muted small mono">{{ Number(row.variancePct) > 0 ? `+${row.variancePct}%` : `${row.variancePct}%` }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="80">
+          <template #default="{ row }"><el-tag size="small" :type="row.state === 'OVERUSE' ? 'danger' : row.state === 'SAVING' ? 'success' : 'info'" disable-transitions>{{ row.stateLabel }}</el-tag></template>
+        </el-table-column>
+        <el-table-column v-if="varianceHasPrice" label="差异金额" width="115" align="right">
+          <template #default="{ row }"><span class="mono" :style="{ color: Number(row.varianceCost) > 0 ? 'var(--el-color-danger)' : '' }">{{ row.varianceCost != null ? `¥${fmtQty(row.varianceCost)}` : '—' }}</span></template>
+        </el-table-column>
+      </el-table>
+      <ListPager v-model:page="vt.page.value" v-model:size="vt.size.value" :total="vt.total.value" />
+    </el-card>
+
+    <div v-else-if="tab === 'efficiency' && eff" class="ana-grid">
       <el-card shadow="never" body-style="padding:0">
         <template #header><b>自产 / 受托厂效率对比</b></template>
         <el-table :data="eff.byFactory" size="small" empty-text="暂无生产记录">
@@ -95,12 +166,14 @@
             <div v-if="row.moType === 'OEM' && row.processingUnitFee != null" class="muted small mono">加工费 ¥{{ fmtQty(row.processingUnitFee) }}（{{ fmtQty(row.processingTaxRate ?? 0) }}%）</div>
           </template>
         </el-table-column>
-        <el-table-column label="" width="280" fixed="right">
+        <el-table-column label="" width="340" fixed="right">
           <template #default="{ row }">
             <div class="toolbar">
               <el-button size="small" @click="openDetail(row)">明细</el-button>
               <el-button v-if="row.moType === 'OEM' && row.status !== 'CANCELLED' && canSetFee" size="small" text @click="openFee(row)">加工费</el-button>
               <el-button v-if="row.status === 'PLANNED' && canOperate" size="small" @click="openDetail(row, 'issue')">发料</el-button>
+              <el-button v-if="row.status === 'ISSUED' && canOperate" size="small" text @click="openSupplementFromRow(row)">补料</el-button>
+              <el-button v-if="row.status === 'ISSUED' && canOperate" size="small" text @click="openReturnFromRow(row)">退库</el-button>
               <el-button v-if="row.status === 'ISSUED' && canOperate" size="small" type="primary" @click="openComplete(row)">完工入库</el-button>
               <el-button v-if="(row.status === 'PLANNED' || row.status === 'ISSUED') && canCancel" size="small" text @click="cancelOrder(row)">取消</el-button>
             </div>
@@ -138,28 +211,38 @@
     </el-dialog>
 
     <!-- 明细 / 发料预览 -->
-    <el-drawer v-model="detail.visible" :title="detail.data ? `${detail.data.mo.moNo} · ${detail.data.mo.fgName} × ${fmtQty(detail.data.mo.plannedQty)}` : '明细'" size="min(760px, 100%)">
+    <el-drawer v-model="detail.visible" :title="detail.data ? `${detail.data.mo.moNo} · ${detail.data.mo.fgName} × ${fmtQty(detail.data.mo.plannedQty)}` : '明细'" size="min(800px, 100%)">
       <template v-if="detail.data">
         <el-descriptions :column="2" size="small" border>
           <el-descriptions-item label="生产方">{{ detail.data.mo.factoryName }}（{{ detail.data.mo.moTypeLabel }}）</el-descriptions-item>
           <el-descriptions-item label="状态">{{ detail.data.mo.statusLabel }}</el-descriptions-item>
           <el-descriptions-item label="配方版本">V{{ detail.data.formulaVersionNo ?? '—' }}</el-descriptions-item>
+          <el-descriptions-item v-if="detail.data.oemWarehouseName" label="委外寄存仓">{{ detail.data.oemWarehouseName }}</el-descriptions-item>
           <el-descriptions-item v-if="detail.data.mo.actualQty" label="实际产量">{{ fmtQty(detail.data.mo.actualQty) }}（收率 {{ detail.data.mo.yieldPct }}%）</el-descriptions-item>
           <el-descriptions-item v-if="detail.data.mo.outBatchNo" label="产出批次"><BatchNo :no="detail.data.mo.outBatchNo" /></el-descriptions-item>
         </el-descriptions>
+        <div v-if="detail.data.mo.status === 'ISSUED' && canOperate" class="toolbar" style="margin-top:12px">
+          <el-button size="small" @click="openSupplement(detail.data)">生产补料（超耗领料）</el-button>
+          <el-button size="small" @click="openReturn(detail.data)">生产余料退库</el-button>
+        </div>
         <p v-if="detail.data.mo.status === 'PLANNED'" class="muted small">下表是按“先到期先出”从自有仓已放行库存中预分配的批次，点“确认发料”后才实际扣减。</p>
         <el-table :data="detail.data.requirements" size="small" style="margin-top:12px">
           <el-table-column label="物料" min-width="140"><template #default="{ row }">{{ row.itemName }} <div class="muted small mono">{{ row.itemCode }}</div></template></el-table-column>
-          <el-table-column label="供料方式" width="100">
+          <el-table-column label="供料方式" width="90">
             <template #default="{ row }"><el-tag size="small" :type="row.supplyMode === 'BRAND' ? 'primary' : 'info'" disable-transitions>{{ row.supplyLabel }}</el-tag></template>
           </el-table-column>
-          <el-table-column label="理论用量" width="120" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.requiredQty) }} {{ row.unit }}</span></template></el-table-column>
+          <el-table-column label="理论 / 净发" width="135" align="right">
+            <template #default="{ row }">
+              <div class="mono">{{ fmtQty(row.requiredQty) }} {{ row.unit }}</div>
+              <div v-if="row.supplyMode === 'BRAND' && detail.data.mo.status !== 'PLANNED'" class="muted small mono">净发 {{ fmtQty(row.issuedQty) }}</div>
+            </template>
+          </el-table-column>
           <el-table-column label="批次" min-width="220">
             <template #default="{ row }">
               <template v-if="row.supplyMode === 'BRAND'">
                 <div v-for="p in row.picks" :key="p.batchId + '-' + p.warehouseId">
                   <BatchNo :no="p.batchNo" /> <span class="mono small">{{ fmtQty(p.qty) }}</span>
-                  <span class="muted small"> 效期 {{ p.expDate || '—' }}</span>
+                  <span class="muted small"> {{ p.warehouseName }} · 效期 {{ p.expDate || '—' }}</span>
                 </div>
                 <el-tag v-if="Number(row.shortQty) > 0" type="danger" size="small" disable-transitions>缺 {{ fmtQty(row.shortQty) }} {{ row.unit }}</el-tag>
                 <span v-if="!row.picks.length && !(Number(row.shortQty) > 0)" class="muted">—</span>
@@ -169,6 +252,30 @@
             </template>
           </el-table-column>
         </el-table>
+
+        <template v-if="detail.data.issueLogs && detail.data.issueLogs.length">
+          <h4 class="sec">发料 / 补料 / 退库流水</h4>
+          <el-table :data="detail.data.issueLogs" size="small">
+            <el-table-column label="类型" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.issueType === 'SUPPLEMENT' ? 'warning' : row.issueType === 'RETURN' ? 'success' : 'info'" disable-transitions>{{ row.issueTypeLabel }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="物料 / 批号" min-width="180">
+              <template #default="{ row }">{{ row.itemName }} <div class="small"><BatchNo :no="row.batchNo" /> · {{ row.warehouseName }}</div></template>
+            </el-table-column>
+            <el-table-column label="数量" width="110" align="right">
+              <template #default="{ row }"><span class="mono">{{ Number(row.qty) > 0 ? `+${fmtQty(row.qty)}` : fmtQty(row.qty) }} {{ row.unit }}</span></template>
+            </el-table-column>
+            <el-table-column label="原因 / 操作人" min-width="160">
+              <template #default="{ row }">
+                <div>{{ row.reason || '—' }}</div>
+                <div v-if="row.createdBy" class="muted small">{{ row.createdBy }} · {{ fmtTime(row.createdAt) }}</div>
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
+
         <BatchRecord v-if="detail.data.mo.moType === 'OWN'" :key="detail.data.mo.id" :mo-id="detail.data.mo.id" />
         <h4 class="sec">附件</h4>
         <AttachmentList owner-type="MFG_ORDER" :owner-id="detail.data.mo.id" :can-upload="auth.canAttach()"
@@ -205,6 +312,52 @@
         </div>
       </template>
     </el-drawer>
+
+    <!-- 生产补料（超耗领料） -->
+    <el-dialog v-model="sup.visible" :title="`生产补料：${sup.moNo}`" width="480px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <p class="muted small" style="margin-top:0">按“先到期先出”从自有仓已放行库存追加发料；若委托单已绑定受托厂寄存仓，将同步记入寄售料账。</p>
+        <el-form-item label="品牌供料物料">
+          <el-select v-model="sup.itemId" placeholder="选择需补料的物料" style="width:100%">
+            <el-option v-for="r in sup.items" :key="r.itemId" :value="r.itemId"
+                       :label="`${r.itemCode} ${r.itemName}（理论 ${fmtQty(r.requiredQty)} / 净发 ${fmtQty(r.issuedQty)} ${r.unit}）`" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="补料数量">
+          <el-input-number v-model="sup.qty" :min="0.0001" :precision="4" :controls="false" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="补料原因（必填）">
+          <el-input v-model="sup.reason" type="textarea" :rows="2" maxlength="300" placeholder="如：灌装机调试损耗、瓶盖破损补领" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="sup.visible = false">取消</el-button>
+        <el-button type="primary" :loading="sup.saving" @click="submitSupplement">确认补料</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 生产余料退库 -->
+    <el-dialog v-model="ret.visible" :title="`生产余料退库：${ret.moNo}`" width="500px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <p class="muted small" style="margin-top:0">退回原发料自有仓，委外单同步核减受托厂寄存仓余料，并在完工时按净用量计入批次谱系与成本。</p>
+        <el-form-item label="已发物料批次">
+          <el-select v-model="ret.pickKey" placeholder="选择需退回的批次" style="width:100%" @change="onRetPickChange">
+            <el-option v-for="p in ret.picks" :key="p.key" :value="p.key"
+                       :label="`${p.itemName} · ${p.batchNo}（${p.warehouseName}，可退 ${fmtQty(p.qty)} ${p.unit}）`" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="退库数量">
+          <el-input-number v-model="ret.qty" :min="0.0001" :max="ret.maxQty || undefined" :precision="4" :controls="false" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="退库原因（必填）">
+          <el-input v-model="ret.reason" type="textarea" :rows="2" maxlength="300" placeholder="如：本批实际投料节余、包材未开箱退回" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="ret.visible = false">取消</el-button>
+        <el-button type="primary" :loading="ret.saving" @click="submitReturn">确认退库</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 完工入库 -->
     <el-dialog v-model="done.visible" :title="`完工入库：${done.mo?.moNo || ''}`" width="720px">
@@ -259,6 +412,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import ListPager from '../components/ListPager.vue'
@@ -276,9 +430,14 @@ import { fmtQty, fmtTime, today } from '../utils/format'
 import { latestOnly } from '../utils/latest'
 
 const auth = useAuth()
+const route = useRoute()
 const rd = useRefData()
-const tab = ref('orders')
+const VALID_TABS = new Set(['orders', 'consignment', 'variance', 'efficiency'])
+const tab = ref(VALID_TABS.has(route.query.tab) ? route.query.tab : 'orders')
 const orders = ref([])
+const consignment = ref([])
+const variances = ref([])
+const varState = ref('')
 const eff = ref(null)
 const loading = ref(false)
 const loadError = ref('')
@@ -289,6 +448,16 @@ const t = usePaged(orders, {
   match: textMatch('moNo', 'factoryName', 'fgName', 'outBatchNo'),
   extra: (r) => !filterBy.value || r.status === filterBy.value
 })
+const ct = usePaged(consignment, {
+  match: textMatch('factoryName', 'warehouseName', 'warehouseCode', 'batchNo', 'itemCode', 'itemName')
+})
+const vt = usePaged(variances, {
+  match: textMatch('moNo', 'factoryName', 'fgCode', 'fgName', 'itemCode', 'itemName'),
+  extra: (r) => !varState.value || r.state === varState.value
+})
+const consignmentHasPrice = computed(() => consignment.value.some((r) => r.value != null))
+const varianceHasPrice = computed(() => variances.value.some((r) => r.varianceCost != null))
+const overuseCount = computed(() => variances.value.filter((r) => r.state === 'OVERUSE').length)
 const canCreate = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
 const canOperate = computed(() => auth.hasAny('ADMIN', 'PRODUCTION', 'WAREHOUSE'))
 const canCancel = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
@@ -296,6 +465,8 @@ const canReview = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
 
 const create = reactive({ visible: false, saving: false, factoryId: null, fgItemId: null, plannedQty: null, plannedDate: today() })
 const detail = reactive({ visible: false, saving: false, mode: 'view', data: null, trail: null })
+const sup = reactive({ visible: false, saving: false, moId: null, moNo: '', items: [], itemId: null, qty: null, reason: '' })
+const ret = reactive({ visible: false, saving: false, moId: null, moNo: '', picks: [], pickKey: '', batchId: null, warehouseId: null, maxQty: null, qty: null, reason: '' })
 const done = reactive({
   visible: false, saving: false, mo: null, report: null, actualQty: null, mfgDate: today(), extBatchNo: '',
   warehouseId: null, oemReleased: false, balanceNote: '', ext: []
@@ -314,9 +485,16 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const [os, ef] = await Promise.all([http.get('/mfg-orders'), http.get('/analytics/production-efficiency')])
+    const [os, ef, cs, vs] = await Promise.all([
+      http.get('/mfg-orders'),
+      http.get('/analytics/production-efficiency'),
+      http.get('/mfg-orders/oem-consignment'),
+      http.get('/mfg-orders/material-variance')
+    ])
     orders.value = os
     eff.value = ef
+    consignment.value = cs
+    variances.value = vs
   } catch (e) {
     loadError.value = e.message
   } finally {
@@ -365,6 +543,97 @@ async function openDetail(row, mode = 'view') {
   const [d, trail] = await Promise.all([http.get(`/mfg-orders/${row.id}`), row.moType === 'OEM' ? http.get(`/mfg-orders/${row.id}/oem`) : null])
   detail.data = d
   detail.trail = trail
+}
+
+function openSupplement(d) {
+  const brandItems = (d.requirements || []).filter((r) => r.supplyMode === 'BRAND')
+  if (!brandItems.length) return ElMessage.warning('该生产单没有品牌供料物料，无需补料')
+  Object.assign(sup, {
+    visible: true, saving: false, moId: d.mo.id, moNo: d.mo.moNo, items: brandItems,
+    itemId: brandItems[0].itemId, qty: null, reason: ''
+  })
+}
+
+async function openSupplementFromRow(row) {
+  const d = await http.get(`/mfg-orders/${row.id}`)
+  openSupplement(d)
+}
+
+async function submitSupplement() {
+  if (!sup.itemId || !(sup.qty > 0)) return ElMessage.warning('请选择物料并填写补料数量')
+  if (!sup.reason.trim()) return ElMessage.warning('请填写补料原因')
+  sup.saving = true
+  try {
+    const updated = await http.post(`/mfg-orders/${sup.moId}/supplement`, {
+      itemId: sup.itemId, qty: sup.qty, reason: sup.reason
+    })
+    ElMessage.success('补料已完成')
+    sup.visible = false
+    if (detail.visible && detail.data?.mo.id === sup.moId) detail.data = updated
+    load()
+  } finally {
+    sup.saving = false
+  }
+}
+
+function openReturn(d) {
+  const picks = []
+  for (const r of (d.requirements || [])) {
+    if (r.supplyMode !== 'BRAND') continue
+    for (const p of (r.picks || [])) {
+      if (Number(p.qty) > 0) {
+        picks.push({
+          key: `${p.batchId}-${p.warehouseId}`,
+          batchId: p.batchId,
+          warehouseId: p.warehouseId,
+          batchNo: p.batchNo,
+          warehouseName: p.warehouseName,
+          itemName: r.itemName,
+          unit: r.unit,
+          qty: Number(p.qty)
+        })
+      }
+    }
+  }
+  if (!picks.length) return ElMessage.warning('该生产单当前没有可退库的已发物料')
+  const first = picks[0]
+  Object.assign(ret, {
+    visible: true, saving: false, moId: d.mo.id, moNo: d.mo.moNo, picks,
+    pickKey: first.key, batchId: first.batchId, warehouseId: first.warehouseId,
+    maxQty: first.qty, qty: first.qty, reason: ''
+  })
+}
+
+async function openReturnFromRow(row) {
+  const d = await http.get(`/mfg-orders/${row.id}`)
+  openReturn(d)
+}
+
+function onRetPickChange(key) {
+  const p = ret.picks.find((x) => x.key === key)
+  if (p) {
+    ret.batchId = p.batchId
+    ret.warehouseId = p.warehouseId
+    ret.maxQty = p.qty
+    ret.qty = p.qty
+  }
+}
+
+async function submitReturn() {
+  if (!ret.batchId || !ret.warehouseId || !(ret.qty > 0)) return ElMessage.warning('请选择退库批次并填写数量')
+  if (!ret.reason.trim()) return ElMessage.warning('请填写退库原因')
+  ret.saving = true
+  try {
+    const updated = await http.post(`/mfg-orders/${ret.moId}/return-material`, {
+      batchId: ret.batchId, warehouseId: ret.warehouseId, qty: ret.qty, reason: ret.reason
+    })
+    ElMessage.success('余料已退回原仓')
+    ret.visible = false
+    if (detail.visible && detail.data?.mo.id === ret.moId) detail.data = updated
+    load()
+  } finally {
+    ret.saving = false
+  }
 }
 
 async function returnReport() {
