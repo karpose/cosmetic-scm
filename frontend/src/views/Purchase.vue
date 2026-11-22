@@ -6,7 +6,8 @@
         <p>只能向合格名录内、资质在有效期内的供应商下单；禁用原料不能采购。收货后物料批次进入“待检”，检验放行前不能发料。</p>
       </div>
       <div class="toolbar">
-        <ExportButton report="purchases" />
+        <ExportButton v-if="tab === 'expedite'" report="purchase-expedite" label="导出催货清单" />
+        <ExportButton v-else report="purchases" />
         <el-button v-if="canSeePrice" @click="openPriceList">供应商协议价</el-button>
         <el-button v-if="canCreate" type="primary" @click="openCreate">新建采购单</el-button>
       </div>
@@ -35,7 +36,56 @@
       </div>
     </div>
 
-    <el-card shadow="never" body-style="padding:0 0 8px">
+    <el-tabs v-model="tab" class="seg">
+      <el-tab-pane label="采购单列表" name="orders" />
+      <el-tab-pane :label="`在途催货看板（${urgentExpediteCount} 项紧急）`" name="expedite" />
+    </el-tabs>
+
+    <el-card v-if="tab === 'expedite'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-input v-model="et.keyword.value" placeholder="搜索单号、供应商、物料" clearable />
+          <el-radio-group v-model="expRisk" size="small">
+            <el-radio-button value="">全部（{{ expedite.length }}）</el-radio-button>
+            <el-radio-button value="OVERDUE">已超期</el-radio-button>
+            <el-radio-button value="DUE_SOON">7天内到期</el-radio-button>
+            <el-radio-button value="IN_TRANSIT">已发货待收</el-radio-button>
+            <el-radio-button value="ON_TRACK">正常在途</el-radio-button>
+          </el-radio-group>
+        </div>
+      </template>
+      <el-table :data="et.paged.value" v-loading="loading" size="small" empty-text="当前没有未收齐的在途采购行">
+        <el-table-column label="交付风险" width="105">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.riskLevel === 'OVERDUE' ? 'danger' : row.riskLevel === 'DUE_SOON' ? 'warning' : row.riskLevel === 'IN_TRANSIT' ? 'primary' : 'info'" disable-transitions>{{ row.riskLabel }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="采购单 / 供应商" min-width="170">
+          <template #default="{ row }"><span class="mono">{{ row.poNo }}</span><div class="muted small">{{ row.supplierName }}<span v-if="row.supplierContact"> · {{ row.supplierContact }}</span></div></template>
+        </el-table-column>
+        <el-table-column label="物料" min-width="160">
+          <template #default="{ row }">{{ row.itemName }}<div class="muted small mono">{{ row.itemCode }}</div></template>
+        </el-table-column>
+        <el-table-column label="未收 / 订购" width="135" align="right">
+          <template #default="{ row }"><span class="mono"><b>{{ fmtQty(row.remainingQty) }}</b> / {{ fmtQty(row.qty) }} {{ row.unit }}</span></template>
+        </el-table-column>
+        <el-table-column label="交期" width="125">
+          <template #default="{ row }">
+            <div class="mono" :class="{ late: row.riskLevel === 'OVERDUE' }">{{ row.dueDate || '未设交期' }}</div>
+            <div class="muted small">{{ row.dueSource }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="催货建议" min-width="210">
+          <template #default="{ row }"><div class="small">{{ row.expediteAction }}</div></template>
+        </el-table-column>
+        <el-table-column v-if="canReceive" label="" width="90" fixed="right">
+          <template #default="{ row }"><el-button size="small" @click="openReceiveById(row.poId)">收货</el-button></template>
+        </el-table-column>
+      </el-table>
+      <ListPager v-model:page="et.page.value" v-model:size="et.size.value" :total="et.total.value" />
+    </el-card>
+
+    <el-card v-else shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="filters">
           <el-input v-model="t.keyword.value" placeholder="搜索单号、供应商、物料" clearable />
@@ -288,7 +338,10 @@ const onResize = () => { narrow.value = window.innerWidth <= 768 }
 onMounted(() => window.addEventListener('resize', onResize))
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 const rd = useRefData()
+const tab = ref('orders')
 const orders = ref([])
+const expedite = ref([])
+const expRisk = ref('')
 const summary = ref(null)
 const loading = ref(false)
 const loadError = ref('')
@@ -299,6 +352,15 @@ const t = usePaged(orders, {
   match: textMatch('poNo', 'supplierName', (r) => r.lines.map((l) => l.itemName + l.itemCode).join(' ')),
   extra: (r) => !filterBy.value || r.status === filterBy.value
 })
+const et = usePaged(expedite, {
+  match: textMatch('poNo', 'supplierName', 'itemCode', 'itemName', 'expediteAction'),
+  extra: (r) => !expRisk.value || r.riskLevel === expRisk.value
+})
+const urgentExpediteCount = computed(() => expedite.value.filter((r) => r.riskLevel === 'OVERDUE' || r.riskLevel === 'DUE_SOON').length)
+function openReceiveById(poId) {
+  const po = orders.value.find((o) => o.id === poId)
+  if (po) openReceive(po)
+}
 const canCreate = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
 const canSeePrice = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE'))
 const canReceive = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'WAREHOUSE'))
@@ -401,12 +463,14 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const [list, sum] = await Promise.all([
+    const [list, sum, exp] = await Promise.all([
       http.get('/purchase-orders'),
-      http.get('/purchase-orders/summary', { silent: true }).catch(() => null)
+      http.get('/purchase-orders/summary', { silent: true }).catch(() => null),
+      http.get('/purchase-orders/expedite')
     ])
     orders.value = list
     summary.value = sum
+    expedite.value = exp
   } catch (e) {
     loadError.value = e.message
   } finally {
