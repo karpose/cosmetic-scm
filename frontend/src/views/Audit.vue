@@ -18,14 +18,26 @@
         </el-tag>
       </div>
     </div>
+    <div v-if="topActions.length" class="hot-bar">
+      <span class="muted small">高频操作：</span>
+      <el-tag v-for="item in topActions" :key="item.name" size="small" :type="action === item.name ? 'primary' : 'info'"
+              class="hot-tag" disable-transitions @click="action = action === item.name ? '' : item.name">
+        {{ item.name }}（{{ item.count }}）
+      </el-tag>
+    </div>
     <el-card shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="filters">
-          <el-input id="au-q" v-model="q" placeholder="按批号、单号、操作或账号搜索（回车查询）" clearable style="width:300px" @change="load" />
+          <el-input id="au-q" v-model="q" placeholder="按批号、单号、操作或账号搜索（回车查询）" clearable style="width:280px" @change="load" />
           <el-select aria-label="按操作筛选" v-model="action" placeholder="全部操作" clearable filterable>
             <el-option v-for="a in actions" :key="a" :value="a" :label="a" />
           </el-select>
-          <el-date-picker v-model="dates" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" style="width:260px;flex:none" @change="load" />
+          <el-radio-group v-model="quickRange" size="small" @change="applyQuickRange">
+            <el-radio-button value="all">全部</el-radio-button>
+            <el-radio-button value="7d">近 7 天</el-radio-button>
+            <el-radio-button value="30d">近 30 天</el-radio-button>
+          </el-radio-group>
+          <el-date-picker v-model="dates" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" style="width:250px;flex:none" @change="quickRange = ''; load()" />
           <span class="muted small">显示该范围内最近 300 条；导出按当前筛选条件与日期范围全量导出</span>
         </div>
       </template>
@@ -50,7 +62,7 @@ import http from '../api'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import { useAuth } from '../stores/auth'
-import { fmtTime } from '../utils/format'
+import { daysFromToday, fmtTime, today } from '../utils/format'
 import { latestOnly } from '../utils/latest'
 import { usePaged } from '../utils/table'
 
@@ -59,6 +71,7 @@ const canSeePrice = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE'))
 const q = ref('')
 const action = ref('')
 const dates = ref(null)
+const quickRange = ref('all')
 const range = computed(() => (dates.value ? { from: dates.value[0], to: dates.value[1] } : {}))
 const exportParams = computed(() => ({
   ...range.value,
@@ -69,8 +82,20 @@ const rows = ref([])
 const loading = ref(false)
 const error = ref('')
 const actions = computed(() => [...new Set(rows.value.map((r) => r.action))].sort())
+const topActions = computed(() => {
+  const counts = new Map()
+  for (const r of rows.value) counts.set(r.action, (counts.get(r.action) || 0) + 1)
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, count]) => ({ name, count }))
+})
 const operatorCount = computed(() => new Set(rows.value.map((r) => r.username).filter(Boolean)).size)
 const t = usePaged(rows, { extra: (r) => !action.value || r.action === action.value, pageSize: 50 })
+
+function applyQuickRange(val) {
+  if (val === '7d') dates.value = [daysFromToday(-6), today()]
+  else if (val === '30d') dates.value = [daysFromToday(-29), today()]
+  else dates.value = null
+  load()
+}
 
 const listReq = latestOnly()
 
@@ -93,4 +118,6 @@ onMounted(load)
 <style scoped>
 .stat-bar { display: flex; gap: 12px; flex-wrap: wrap; }
 .stat-pill { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 12px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); }
+.hot-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hot-tag { cursor: pointer; }
 </style>
