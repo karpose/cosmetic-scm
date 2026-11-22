@@ -6,8 +6,32 @@
         <p>向合格供应商询价，供应商在门户报价，互相看不到。截止或开标前内部也看不到价格。支持多轮议价与历史采购价对比，定标要签批（定标人不能是询价人），定标后自动生成带价格的采购单。</p>
       </div>
       <div class="toolbar">
+        <ExportButton report="rfqs" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="canBuy" type="primary" @click="openCreate">发起询价</el-button>
+      </div>
+    </div>
+
+    <div v-if="summary" class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">密封询价中</div>
+        <div class="kpi-val mono">{{ summary.sealedCount }} <span class="kpi-unit">/ {{ summary.totalCount }}</span></div>
+        <div class="kpi-sub">3 天内截止 {{ summary.closingSoonCount }} 单</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: summary.waitingAwardCount > 0 }">
+        <div class="kpi-label">待比价定标</div>
+        <div class="kpi-val mono">{{ summary.waitingAwardCount }}</div>
+        <div class="kpi-sub">已开标或已截止待签批定标</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">已定标询价</div>
+        <div class="kpi-val mono">{{ summary.awardedCount }}</div>
+        <div class="kpi-sub">已取消 {{ summary.cancelledCount }} 单</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">多轮议价单</div>
+        <div class="kpi-val mono">{{ summary.multiRoundCount }}</div>
+        <div class="kpi-sub">进入 2 轮及以上议价</div>
       </div>
     </div>
 
@@ -173,6 +197,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
+import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
 import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
@@ -188,7 +213,15 @@ const rd = useRefData()
 const canBuy = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
 
 const rows = ref([])
-const loader = useLoader(async () => { rows.value = await http.get('/rfqs') })
+const summary = ref(null)
+const loader = useLoader(async () => {
+  const [list, sum] = await Promise.all([
+    http.get('/rfqs'),
+    http.get('/rfqs/summary', { silent: true }).catch(() => null)
+  ])
+  rows.value = list
+  summary.value = sum
+})
 const load = () => loader.run()
 const t = usePaged(rows, { match: textMatch('rfqNo', 'title', (r) => r.lines.map((l) => l.itemName).join(' ')) })
 const startOfToday = startOfBusinessDay()
@@ -293,6 +326,14 @@ async function submitAward() {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .award-line { margin-bottom: 16px; }
 .late { color: var(--el-color-danger); }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

@@ -20,10 +20,26 @@
 
     <div v-if="data" class="grid2">
       <el-card shadow="never">
-        <template #header><div class="card-h"><b>待办</b><span class="muted small">{{ data.todoTotal }} 项</span></div></template>
-        <el-empty v-if="!data.todos.length" description="没有待办事项" :image-size="60" />
+        <template #header>
+          <div class="card-h">
+            <span class="toolbar">
+              <b>待办</b>
+              <span class="muted small">{{ filteredTodos.length }} / {{ data.todoTotal }} 项</span>
+            </span>
+            <span class="toolbar">
+              <el-radio-group v-model="todoLevel" size="small">
+                <el-radio-button value="">全部</el-radio-button>
+                <el-radio-button value="bad">紧急 {{ levelCounts.bad }}</el-radio-button>
+                <el-radio-button value="warn">警告 {{ levelCounts.warn }}</el-radio-button>
+                <el-radio-button value="info">常规</el-radio-button>
+              </el-radio-group>
+              <ExportButton report="todos" size="small" />
+            </span>
+          </div>
+        </template>
+        <el-empty v-if="!filteredTodos.length" description="没有符合条件的待办事项" :image-size="60" />
         <ul v-else class="list">
-          <li v-for="(t, i) in data.todos" :key="i">
+          <li v-for="(t, i) in filteredTodos" :key="i">
             <span class="t">
               <el-tag :type="tagType(t.level)" size="small" disable-transitions>{{ t.label }}</el-tag>
               <BatchNo v-if="isBatch(t)" :no="t.ref" />
@@ -57,12 +73,27 @@
 import { computed, onMounted, ref } from 'vue'
 import http from '../api'
 import BatchNo from '../components/BatchNo.vue'
+import ExportButton from '../components/ExportButton.vue'
 import LoadError from '../components/LoadError.vue'
 import { fmtTime } from '../utils/format'
 
 const data = ref(null)
 const loading = ref(false)
 const error = ref('')
+const todoLevel = ref('')
+const levelCounts = computed(() => {
+  const list = data.value?.todos || []
+  return {
+    bad: list.filter((t) => t.level === 'bad').length,
+    warn: list.filter((t) => t.level === 'warn').length
+  }
+})
+const filteredTodos = computed(() => {
+  const list = data.value?.todos || []
+  if (!todoLevel.value) return list
+  if (todoLevel.value === 'info') return list.filter((t) => t.level !== 'bad' && t.level !== 'warn')
+  return list.filter((t) => t.level === todoLevel.value)
+})
 
 const stages = computed(() => {
   const c = data.value.counts

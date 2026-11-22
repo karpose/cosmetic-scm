@@ -35,6 +35,28 @@
       </div>
       <el-alert v-if="t.source.type === '期初导入'" type="warning" show-icon :closable="false"
                 title="这是期初导入的批次：上线前的领用和发货记录不在系统里，下面的流向可能不完整，请到旧系统或台账核对。" />
+      <div class="kpi-grid no-print">
+        <div class="kpi-card">
+          <div class="kpi-label">上游用料 / 下游生产</div>
+          <div class="kpi-val mono">{{ t.upstream.length }} <span class="kpi-unit">/ {{ t.downstreamOrders.length }}</span></div>
+          <div class="kpi-sub">关联成品批 {{ t.finishedBatches.length }} 个</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">已发往客户 / 总出库量</div>
+          <div class="kpi-val mono">{{ customerCount }} <span class="kpi-unit">家</span></div>
+          <div class="kpi-sub">累计出库 {{ fmtQty(totalShippedQty) }} {{ t.batch.unit }}</div>
+        </div>
+        <div class="kpi-card" :class="{ warn: t.returns.length > 0, danger: t.recalls.length > 0 }">
+          <div class="kpi-label">关联退货 / 召回</div>
+          <div class="kpi-val mono">{{ t.returns.length }} <span class="kpi-unit">/ {{ t.recalls.length }}</span></div>
+          <div class="kpi-sub">退回供应商 {{ t.supplierReturns?.length || 0 }} 笔</div>
+        </div>
+        <div class="kpi-card" :class="{ warn: t.affectedBatchNos.length > 1 }">
+          <div class="kpi-label">可冻结受影响批次</div>
+          <div class="kpi-val mono">{{ t.affectedBatchNos.length }} <span class="kpi-unit">批</span></div>
+          <div class="kpi-sub">追溯耗时 {{ elapsedText }} ms</div>
+        </div>
+      </div>
       <el-card shadow="never">
         <template #header>
           <div class="head">
@@ -42,6 +64,7 @@
             <span class="toolbar">
               <StatusTag :status="t.batch.status" :label="t.batch.statusLabel" />
               <span class="muted small">追溯用时 {{ elapsedText }} 毫秒</span>
+              <el-button class="no-print" size="small" :loading="exporting" @click="exportTrace">导出追溯清单</el-button>
               <el-button class="no-print" size="small" @click="printReport">打印追溯报告</el-button>
               <el-button class="no-print" size="small" @click="$router.push({ path: '/labels', query: { batches: t.batch.batchNo } })">打印标签</el-button>
             </span>
@@ -197,7 +220,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import http from '../api'
+import http, { LONG_TIMEOUT } from '../api'
 import BatchNo from '../components/BatchNo.vue'
 import ShelfBar from '../components/ShelfBar.vue'
 import StatusTag from '../components/StatusTag.vue'
@@ -213,6 +236,7 @@ const input = ref(route.query.no || '')
 const t = ref(null)
 const hits = ref([])
 const searched = ref('')
+const exporting = ref(false)
 // 按 Ctrl+P 打印不经过按钮，所以在打印前的事件里取时间
 const printTime = () => new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 16)
 const printedAt = ref(printTime())
@@ -223,6 +247,25 @@ const loading = ref(false)
 const canFreeze = computed(() => auth.hasAny('QA', 'QSO'))
 const elapsedText = computed(() => (t.value && t.value.elapsedMs >= 1 ? String(t.value.elapsedMs) : '不到 1'))
 const customerCount = computed(() => new Set((t.value?.shipments || []).map((s) => s.customerName)).size)
+const totalShippedQty = computed(() => (t.value?.shipments || []).reduce((a, s) => a + Number(s.qty || 0), 0))
+
+async function exportTrace() {
+  if (!t.value?.batch?.batchNo) return
+  exporting.value = true
+  try {
+    const no = t.value.batch.batchNo
+    const res = await http.get(`/trace/${encodeURIComponent(no)}/export`, { responseType: 'blob', fullResponse: true, timeout: LONG_TIMEOUT })
+    const match = /filename\*=UTF-8''([^;]+)/i.exec(res.headers['content-disposition'] || '')
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = match ? decodeURIComponent(match[1]) : `批次追溯-${no}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+  } finally {
+    exporting.value = false
+  }
+}
 const fz = reactive({ visible: false, saving: false, reason: '', password: '' })
 
 function shippedOf(batchNo) {
@@ -300,7 +343,16 @@ async function submitFreeze() {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; }
+.kpi-card.danger { border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .col-h { margin: 0 0 8px; font-size: 13px; color: var(--el-text-color-secondary); font-weight: 500; }
 .node { border: 1px solid var(--lg-stroke); border-radius: 14px; padding: 10px 14px; display: grid; gap: 4px; background: var(--lg-surface); -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur); box-shadow: var(--lg-highlight), var(--lg-shadow); }
