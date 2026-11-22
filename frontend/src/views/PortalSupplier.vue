@@ -5,7 +5,33 @@
         <h2>采购订单协同</h2>
         <p>{{ auth.user?.partnerName }}：确认采购单并回复交期，发货时填送货通知，上传检验报告；询价在这里报价（支持多轮议价），到货后在这里对账、开票及确认退货签收。</p>
       </div>
-      <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
+      <div class="toolbar">
+        <el-input v-if="tab === 'active' || tab === 'done'" v-model="keyword" placeholder="搜索采购单号、物料" clearable style="width:210px" />
+        <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card" :class="{ warn: unconfirmedCount > 0 }" @click="tab = 'active'">
+        <div class="kpi-label">进行中采购单</div>
+        <div class="kpi-val mono">{{ active.length }} <span class="kpi-unit">/ {{ orders.length }}</span></div>
+        <div class="kpi-sub">待确认交期 {{ unconfirmedCount }} 单</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: openRfqs > 0 }" @click="tab = 'rfq'">
+        <div class="kpi-label">待报价询价单</div>
+        <div class="kpi-val mono">{{ openRfqs }}</div>
+        <div class="kpi-sub">共收到 {{ rfqs.length }} 张询价单</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: pendingStatements > 0 }" @click="tab = 'statement'">
+        <div class="kpi-label">待确认 / 待开票对账</div>
+        <div class="kpi-val mono">{{ pendingStatements }}</div>
+        <div class="kpi-sub">共 {{ statements.length }} 张对账单</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: pendingReceipts > 0 }" @click="tab = 'returns'">
+        <div class="kpi-label">待签收退货单</div>
+        <div class="kpi-val mono">{{ pendingReceipts }}</div>
+        <div class="kpi-sub">共 {{ returns.length }} 笔退货记录</div>
+      </div>
     </div>
 
     <el-tabs v-model="tab" class="seg">
@@ -383,6 +409,7 @@ const rfqs = ref([])
 const statements = ref([])
 const returns = ref([])
 const tab = ref('active')
+const keyword = ref('')
 
 const loader = useLoader(async () => {
   const [o, p, r, s, rt] = await Promise.all([
@@ -407,8 +434,15 @@ const pendingReceipts = computed(() => returns.value.filter(awaitingReceipt).len
 const SHIP_TAG = { OPEN: 'primary', RECEIVED: 'success', CLOSED: 'info', CANCELLED: 'info' }
 const isOpen = (o) => o.status === 'OPEN' || o.status === 'PARTIAL'
 const active = computed(() => orders.value.filter(isOpen))
+const unconfirmedCount = computed(() => active.value.filter((o) => !o.confirmedAt).length)
 const finished = computed(() => orders.value.filter((o) => !isOpen(o)))
-const shown = computed(() => (tab.value === 'active' ? active.value : finished.value))
+const shown = computed(() => {
+  const base = tab.value === 'active' ? active.value : finished.value
+  const q = keyword.value.trim().toLowerCase()
+  if (!q) return base
+  return base.filter((o) => (o.poNo || '').toLowerCase().includes(q)
+    || (o.lines || []).some((l) => (l.itemName || '').toLowerCase().includes(q) || (l.itemCode || '').toLowerCase().includes(q)))
+})
 const leftOf = (l) => Math.max(0, Number(l.remaining) - Number(l.notifiedQty))
 const canNotify = (o) => o.lines.some((l) => leftOf(l) > 0)
 const licenseSoon = computed(() => profile.value?.licenseDaysLeft !== null && profile.value?.licenseDaysLeft !== undefined && profile.value.licenseDaysLeft <= 30)
@@ -642,7 +676,16 @@ async function submitReceiptDispute() {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: border-color 0.15s; }
+.kpi-card:hover { border-color: var(--el-color-primary-light-5); }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .cards { display: grid; gap: 16px; }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .order { padding: 18px 20px; display: grid; gap: 14px; }
 .oh { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
 .oh h3 { margin: 0 0 4px; font-size: 18px; letter-spacing: -0.01em; }

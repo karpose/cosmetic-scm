@@ -8,6 +8,29 @@
       <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
     </div>
 
+    <div class="kpi-grid">
+      <div class="kpi-card" @click="tab = 'order'">
+        <div class="kpi-label">可订商品 SKU</div>
+        <div class="kpi-val mono">{{ inStockSkuCount }} <span class="kpi-unit">/ {{ catalog.length }}</span></div>
+        <div class="kpi-sub">已按贵方效期标准过滤</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: submittedOrderCount > 0 }" @click="tab = 'orders'">
+        <div class="kpi-label">待审核订货单</div>
+        <div class="kpi-val mono">{{ submittedOrderCount }}</div>
+        <div class="kpi-sub">累计订货 {{ orders.length }} 单</div>
+      </div>
+      <div class="kpi-card" :class="{ warn: unpaidArCount > 0 }" @click="tab = 'ar'">
+        <div class="kpi-label">待结应收对账</div>
+        <div class="kpi-val mono">{{ unpaidArCount }} <span class="kpi-unit">单</span></div>
+        <div class="kpi-sub">待付合计 ¥{{ fmtMoney(unpaidArTotal) }}</div>
+      </div>
+      <div class="kpi-card" :class="{ danger: pendingRecalls.length > 0 }" @click="tab = 'recalls'">
+        <div class="kpi-label">待确认召回通知</div>
+        <div class="kpi-val mono">{{ pendingRecalls.length }}</div>
+        <div class="kpi-sub">累计收到 {{ recalls.length }} 条通知</div>
+      </div>
+    </div>
+
     <el-alert v-if="pendingRecalls.length" type="error" show-icon :closable="false"
               :title="`有 ${pendingRecalls.length} 条召回通知待确认：请立即停止销售相关批次，并确认收到。`">
       <el-button size="small" type="danger" plain style="margin-top:6px" @click="tab = 'recalls'">查看召回通知</el-button>
@@ -24,7 +47,13 @@
 
     <!-- 订货 -->
     <el-card v-else-if="tab === 'order'" shadow="never" body-style="padding:0 0 8px">
-      <el-table :data="catalog" v-loading="loader.loading.value" empty-text="暂时没有可订商品">
+      <template #header>
+        <div class="filters">
+          <el-input v-model="catalogKeyword" placeholder="搜索商品名称、编码、备案号" clearable />
+          <el-checkbox v-model="inStockOnly">只看有货</el-checkbox>
+        </div>
+      </template>
+      <el-table :data="filteredCatalog" v-loading="loader.loading.value" empty-text="暂时没有可订商品">
         <el-table-column label="商品" :min-width="narrow ? 150 : 200">
           <template #default="{ row }">
             {{ row.name }}<div class="muted small mono">{{ row.code }}</div>
@@ -149,8 +178,22 @@ const loader = useLoader(async () => {
 })
 const load = () => loader.run()
 
+const catalogKeyword = ref('')
+const inStockOnly = ref(false)
+const inStockSkuCount = computed(() => catalog.value.filter((c) => Number(c.available) > 0).length)
+const submittedOrderCount = computed(() => orders.value.filter((o) => o.status === 'SUBMITTED').length)
 const pendingRecalls = computed(() => recalls.value.filter((r) => !r.notifiedAt))
-const unpaidArCount = computed(() => arStatements.value.filter((a) => a.status !== 'PAID' && a.status !== 'CANCELLED').length)
+const unpaidArList = computed(() => arStatements.value.filter((a) => a.status !== 'PAID' && a.status !== 'CANCELLED'))
+const unpaidArCount = computed(() => unpaidArList.value.length)
+const unpaidArTotal = computed(() => unpaidArList.value.reduce((a, r) => a + Number(r.unreceived || 0), 0))
+const filteredCatalog = computed(() => {
+  const q = catalogKeyword.value.trim().toLowerCase()
+  return catalog.value.filter((c) => {
+    if (inStockOnly.value && !(Number(c.available) > 0)) return false
+    if (!q) return true
+    return (c.name || '').toLowerCase().includes(q) || (c.code || '').toLowerCase().includes(q) || (c.filingNo || '').toLowerCase().includes(q)
+  })
+})
 const cartLines = computed(() => Object.entries(cart).filter(([, q]) => q > 0).map(([itemId, qty]) => ({ itemId: Number(itemId), qty })))
 const cartTotal = computed(() => cartLines.value.reduce((a, l) => a + l.qty, 0))
 
@@ -194,7 +237,17 @@ onMounted(load)
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: border-color 0.15s; }
+.kpi-card:hover { border-color: var(--el-color-primary-light-5); }
+.kpi-card.danger { border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .cart { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; padding: 12px 16px 4px; }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .recalls { display: grid; gap: 12px; }
 .recall { padding: 14px 18px; display: grid; gap: 6px; }
 .recall.pending { border-color: color-mix(in srgb, var(--el-color-danger) 45%, transparent); }

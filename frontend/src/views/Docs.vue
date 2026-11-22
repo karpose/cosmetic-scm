@@ -12,15 +12,28 @@
       </div>
     </div>
 
-    <el-card v-if="docSum" shadow="never" body-style="padding:10px 16px" style="margin-bottom:12px">
-      <div class="toolbar small">
-        <span>在用 <b class="mono">{{ docSum.activeDocs }}</b> 份</span>
-        <span>待签批 <b class="mono">{{ docSum.pendingApprovalCount }}</b></span>
-        <span>复审到期/超期 <b class="mono" :class="{ late: docSum.reviewOverdueCount > 0 }">{{ docSum.reviewDueCount }} / {{ docSum.reviewOverdueCount }}</b></span>
-        <span>待确认人次 <b class="mono" :class="{ late: docSum.ackOverdueDocs > 0 }">{{ docSum.ackPendingPeopleTotal }}</b></span>
-        <span>纸质副本在用/待收回 <b class="mono" :class="{ late: docSum.copiesRetrieveOverdueDocs > 0 }">{{ docSum.copiesOutTotal }} / {{ docSum.copiesToRetrieveTotal }}</b></span>
+    <div v-if="docSum" class="kpi-grid">
+      <div class="kpi-card" :class="{ warn: docSum.pendingApprovalCount > 0 }">
+        <div class="kpi-label">在用受控文件</div>
+        <div class="kpi-val mono">{{ docSum.activeDocs }} <span class="kpi-unit">份</span></div>
+        <div class="kpi-sub">待 QSO 签批 {{ docSum.pendingApprovalCount }} 版</div>
       </div>
-    </el-card>
+      <div class="kpi-card" :class="{ danger: docSum.reviewOverdueCount > 0, warn: docSum.reviewOverdueCount === 0 && docSum.reviewDueCount > 0 }">
+        <div class="kpi-label">复审将到期 / 已超期</div>
+        <div class="kpi-val mono">{{ docSum.reviewDueCount }} <span class="kpi-unit">/ {{ docSum.reviewOverdueCount }}</span></div>
+        <div class="kpi-sub">按文件复审周期自动提醒</div>
+      </div>
+      <div class="kpi-card" :class="{ danger: docSum.ackOverdueDocs > 0, warn: docSum.ackOverdueDocs === 0 && docSum.ackPendingPeopleTotal > 0 }">
+        <div class="kpi-label">待已读确认人次</div>
+        <div class="kpi-val mono">{{ docSum.ackPendingPeopleTotal }}</div>
+        <div class="kpi-sub">超期未确认文件 {{ docSum.ackOverdueDocs }} 份</div>
+      </div>
+      <div class="kpi-card" :class="{ danger: docSum.copiesRetrieveOverdueDocs > 0, warn: docSum.copiesRetrieveOverdueDocs === 0 && docSum.copiesToRetrieveTotal > 0 }">
+        <div class="kpi-label">纸质副本待收回</div>
+        <div class="kpi-val mono">{{ docSum.copiesToRetrieveTotal }} <span class="kpi-unit">/ {{ docSum.copiesOutTotal }} 在用</span></div>
+        <div class="kpi-sub">超期未收回文件 {{ docSum.copiesRetrieveOverdueDocs }} 份</div>
+      </div>
+    </div>
 
     <el-card v-if="mine.length" shadow="never" class="mine">
       <template #header><b>待我确认（{{ mine.length }}）</b> <span class="muted small">请阅读后在文件详情里确认</span></template>
@@ -34,6 +47,9 @@
       <template #header>
         <div class="filters">
           <el-input v-model="pg.keyword.value" placeholder="搜索编号、名称、部门" clearable />
+          <el-select aria-label="按类别筛选" v-model="categoryFilter" placeholder="全部类别" clearable style="width:150px">
+            <el-option v-for="(v, k) in CATEGORY" :key="k" :value="k" :label="v" />
+          </el-select>
           <el-checkbox v-model="activeOnly">只看在用</el-checkbox>
         </div>
       </template>
@@ -219,6 +235,7 @@ const isQso = computed(() => auth.hasAny('QSO'))
 const docs = ref([])
 const docSum = ref(null)
 const activeOnly = ref(true)
+const categoryFilter = ref('')
 const loader = useLoader(async () => {
   const [d, m, s] = await Promise.all([http.get('/docs'), http.get('/docs/my-pending'), http.get('/docs/summary')])
   docs.value = d
@@ -226,7 +243,11 @@ const loader = useLoader(async () => {
   docSum.value = s
 })
 const load = () => loader.run()
-const shown = computed(() => activeOnly.value ? docs.value.filter((x) => x.status === 'ACTIVE') : docs.value)
+const shown = computed(() => docs.value.filter((x) => {
+  if (activeOnly.value && x.status !== 'ACTIVE') return false
+  if (categoryFilter.value && x.category !== categoryFilter.value) return false
+  return true
+}))
 const pg = usePaged(shown, { match: textMatch('docCode', 'title', 'ownerDept') })
 const startOfToday = startOfBusinessDay()
 const narrow = ref(window.innerWidth <= 768)
@@ -378,7 +399,16 @@ async function submitRevise() {
 </script>
 
 <style scoped>
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; }
+.kpi-card.danger { border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
+.kpi-card.warn { border-color: var(--el-color-warning-light-5); background: var(--el-color-warning-light-9); }
+.kpi-label { font-size: 12px; color: var(--el-text-color-secondary); }
+.kpi-val { font-size: 22px; font-weight: 700; margin: 4px 0 2px; line-height: 1.2; }
+.kpi-unit { font-size: 12px; font-weight: 400; color: var(--el-text-color-secondary); }
+.kpi-sub { font-size: 12px; color: var(--el-text-color-secondary); }
 .late { color: var(--el-color-danger); }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .warn { color: var(--el-color-warning); }
 .summary-line { margin: 0 0 6px; line-height: 1.8; }
 .mine { margin-bottom: 14px; }
