@@ -148,6 +148,7 @@ public class ReportService {
         m.put("compliance-status", this::complianceStatusReport);
         m.put("regulatory-violations", this::regulatoryViolationsReport);
         m.put("stability-coverage", this::stabilityCoverageReport);
+        m.put("stability-risk", this::stabilityRiskReport);
         m.put("release-decisions", this::releaseDecisionsReport);
         m.put("ncr-disposition", this::ncrDispositionReport);
         m.put("dealer-orders", this::dealerOrdersReport);
@@ -709,6 +710,15 @@ public class ReportService {
                 p.fgCode(), p.fgName(), p.versionNo() == null ? null : "V" + p.versionNo(),
                 p.shelfMonths(), p.supportedMonths(), p.state())));
         return new Table("成品保质期稳定性依据覆盖表", List.of("成品编码", "成品名称", "生效配方", "标的保质期(月)", "已签批支持(月)", "覆盖状态"), rows);
+    }
+
+    private Table stabilityRiskReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        stability.riskBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.itemTypeLabel(), r.refNo(), r.fgCode(), r.fgName(),
+                r.dueDate(), r.daysLeft(), r.detail(), r.recommendedAction())));
+        return new Table("稳定性试验取样与覆盖风险预警", List.of("风险分级", "预警类型", "试验/成品编号", "成品编码", "成品名称",
+                "计划取样日", "剩余天数", "具体情况", "合规处置建议"), rows);
     }
 
     private Table releaseDecisionsReport() {

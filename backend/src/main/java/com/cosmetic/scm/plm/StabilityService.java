@@ -150,6 +150,17 @@ public class StabilityService {
     public record DuePull(Long studyId, String studyNo, String fgName, String fgCode, String label, LocalDate dueDate) {
     }
 
+    public record StabilityRiskItem(String itemType, String itemTypeLabel, Long studyId, String refNo,
+                                    Long fgItemId, String fgCode, String fgName, String detail,
+                                    LocalDate dueDate, Long daysLeft, String riskLevel, String riskLabel,
+                                    String recommendedAction) {
+    }
+
+    public record StabilityRiskBoard(int totalCount, int overduePullCount, int dueSoonPullCount,
+                                     int coverageGapCount, int pendingCloseCount,
+                                     List<StabilityRiskItem> rows) {
+    }
+
     /** 导出的一行：一个时间点的一个检测项目；没检测的时间点（待取样、未取样）一行。 */
     public record ExportRow(String studyNo, String fgCode, String fgName, Integer versionNo, String sample, String studyType, String condition, LocalDate startDate,
                             String status, Integer supportedMonths, String pullLabel, LocalDate dueDate, String pullStatus, LocalDate doneDate, String testedBy,
@@ -266,6 +277,91 @@ public class StabilityService {
     @Transactional(readOnly = true)
     public List<StudyRow> waitingSignature() {
         return rows(studies.findByStatusOrderById(StabilityStudyStatus.REVIEW));
+    }
+
+    /** 稳定性试验取样倒计时、保质期覆盖缺口与待结案签批监控看板（V71）。 */
+    @Transactional(readOnly = true)
+    public StabilityRiskBoard riskBoard() {
+        LocalDate today = time.today();
+        List<StabilityRiskItem> items = new ArrayList<>();
+        int overduePulls = 0;
+        int dueSoonPulls = 0;
+        int coverageGaps = 0;
+        int pendingClose = 0;
+
+        for (DuePull p : due(today.plusDays(WINDOW_DAYS))) {
+            long daysLeft = java.time.temporal.ChronoUnit.DAYS.between(today, p.dueDate());
+            boolean overdue = daysLeft < 0;
+            if (overdue) {
+                overduePulls++;
+            } else {
+                dueSoonPulls++;
+            }
+            items.add(new StabilityRiskItem(
+                    "PULL_DUE", "计划取样", p.studyId(), p.studyNo(), null, p.fgCode(), p.fgName(),
+                    "时间点：" + p.label() + "（计划 " + p.dueDate() + "）", p.dueDate(), daysLeft,
+                    overdue ? "OVERDUE" : "DUE_SOON",
+                    overdue ? "取样已超期" : (daysLeft == 0 ? "今日须取样" : "7天内取样"),
+                    overdue ? "取样点已超期 " + (-daysLeft) + " 天，请尽快补测并写明超期原因或登记未取样"
+                            : "距计划取样日仅 " + daysLeft + " 天，请提前安排样品检测排期"));
+        }
+
+        for (ProductCoverage c : coverage()) {
+            if ("OK".equals(c.state()) || "RUNNING".equals(c.state())) {
+                continue;
+            }
+            coverageGaps++;
+            String riskLabel;
+            String detail;
+            String action;
+            if ("SHORT".equals(c.state())) {
+                riskLabel = "依据不足";
+                detail = "标的 " + c.shelfMonths() + " 个月，已签批仅支持 " + c.supportedMonths() + " 个月";
+                action = "已签批稳定性结论短于标的保质期，请延长或补做稳定性试验";
+            } else if ("STALE".equals(c.state())) {
+                riskLabel = "配方变更失效";
+                detail = "现行配方 V" + c.versionNo() + " 仅存旧版稳定性依据";
+                action = "配方已升级，原稳定性依据不再适用，请按现行配方重开试验";
+            } else {
+                riskLabel = "无稳定性依据";
+                detail = "现行配方 V" + c.versionNo() + " 尚未登记稳定性试验";
+                action = "尚无稳定性试验依据，请尽快登记加速/长期稳定性试验";
+            }
+            items.add(new StabilityRiskItem(
+                    "COVERAGE_GAP", "保质期依据缺口", null, c.fgCode(), c.fgItemId(), c.fgCode(), c.fgName(),
+                    detail, null, null, "COVERAGE_GAP", riskLabel, action));
+        }
+
+        for (StudyRow s : waitingConclusion()) {
+            pendingClose++;
+            items.add(new StabilityRiskItem(
+                    "CONCLUDE_PENDING", "待写结论", s.id(), s.studyNo(), s.fgItemId(), s.fgCode(), s.fgName(),
+                    "全部 " + s.pullsTotal() + " 个时间点已完成（" + s.condition() + "）", null, null,
+                    "PENDING_CLOSE", "待写结论", "试验时间点已全部完成，请尽快汇总结果并提交保质期结论"));
+        }
+
+        for (StudyRow s : waitingSignature()) {
+            pendingClose++;
+            items.add(new StabilityRiskItem(
+                    "SIGN_PENDING", "待 QSO 签批", s.id(), s.studyNo(), s.fgItemId(), s.fgCode(), s.fgName(),
+                    "申报支持保质期 " + s.supportedMonths() + " 个月（提交人 " + s.submittedBy() + "）", null, null,
+                    "PENDING_CLOSE", "待 QSO 签批", "稳定性结论已提交，请质量安全负责人复核并完成电子签批"));
+        }
+
+        items.sort(Comparator.comparingInt((StabilityRiskItem x) -> riskRank(x.riskLevel()))
+                .thenComparing(StabilityRiskItem::daysLeft, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(StabilityRiskItem::fgCode));
+
+        return new StabilityRiskBoard(items.size(), overduePulls, dueSoonPulls, coverageGaps, pendingClose, items);
+    }
+
+    private static int riskRank(String level) {
+        return switch (level) {
+            case "OVERDUE" -> 0;
+            case "DUE_SOON" -> 1;
+            case "COVERAGE_GAP" -> 2;
+            default -> 3;
+        };
     }
 
     @Transactional
