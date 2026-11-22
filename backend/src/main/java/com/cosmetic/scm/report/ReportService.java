@@ -105,6 +105,7 @@ public class ReportService {
         m.put("deviations", this::deviations);
         m.put("capas", this::capas);
         m.put("supplier-audits", this::supplierAudits);
+        m.put("partner-compliance", this::partnerComplianceReport);
         m.put("retains", this::retainSamples);
         m.put("equipment", this::equipmentList);
         m.put("audit", () -> auditLogs(from, to, q, action));
@@ -497,6 +498,20 @@ public class ReportService {
         audits.listAll().forEach(a -> rows.add(row(a.auditNo(), a.partnerName(), a.auditDate(), a.auditTypeLabel(), a.score(), a.resultLabel(), a.findings(),
                 a.auditor(), a.nextAuditDate(), a.signedBy())));
         return new Table("供应商审核", List.of("编号", "单位", "审核日期", "类型", "得分", "结论", "发现的问题", "审核员", "下次审核", "签批人"), rows);
+    }
+
+    private Table partnerComplianceReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        audits.partnerRows().forEach(p -> rows.add(row(
+                p.complianceRiskLabel(), p.code(), p.name(), p.kindLabel(), p.qualified() ? "在名录" : "已移出",
+                p.critical() ? "是" : "否", p.licenseNo(), p.licenseExpiry(),
+                "EXPIRED".equals(p.licenseState()) ? "已过期" : "EXPIRING".equals(p.licenseState()) ? "60天内到期" : "OK".equals(p.licenseState()) ? "有效" : "未登记",
+                p.licenseDaysLeft(), p.lastAuditDate(), p.lastResultLabel(), p.nextAuditDate(),
+                "OVERDUE".equals(p.dueState()) ? "已超期" : "DUE".equals(p.dueState()) ? "30天内到期" : "NONE".equals(p.dueState()) ? "未审核" : "正常",
+                p.dueDaysLeft(), p.rejected(), p.received(), p.grade(), p.score())));
+        return new Table("往来单位资质与审核合规预警", List.of("合规风险", "编码", "单位名称", "类别", "合格名录",
+                "关键供应商", "资质证照号", "证照有效期", "证照状态", "证照剩余天数", "最近审核", "最近结论",
+                "下次审核", "审核状态", "审核剩余天数", "近12月拒收批", "近12月来料批", "综合等级", "综合得分"), rows);
     }
 
     private Table inspectionResults(LocalDate from, LocalDate to) {

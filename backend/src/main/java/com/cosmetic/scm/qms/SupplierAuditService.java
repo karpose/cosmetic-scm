@@ -73,11 +73,13 @@ public class SupplierAuditService {
                             String signedBy, LocalDateTime signedAt) {
     }
 
-    /** dueState: NONE（没审核过）/ OK / DUE（快到期）/ OVERDUE；rejected / received：近 12 个月来料批次中拒收数 / 总数。 */
+    /** dueState: NONE（没审核过）/ OK / DUE（快到期）/ OVERDUE；licenseState: EXPIRED/EXPIRING/OK/NONE；complianceRisk: HIGH/MEDIUM/OK。 */
     public record PartnerRow(Long partnerId, String code, String name, String kindLabel, boolean qualified, boolean critical,
                              LocalDate lastAuditDate, String lastResultLabel, LocalDate nextAuditDate, String dueState,
                              Long dueDaysLeft, long received, long rejected, long dueTotal, long onTime,
-                             Integer score, String grade) {
+                             Integer score, String grade,
+                             String licenseNo, LocalDate licenseExpiry, String licenseState, Long licenseDaysLeft,
+                             String complianceRisk, String complianceRiskLabel) {
     }
 
     @Transactional(readOnly = true)
@@ -100,7 +102,7 @@ public class SupplierAuditService {
                 out.add(toRow(p, st));
             }
         }
-        out.sort(Comparator.comparing(PartnerRow::code));
+        out.sort(Comparator.comparingInt((PartnerRow r) -> riskOrder(r.complianceRisk())).thenComparing(PartnerRow::code));
         return out;
     }
 
@@ -141,9 +143,34 @@ public class SupplierAuditService {
         long onTime = d == null ? 0 : ((Number) d[2]).longValue();
         SupplierScore.Result score = SupplierScore.of(received, rejected, dueTotal, onTime,
                 last == null ? null : SupplierScore.AuditLevel.valueOf(last.getResult().name()));
+        LocalDate licExp = p.getLicenseExpiry();
+        Long licDays = licExp == null ? null : ChronoUnit.DAYS.between(st.today(), licExp);
+        String licState = licExp == null ? "NONE" : licDays < 0 ? "EXPIRED" : licDays <= 60 ? "EXPIRING" : "OK";
+        String risk;
+        String riskLabel;
+        if (!p.isQualified() || "EXPIRED".equals(licState) || "OVERDUE".equals(state)) {
+            risk = "HIGH";
+            riskLabel = "高风险";
+        } else if ("EXPIRING".equals(licState) || "DUE".equals(state)
+                || ("NONE".equals(state) && (p.isCriticalSupplier() || p.getKind() == PartnerKind.OEM))) {
+            risk = "MEDIUM";
+            riskLabel = "需关注";
+        } else {
+            risk = "OK";
+            riskLabel = "合规";
+        }
         return new PartnerRow(p.getId(), p.getCode(), p.getName(), p.getKind().getLabel(), p.isQualified(), p.isCriticalSupplier(),
                 last == null ? null : last.getAuditDate(), last == null ? null : last.getResult().getLabel(), next, state, days,
-                received, rejected, dueTotal, onTime, score == null ? null : score.score(), score == null ? null : score.grade());
+                received, rejected, dueTotal, onTime, score == null ? null : score.score(), score == null ? null : score.grade(),
+                p.getLicenseNo(), licExp, licState, licDays, risk, riskLabel);
+    }
+
+    private static int riskOrder(String risk) {
+        return switch (risk) {
+            case "HIGH" -> 0;
+            case "MEDIUM" -> 1;
+            default -> 2;
+        };
     }
 
     @Transactional
