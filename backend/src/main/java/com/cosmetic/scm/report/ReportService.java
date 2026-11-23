@@ -58,6 +58,7 @@ public class ReportService {
     private final com.cosmetic.scm.salesreturn.ReturnService salesReturns;
     private final com.cosmetic.scm.plm.ChangeService changeControl;
     private final com.cosmetic.scm.plm.ArtworkService artworks;
+    private final com.cosmetic.scm.plm.ArtworkProofService artworkProofs;
     private final com.cosmetic.scm.plm.ComplianceService compliance;
     private final com.cosmetic.scm.master.RegulatoryService regulatory;
     private final com.cosmetic.scm.quality.QualityService quality;
@@ -147,6 +148,7 @@ public class ReportService {
         m.put("changes", this::changesReport);
         m.put("change-closure", this::changeClosureReport);
         m.put("artworks", this::artworksReport);
+        m.put("artwork-compliance", this::artworkComplianceReport);
         m.put("compliance-status", this::complianceStatusReport);
         m.put("regulatory-violations", this::regulatoryViolationsReport);
         m.put("stability-coverage", this::stabilityCoverageReport);
@@ -707,6 +709,16 @@ public class ReportService {
                 a.createdBy(), a.createdAt(), a.approvedBy(), a.approvedAt())));
         return new Table("标签设计稿台账", List.of("设计稿编号", "版本", "包材编码", "包材名称", "成品编码", "成品名称",
                 "对应配方", "状态", "配方变更失效", "关联变更", "变更说明", "提交人", "提交时间", "批准人", "批准时间"), rows);
+    }
+
+    private Table artworkComplianceReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        artworkProofs.complianceBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.itemTypeLabel(), r.refNo(), r.pkCode(), r.pkName(),
+                r.fgCode(), r.fgName(), r.versionNo() == null ? null : "第" + r.versionNo() + "版",
+                r.supplierName(), r.agingDays(), r.recommendedAction())));
+        return new Table("标签设计稿与包材打样合规闭环监控", List.of("风险分级", "合规事项", "编号", "包材编码", "包材名称",
+                "成品编码", "成品名称", "设计稿版本", "印刷供应商", "滞留天数", "合规处置建议"), rows);
     }
 
     private Table complianceStatusReport() {
