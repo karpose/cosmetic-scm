@@ -4,6 +4,7 @@ import java.util.List;
 
 import lombok.RequiredArgsConstructor;
 
+import com.cosmetic.scm.integration.IntegrationService.IntegrationExceptionBoard;
 import com.cosmetic.scm.integration.IntegrationService.IntegrationHealth;
 import com.cosmetic.scm.integration.IntegrationService.LogView;
 import com.cosmetic.scm.integration.IntegrationService.OrderView;
@@ -38,6 +39,11 @@ public class ChannelOrderController {
     @GetMapping("/health")
     public IntegrationHealth health(@RequestParam(defaultValue = "30") int days) {
         return integration.health(days);
+    }
+
+    @GetMapping("/exception-board")
+    public IntegrationExceptionBoard exceptionBoard() {
+        return integration.exceptionBoard();
     }
 
     @PostMapping("/{id}/retry")

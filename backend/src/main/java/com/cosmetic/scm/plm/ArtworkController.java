@@ -44,6 +44,11 @@ public class ArtworkController {
         return new ArtworkSummary(all.size(), approved, pending, stale, rejected, superseded, pendingProofs);
     }
 
+    @GetMapping("/compliance-board")
+    public ArtworkProofService.ArtworkComplianceBoard complianceBoard() {
+        return proofs.complianceBoard();
+    }
+
     /** 包材现行的设计稿，没有时返回 204。放行包材时核对用。 */
     @GetMapping("/current/{pkItemId}")
     public org.springframework.http.ResponseEntity<ArtworkService.ArtworkView> current(@PathVariable Long pkItemId) {

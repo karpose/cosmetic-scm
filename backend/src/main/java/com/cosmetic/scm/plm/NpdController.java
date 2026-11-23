@@ -49,6 +49,11 @@ public class NpdController {
         return insights.npdReadiness();
     }
 
+    @GetMapping("/risk-board")
+    public PlmInsightsService.NpdRiskBoard riskBoard() {
+        return insights.npdRiskBoard();
+    }
+
     @GetMapping("/projects/{id}")
     public Detail detail(@PathVariable Long id) {
         return npd.detail(id);

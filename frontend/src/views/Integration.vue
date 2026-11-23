@@ -36,6 +36,7 @@
 
     <el-tabs v-model="tab" class="seg">
       <el-tab-pane :label="`电商订单${failedCount ? `（${failedCount} 失败）` : ''}`" name="orders" />
+      <el-tab-pane :label="`异常重试监控${exceptionBoard?.totalExceptions ? `（${exceptionBoard.totalExceptions}）` : ''}`" name="exceptions" />
       <el-tab-pane label="健康度与失败复盘" name="health" />
       <el-tab-pane label="对接日志" name="logs" />
       <el-tab-pane label="接入说明" name="docs" />
@@ -80,6 +81,86 @@
       </el-table>
       <ListPager v-model:page="t.page.value" v-model:size="t.size.value" :total="t.total.value" />
     </el-card>
+
+    <div v-else-if="tab === 'exceptions' && exceptionBoard" class="exc-wrap">
+      <div class="kpi-grid">
+        <div class="kpi-card" :class="{ warn: exceptionBoard.totalExceptions > 0 }">
+          <div class="muted small">异常待闭环订单</div>
+          <div class="kpi-val mono">{{ exceptionBoard.totalExceptions }}</div>
+        </div>
+        <div class="kpi-card" :class="{ warn: exceptionBoard.criticalCount > 0 }">
+          <div class="muted small">严重滞留（≥24h / 重试≥3次）</div>
+          <div class="kpi-val mono">{{ exceptionBoard.criticalCount }}</div>
+        </div>
+        <div class="kpi-card" :class="{ warn: exceptionBoard.skuUnmappedCount > 0 }">
+          <div class="muted small">SKU 未匹配 / 库存效期不足</div>
+          <div class="kpi-val mono">{{ exceptionBoard.skuUnmappedCount }} / {{ exceptionBoard.stockShortageCount }}</div>
+        </div>
+        <div class="kpi-card" :class="{ warn: exceptionBoard.recent7dFailureRatePct != null && exceptionBoard.recent7dFailureRatePct >= 5 }">
+          <div class="muted small">近 7 日接口失败率</div>
+          <div class="kpi-val mono">{{ exceptionBoard.recent7dFailureRatePct != null ? `${exceptionBoard.recent7dFailureRatePct}%` : '—' }} <span class="muted small">（{{ exceptionBoard.recent7dFailedCalls }} 次）</span></div>
+        </div>
+      </div>
+
+      <el-card shadow="never" body-style="padding:0 0 8px">
+        <template #header>
+          <div class="filters">
+            <el-radio-group v-model="excRisk" size="small">
+              <el-radio-button value="">全部风险</el-radio-button>
+              <el-radio-button value="CRITICAL">严重滞留</el-radio-button>
+              <el-radio-button value="HIGH">高风险</el-radio-button>
+              <el-radio-button value="MEDIUM">待重试</el-radio-button>
+            </el-radio-group>
+            <el-select v-model="excCause" size="small" clearable placeholder="按异常归类筛选" style="width: 150px">
+              <el-option label="SKU 未匹配" value="SKU_UNMAPPED" />
+              <el-option label="库存/效期不足" value="STOCK_SHORTAGE" />
+              <el-option label="客户信用额度不足" value="CREDIT_LIMIT" />
+              <el-option label="待出库滞留" value="STUCK_RECEIVED" />
+              <el-option label="其它出库异常" value="OTHER_ERROR" />
+            </el-select>
+            <el-input v-model="excKeyword" placeholder="搜索平台、订单号、客户、SKU" clearable style="max-width: 240px" />
+            <ExportButton report="integration-exceptions" label="导出异常监控" />
+          </div>
+        </template>
+        <el-table :data="filteredExceptions" scrollbar-tabindex="0" v-loading="loader.loading.value" empty-text="当前无待处理电商异常订单">
+          <el-table-column label="风险分级" width="100">
+            <template #default="{ row }">
+              <el-tag :type="row.riskLevel === 'CRITICAL' ? 'danger' : row.riskLevel === 'HIGH' ? 'warning' : 'info'" size="small" disable-transitions>{{ row.riskLabel }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="异常归类" width="120">
+            <template #default="{ row }"><el-tag type="info" effect="plain" size="small" disable-transitions>{{ row.causeLabel }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="平台 / 订单号" min-width="170">
+            <template #default="{ row }"><el-tag size="small" disable-transitions>{{ row.platform }}</el-tag> <span class="mono">{{ row.platformOrderNo }}</span></template>
+          </el-table-column>
+          <el-table-column label="客户 / 发货仓" min-width="140">
+            <template #default="{ row }">{{ row.customerName }}<div class="muted small">{{ row.warehouseName }}</div></template>
+          </el-table-column>
+          <el-table-column label="商品明细" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }"><span class="mono small">{{ row.skuSummary || '—' }}</span></template>
+          </el-table-column>
+          <el-table-column label="滞留 / 尝试" width="115" align="right">
+            <template #default="{ row }">
+              <div class="mono" :class="{ err: row.agingHours >= 24 }">{{ row.agingHours }} 小时</div>
+              <div class="muted small">已试 {{ row.attempts }} 次</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="失败原因" min-width="190" show-overflow-tooltip>
+            <template #default="{ row }"><span class="small err">{{ row.error || '—' }}</span></template>
+          </el-table-column>
+          <el-table-column prop="recommendedAction" label="闭环处置建议" min-width="220" show-overflow-tooltip />
+          <el-table-column label="" width="150" fixed="right">
+            <template #default="{ row }">
+              <template v-if="canOperate">
+                <el-button v-if="row.status === 'FAILED'" size="small" type="primary" plain :loading="busy === row.orderId" @click="retry({ id: row.orderId, platformOrderNo: row.platformOrderNo })">重试出库</el-button>
+                <el-button size="small" @click="cancel({ id: row.orderId, platformOrderNo: row.platformOrderNo })">取消</el-button>
+              </template>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+    </div>
 
     <div v-else-if="tab === 'health' && health" class="health-grid">
       <el-card shadow="never" body-style="padding:0">
@@ -185,8 +266,12 @@ const tab = ref('orders')
 const orders = ref([])
 const logs = ref([])
 const health = ref(null)
+const exceptionBoard = ref(null)
 const healthDays = ref(30)
 const state = ref('')
+const excRisk = ref('')
+const excCause = ref('')
+const excKeyword = ref('')
 const logScope = ref('')
 const busy = ref(null)
 const canOperate = computed(() => auth.hasAny('ADMIN', 'SALES'))
@@ -196,17 +281,29 @@ const filteredLogs = computed(() => logs.value.filter((l) => {
   if (logScope.value === 'ECOM') return l.platform !== 'FINANCE'
   return true
 }))
+const filteredExceptions = computed(() => {
+  const rows = exceptionBoard.value?.rows || []
+  const kw = excKeyword.value.trim().toLowerCase()
+  return rows.filter((r) => {
+    if (excRisk.value && r.riskLevel !== excRisk.value) return false
+    if (excCause.value && r.causeCode !== excCause.value) return false
+    if (kw && ![r.platform, r.platformOrderNo, r.customerName, r.skuSummary, r.error].some((v) => String(v || '').toLowerCase().includes(kw))) return false
+    return true
+  })
+})
 const base = `${location.origin}/api/integration`
 
 const loader = useLoader(async () => {
-  const [o, l, h] = await Promise.all([
+  const [o, l, h, e] = await Promise.all([
     http.get('/channel-orders'),
     http.get('/channel-orders/logs'),
-    http.get('/channel-orders/health', { params: { days: healthDays.value } })
+    http.get('/channel-orders/health', { params: { days: healthDays.value } }),
+    http.get('/channel-orders/exception-board')
   ])
   orders.value = o
   logs.value = l
   health.value = h
+  exceptionBoard.value = e
 })
 const load = () => loader.run()
 async function loadHealth() {
@@ -264,6 +361,7 @@ onMounted(load)
 .kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
 .kpi-card.warn { border-color: var(--el-color-danger-light-5); }
 .kpi-val { font-size: 20px; font-weight: 600; }
+.exc-wrap { display: grid; gap: 14px; }
 .health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; }
 .err { color: var(--el-color-danger); }
 .docs { display: grid; gap: 14px; }

@@ -62,6 +62,8 @@ public class RfqService {
 
     /** 比价的最少家数，不足时定标要写原因。 */
     public static final int MIN_QUOTES = 3;
+    public static final int DUE_SOON_DAYS = 3;
+    public static final int AWARD_OVERDUE_DAYS = 3;
 
     private final RfqRepository rfqs;
     private final RfqLineRepository lines;
@@ -178,6 +180,16 @@ public class RfqService {
             int cancelledCount, int multiRoundCount, int closingSoonCount) {
     }
 
+    public record RfqClosureRow(Long id, String rfqNo, String title, int roundNo, LocalDate deadline,
+                                long daysLeft, int lineCount, int invitedCount, int quotedCount,
+                                Double responseRatePct, boolean sealed, boolean canAward,
+                                String riskLevel, String riskLabel, String recommendedAction) {
+    }
+
+    public record RfqClosureBoard(int totalOpenCount, int overdueAwardCount, int waitingAwardCount,
+                                  int dueSoonCount, int lowResponseCount, List<RfqClosureRow> rows) {
+    }
+
     @Transactional(readOnly = true)
     public RfqSummary summary() {
         LocalDate today = time.today();
@@ -204,6 +216,90 @@ public class RfqService {
         }
         return new RfqSummary(all.size(), sealedCount, waitingAwardCount, awardedCount,
                 cancelledCount, multiRoundCount, closingSoonCount);
+    }
+
+    /** 询价比价截止倒计时与超期未定标监控看板（V75），仅限有价格权限的采购/财务/管理员访问。 */
+    @Transactional(readOnly = true)
+    public RfqClosureBoard closureBoard() {
+        LocalDate today = time.today();
+        List<RfqView> all = listAll();
+        List<RfqClosureRow> rows = new ArrayList<>();
+        int overdueAward = 0;
+        int waitingAward = 0;
+        int dueSoon = 0;
+        int lowResp = 0;
+
+        for (RfqView r : all) {
+            if (r.status() == RfqStatus.AWARDED || r.status() == RfqStatus.CANCELLED) {
+                continue;
+            }
+            long daysLeft = r.deadline() == null ? 0L
+                    : java.time.temporal.ChronoUnit.DAYS.between(today, r.deadline());
+            int invitedCnt = r.suppliers().size();
+            int quotedCnt = (int) r.suppliers().stream().filter(InvitedView::quoted).count();
+            Double respRate = invitedCnt > 0 ? Math.round(quotedCnt * 1000.0 / invitedCnt) / 10.0 : null;
+            int minExpected = Math.min(MIN_QUOTES, invitedCnt);
+
+            String riskLevel;
+            String riskLabel;
+            String action;
+            if (r.canAward()) {
+                waitingAward++;
+                if (daysLeft < -AWARD_OVERDUE_DAYS) {
+                    overdueAward++;
+                    riskLevel = "OVERDUE";
+                    riskLabel = "超期未定标(" + (-daysLeft) + "天)";
+                    action = "报价已截止 " + (-daysLeft) + " 天仍未定标（响应 " + quotedCnt + "/" + invitedCnt + " 家），请尽快完成比价签批或发起下一轮议价";
+                } else {
+                    riskLevel = "WAITING_AWARD";
+                    riskLabel = "待比价定标";
+                    action = "已具备开标比价条件（响应 " + quotedCnt + "/" + invitedCnt + " 家），请尽快比价定标生成采购单";
+                }
+            } else if (daysLeft <= DUE_SOON_DAYS) {
+                dueSoon++;
+                boolean lackQuotes = quotedCnt < minExpected;
+                if (lackQuotes) {
+                    lowResp++;
+                }
+                riskLevel = "DUE_SOON";
+                riskLabel = daysLeft == 0
+                        ? (lackQuotes ? "今日截止·响应不足" : "今日截止")
+                        : (lackQuotes ? "3天内截止·响应不足" : "3天内截止");
+                action = lackQuotes
+                        ? "距报价截止仅 " + daysLeft + " 天，当前仅 " + quotedCnt + "/" + invitedCnt + " 家报价，请立即催促未报价供应商"
+                        : "距报价截止仅 " + daysLeft + " 天（已报 " + quotedCnt + "/" + invitedCnt + " 家），可准备开标比价";
+            } else if (quotedCnt == 0 && invitedCnt > 0) {
+                lowResp++;
+                riskLevel = "LOW_RESPONSE";
+                riskLabel = "暂无报价";
+                action = "已邀请 " + invitedCnt + " 家供应商但尚无报价，请跟进供应商门户响应情况";
+            } else {
+                riskLevel = "OPEN";
+                riskLabel = "密封询价中";
+                action = "距报价截止还有 " + daysLeft + " 天，已报 " + quotedCnt + "/" + invitedCnt + " 家";
+            }
+
+            rows.add(new RfqClosureRow(
+                    r.id(), r.rfqNo(), r.title(), r.roundNo(), r.deadline(), daysLeft,
+                    r.lines().size(), invitedCnt, quotedCnt, respRate, r.sealed(), r.canAward(),
+                    riskLevel, riskLabel, action));
+        }
+
+        rows.sort(Comparator.comparingInt((RfqClosureRow x) -> closureRiskRank(x.riskLevel()))
+                .thenComparingLong(RfqClosureRow::daysLeft)
+                .thenComparing(RfqClosureRow::rfqNo));
+
+        return new RfqClosureBoard(rows.size(), overdueAward, waitingAward, dueSoon, lowResp, rows);
+    }
+
+    private static int closureRiskRank(String level) {
+        return switch (level) {
+            case "OVERDUE" -> 0;
+            case "WAITING_AWARD" -> 1;
+            case "DUE_SOON" -> 2;
+            case "LOW_RESPONSE" -> 3;
+            default -> 4;
+        };
     }
 
     @Transactional(readOnly = true)

@@ -36,6 +36,12 @@ public class RfqController {
         return rfqs.summary();
     }
 
+    @GetMapping("/closure-board")
+    @PreAuthorize("hasAnyRole('ADMIN','PURCHASE','FINANCE')")
+    public RfqService.RfqClosureBoard closureBoard() {
+        return rfqs.closureBoard();
+    }
+
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN','PURCHASE','FINANCE')")
     public List<RfqView> list() {

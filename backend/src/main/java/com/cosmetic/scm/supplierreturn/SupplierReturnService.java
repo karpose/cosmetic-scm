@@ -52,6 +52,10 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class SupplierReturnService {
 
+    public static final int SIGN_SLA_DAYS = 3;
+    public static final int SHIP_SLA_DAYS = 3;
+    public static final int RECEIPT_SLA_DAYS = 7;
+
     private final SupplierReturnRepository returns;
     private final BatchRepository batches;
     private final StockRepository stocks;
@@ -117,6 +121,19 @@ public class SupplierReturnService {
                                         List<SupplierRank> bySupplier) {
     }
 
+    public record ReturnClosureRow(Long id, String returnNo, Long supplierId, String supplierName,
+                                   String batchNo, String extBatchNo, String itemName,
+                                   BigDecimal qty, String unit, String warehouseName,
+                                   String carrier, String trackingNo, String stage, String stageLabel,
+                                   long agingDays, boolean overdue, boolean offlineReceiptPending,
+                                   String riskLevel, String riskLabel, String recommendedAction) {
+    }
+
+    public record ReturnClosureBoard(int totalOpenCount, int overdueCount, int pendingSignCount,
+                                     int pendingShipCount, int awaitingReceiptCount,
+                                     int offlineReceiptPendingCount, List<ReturnClosureRow> rows) {
+    }
+
     @Transactional(readOnly = true)
     public List<ReturnView> listAll() {
         return views(returns.findAllByOrderByIdDesc());
@@ -142,6 +159,83 @@ public class SupplierReturnService {
                 .toList();
         return new SupplierReturnSummary(all.size(), pendingSign, pendingShip, awaitingReceipt, offlinePending,
                 completed, cancelled, ranks);
+    }
+
+    /** 退供单执行与供应商签收闭环监控看板（V73）：按待签批/待发运/待签收及滞留超期分级排序。 */
+    @Transactional(readOnly = true)
+    public ReturnClosureBoard closureBoard() {
+        LocalDate today = time.today();
+        List<ReturnView> all = listAll();
+        List<ReturnClosureRow> rows = new ArrayList<>();
+        int overdueCnt = 0;
+        int pendingSignCnt = 0;
+        int pendingShipCnt = 0;
+        int awaitingReceiptCnt = 0;
+        int offlinePendingCnt = 0;
+
+        for (ReturnView r : all) {
+            if (r.status() == SupplierReturnStatus.CANCELLED
+                    || (r.status() == SupplierReturnStatus.DONE && r.supplierConfirmedAt() != null)) {
+                continue;
+            }
+            String stage;
+            String stageLabel;
+            LocalDate baseDate;
+            int slaDays;
+            String action;
+            if (r.status() == SupplierReturnStatus.PENDING) {
+                stage = "PENDING_SIGN";
+                stageLabel = "待质量签批";
+                baseDate = r.createdAt() == null ? today : r.createdAt().toLocalDate();
+                slaDays = SIGN_SLA_DAYS;
+                pendingSignCnt++;
+                action = "请质量人员（非发起人）核对退供批次并尽快签批扣减库存";
+            } else if (r.shippedAt() == null) {
+                stage = "PENDING_SHIP";
+                stageLabel = "待登记物流";
+                baseDate = r.signedAt() != null ? r.signedAt().toLocalDate()
+                        : (r.createdAt() == null ? today : r.createdAt().toLocalDate());
+                slaDays = SHIP_SLA_DAYS;
+                pendingShipCnt++;
+                action = "质量已签批扣库，请采购/仓库尽快安排退货发运并登记运单号";
+            } else if (r.offlineReceiptPending()) {
+                stage = "OFFLINE_RECEIPT";
+                stageLabel = "待采购代录签收";
+                baseDate = r.shippedAt().toLocalDate();
+                slaDays = RECEIPT_SLA_DAYS;
+                awaitingReceiptCnt++;
+                offlinePendingCnt++;
+                action = "该供应商未启用门户，请采购跟进物流妥投回单并代录签收以完成闭环";
+            } else {
+                stage = "AWAITING_RECEIPT";
+                stageLabel = "待供应商签收";
+                baseDate = r.shippedAt().toLocalDate();
+                slaDays = RECEIPT_SLA_DAYS;
+                awaitingReceiptCnt++;
+                action = "已发运（" + (r.carrier() == null ? "" : r.carrier() + " ") + (r.trackingNo() == null ? "" : r.trackingNo())
+                        + "），请催促供应商在门户确认收货以便对账冲减";
+            }
+            long agingDays = Math.max(0L, java.time.temporal.ChronoUnit.DAYS.between(baseDate, today));
+            boolean overdue = agingDays > slaDays;
+            if (overdue) {
+                overdueCnt++;
+                action = "当前环节已滞留 " + agingDays + " 天（超 " + slaDays + " 天阈值）：" + action;
+            }
+            String riskLevel = overdue ? "OVERDUE" : stage;
+            String riskLabel = overdue ? ("超期滞留(" + agingDays + "天)") : stageLabel;
+            rows.add(new ReturnClosureRow(
+                    r.id(), r.returnNo(), r.supplierId(), r.supplierName(), r.batchNo(), r.extBatchNo(),
+                    r.itemName(), r.qty(), r.unit(), r.warehouseName(), r.carrier(), r.trackingNo(),
+                    stage, stageLabel, agingDays, overdue, r.offlineReceiptPending(),
+                    riskLevel, riskLabel, action));
+        }
+
+        rows.sort(java.util.Comparator.comparing(ReturnClosureRow::overdue).reversed()
+                .thenComparing(ReturnClosureRow::agingDays, java.util.Comparator.reverseOrder())
+                .thenComparing(ReturnClosureRow::returnNo));
+
+        return new ReturnClosureBoard(rows.size(), overdueCnt, pendingSignCnt, pendingShipCnt,
+                awaitingReceiptCnt, offlinePendingCnt, rows);
     }
 
     @Transactional(readOnly = true)

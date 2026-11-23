@@ -7,7 +7,7 @@
       </div>
       <div class="toolbar">
         <ExportButton report="npd-projects" label="导出项目台账" />
-        <ExportButton report="npd-readiness" label="导出上市就绪度" />
+        <ExportButton :report="activeTab === 'risk' ? 'npd-risk' : 'npd-readiness'" :label="activeTab === 'risk' ? '导出风险预警' : '导出上市就绪度'" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="canCreate" type="primary" @click="openCreate">申请立项</el-button>
       </div>
@@ -52,7 +52,51 @@
       </el-table>
     </el-card>
 
+    <el-tabs v-model="activeTab" class="seg">
+      <el-tab-pane label="项目台账" name="list" />
+      <el-tab-pane :label="`上市风险监控（${riskBoard?.totalActiveCount ?? 0}）`" name="risk" />
+    </el-tabs>
+
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
+    <el-card v-else-if="activeTab === 'risk'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-radio-group v-model="riskFilter" size="small">
+            <el-radio-button value="ALL">全部在研 ({{ riskBoard?.totalActiveCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="OVERDUE">已超期 ({{ riskBoard?.overdueCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="AT_RISK">30天临期缺口 ({{ riskBoard?.atRiskCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="PENDING_APPROVAL">待审批 ({{ riskBoard?.pendingApprovalCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="READY_TO_LAUNCH">门禁齐套待提 ({{ riskBoard?.readyToLaunchCount ?? 0 }})</el-radio-button>
+          </el-radio-group>
+        </div>
+        <div v-if="riskBoard" class="muted small" style="margin-top:8px">
+          在研新品 <b class="mono">{{ riskBoard.totalActiveCount }}</b> 项 · 已超期 <b class="mono" :class="{ late: riskBoard.overdueCount > 0 }">{{ riskBoard.overdueCount }}</b> · 30天临期缺口 <b class="mono" :class="{ late: riskBoard.atRiskCount > 0 }">{{ riskBoard.atRiskCount }}</b> · 待审批 <b class="mono">{{ riskBoard.pendingApprovalCount }}</b> · 门禁齐套待提 <b class="mono">{{ riskBoard.readyToLaunchCount }}</b>
+        </div>
+      </template>
+      <el-table :data="filteredRiskRows" v-loading="loader.loading.value" size="small" empty-text="当前无在研新品风险事项">
+        <el-table-column label="风险分级" width="130" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.riskLevel === 'OVERDUE' ? 'danger' : row.riskLevel === 'AT_RISK' ? 'warning' : row.riskLevel === 'READY_TO_LAUNCH' ? 'success' : row.riskLevel === 'PENDING_APPROVAL' ? 'primary' : 'info'" disable-transitions>{{ row.riskLabel }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="项目 / 类别" min-width="185">
+          <template #default="{ row }"><a href="#" class="mono" @click.prevent="openDetail(row.projectId)">{{ row.projectNo }}</a> {{ row.name }}<div class="muted small">{{ row.category }} · {{ row.filingTypeLabel }} · {{ row.statusLabel }}</div></template>
+        </el-table-column>
+        <el-table-column label="计划上市 / 倒计时" width="135" align="right">
+          <template #default="{ row }">
+            <span class="mono">{{ row.targetLaunch }}</span>
+            <div class="small mono" :class="{ late: row.daysLeft < 0 }">{{ row.daysLeft < 0 ? `超期 ${-row.daysLeft} 天` : `剩 ${row.daysLeft} 天` }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="门禁完成度" width="115" align="right">
+          <template #default="{ row }"><span class="mono">{{ row.passedCount }}/{{ row.totalCount }}</span><div class="muted small mono">{{ row.readinessPct }}%</div></template>
+        </el-table-column>
+        <el-table-column prop="recommendedAction" label="推进建议" min-width="225" />
+        <el-table-column label="" width="80" :fixed="narrow ? false : 'right'">
+          <template #default="{ row }"><el-button size="small" @click="openDetail(row.projectId)">处理</el-button></template>
+        </el-table-column>
+      </el-table>
+    </el-card>
     <el-card v-else shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="filters">
@@ -227,22 +271,31 @@ const canTrial = computed(() => auth.hasAny('MASTER_DATA', 'QA', 'QSO', 'PRODUCT
 const canCancel = computed(() => auth.hasAny('ADMIN', 'MASTER_DATA'))
 const isAdmin = computed(() => auth.hasAny('ADMIN'))
 const isQso = computed(() => auth.hasAny('QSO'))
+const activeTab = ref('list')
 const projects = ref([])
 const versions = ref([])
 const readiness = ref([])
 const summary = ref(null)
+const riskBoard = ref(null)
+const riskFilter = ref('ALL')
+const filteredRiskRows = computed(() => {
+  const list = riskBoard.value?.rows || []
+  return riskFilter.value === 'ALL' ? list : list.filter((r) => r.riskLevel === riskFilter.value)
+})
 const openOnly = ref(true)
 const loader = useLoader(async () => {
-  const [p, v, r, s] = await Promise.all([
+  const [p, v, r, s, rb] = await Promise.all([
     http.get('/npd/projects'),
     http.get('/plm/formulas'),
     http.get('/npd/readiness'),
-    http.get('/npd/summary', { silent: true }).catch(() => null)
+    http.get('/npd/summary', { silent: true }).catch(() => null),
+    http.get('/npd/risk-board', { silent: true }).catch(() => null)
   ])
   projects.value = p
   versions.value = v
   readiness.value = r
   summary.value = s
+  riskBoard.value = rb
 })
 const load = () => loader.run()
 const shown = computed(() => openOnly.value ? projects.value.filter((x) => ['PROPOSED', 'ACTIVE', 'LAUNCH_REVIEW'].includes(x.status)) : projects.value)

@@ -58,6 +58,7 @@ public class ReportService {
     private final com.cosmetic.scm.salesreturn.ReturnService salesReturns;
     private final com.cosmetic.scm.plm.ChangeService changeControl;
     private final com.cosmetic.scm.plm.ArtworkService artworks;
+    private final com.cosmetic.scm.plm.ArtworkProofService artworkProofs;
     private final com.cosmetic.scm.plm.ComplianceService compliance;
     private final com.cosmetic.scm.master.RegulatoryService regulatory;
     private final com.cosmetic.scm.quality.QualityService quality;
@@ -126,10 +127,12 @@ public class ReportService {
         m.put("inventory-variance", () -> inventoryVarianceReport(from, to));
         m.put("supplier-performance", () -> supplierPerformanceReport(from, to));
         m.put("supplier-returns", this::supplierReturns);
+        m.put("supplier-return-closure", this::supplierReturnClosureReport);
         m.put("stability", this::stabilityResults);
         m.put("plm-readiness", this::plmReadiness);
         m.put("where-used", this::whereUsedReport);
         m.put("npd-readiness", this::npdReadinessReport);
+        m.put("npd-risk", this::npdRiskReport);
         m.put("pqr", () -> pqrReport(from, to));
         m.put("controlled-docs", this::controlledDocsReport);
         m.put("doc-compliance", this::docComplianceReport);
@@ -140,12 +143,14 @@ public class ReportService {
         m.put("quality-events-summary", () -> qualityEventsSummaryReport(from, to));
         m.put("quality-event-closure", this::qualityEventClosureReport);
         m.put("integration-logs", () -> integrationLogsReport(from, to));
+        m.put("integration-exceptions", this::integrationExceptionsReport);
         m.put("golive-checklist", this::goliveChecklistReport);
         m.put("expiry-risk", this::expiryRiskReport);
         m.put("sales-returns", this::salesReturnsReport);
         m.put("changes", this::changesReport);
         m.put("change-closure", this::changeClosureReport);
         m.put("artworks", this::artworksReport);
+        m.put("artwork-compliance", this::artworkComplianceReport);
         m.put("compliance-status", this::complianceStatusReport);
         m.put("regulatory-violations", this::regulatoryViolationsReport);
         m.put("stability-coverage", this::stabilityCoverageReport);
@@ -164,6 +169,7 @@ public class ReportService {
         m.put("planning-fg", this::planningFgReport);
         m.put("planning-kitting", this::planningKittingReport);
         m.put("rfqs", this::rfqsReport);
+        m.put("rfq-closure", this::rfqClosureReport);
         m.put("notification-logs", this::notificationLogsReport);
         m.put("todos", this::todosReport);
         m.put("npd-projects", this::npdProjectsReport);
@@ -180,7 +186,7 @@ public class ReportService {
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to, String q, String action) {
         // 金额只给采购和财务看，应收报表给销售、财务和管理员看，上线检查仅限管理员/主数据/质量导出，其它报表所有内部岗位都能导
-        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "rfqs".equals(key) || "batch-costs".equals(key) || "margins".equals(key) || "cashflow-forecast".equals(key) || "inventory-variance".equals(key) || "inventory-abc".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
+        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "rfqs".equals(key) || "rfq-closure".equals(key) || "batch-costs".equals(key) || "margins".equals(key) || "cashflow-forecast".equals(key) || "inventory-variance".equals(key) || "inventory-abc".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与成本数据");
         }
         if (("ar-statements".equals(key) || "ar-aging".equals(key) || "ar-invoice-ledger".equals(key) || "customer-credit".equals(key) || "ar-collection".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
@@ -227,6 +233,16 @@ public class ReportService {
                 }, r.receivedOn(), r.receiptReference())));
         return new Table("退供记录", List.of("退供单", "供应商", "批号", "供应商批号", "物料", "数量", "单位", "仓库", "原因", "状态", "发起人", "签批人", "签批时间",
                 "承运商", "运单号", "物流登记人", "物流登记时间", "签收登记人", "签收登记时间", "签收备注", "签收来源", "实际签收日期", "回单或凭证编号"), rows);
+    }
+
+    private Table supplierReturnClosureReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        supplierReturns.closureBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.stageLabel(), r.returnNo(), r.supplierName(), r.batchNo(), r.extBatchNo(),
+                r.itemName(), r.qty(), r.unit(), r.warehouseName(), r.carrier(), r.trackingNo(),
+                r.agingDays(), r.recommendedAction())));
+        return new Table("退供执行与签收闭环监控", List.of("风险分级", "当前环节", "退供单号", "供应商", "批号", "供应商批号",
+                "物料", "数量", "单位", "仓库", "承运商", "运单号", "当前环节滞留(天)", "闭环处置建议"), rows);
     }
 
     private static boolean arReportAllowed() {
@@ -363,6 +379,16 @@ public class ReportService {
                 r.ready() ? "就绪" : String.join("、", r.missingItems()))));
         return new Table("新品上市就绪度", List.of("项目编号", "产品名称", "品类", "备案类型", "状态",
                 "计划上市日", "剩余天数", "成品编码", "成品名称", "通过项", "完成率(%)", "待补齐门禁"), rows);
+    }
+
+    private Table npdRiskReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        plmInsights.npdRiskBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.projectNo(), r.name(), r.category(), r.filingTypeLabel(), r.statusLabel(),
+                r.targetLaunch(), r.daysLeft(), r.passedCount() + "/" + r.totalCount(), r.readinessPct(),
+                String.join("、", r.missingItems()), r.recommendedAction())));
+        return new Table("新品上市门禁缺口与超期风险预警", List.of("风险分级", "项目编号", "产品名称", "品类", "备案类型", "状态",
+                "计划上市日", "剩余/超期天数", "门禁进度", "就绪率(%)", "待补齐项", "推进建议"), rows);
     }
 
     private Table pqrReport(LocalDate from, LocalDate to) {
@@ -634,6 +660,16 @@ public class ReportService {
         return new Table("系统对接日志", List.of("时间", "方向", "平台", "动作", "对象", "结果", "说明"), rows);
     }
 
+    private Table integrationExceptionsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        integration.exceptionBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.causeLabel(), r.platform(), r.platformOrderNo(),
+                r.customerName(), r.warehouseName(), r.skuSummary(), r.statusLabel(),
+                r.attempts(), r.agingHours(), r.receivedAt(), r.error(), r.recommendedAction())));
+        return new Table("电商与接口异常重试闭环监控", List.of("风险分级", "异常归类", "平台", "平台订单号",
+                "客户", "发货仓", "商品明细", "状态", "尝试次数", "滞留时长(小时)", "接收时间", "失败原因", "闭环处置建议"), rows);
+    }
+
     private Table goliveChecklistReport() {
         var cl = golive.checklist();
         List<List<Object>> rows = new ArrayList<>();
@@ -696,6 +732,16 @@ public class ReportService {
                 a.createdBy(), a.createdAt(), a.approvedBy(), a.approvedAt())));
         return new Table("标签设计稿台账", List.of("设计稿编号", "版本", "包材编码", "包材名称", "成品编码", "成品名称",
                 "对应配方", "状态", "配方变更失效", "关联变更", "变更说明", "提交人", "提交时间", "批准人", "批准时间"), rows);
+    }
+
+    private Table artworkComplianceReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        artworkProofs.complianceBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.itemTypeLabel(), r.refNo(), r.pkCode(), r.pkName(),
+                r.fgCode(), r.fgName(), r.versionNo() == null ? null : "第" + r.versionNo() + "版",
+                r.supplierName(), r.agingDays(), r.recommendedAction())));
+        return new Table("标签设计稿与包材打样合规闭环监控", List.of("风险分级", "合规事项", "编号", "包材编码", "包材名称",
+                "成品编码", "成品名称", "设计稿版本", "印刷供应商", "滞留天数", "合规处置建议"), rows);
     }
 
     private Table complianceStatusReport() {
@@ -904,6 +950,15 @@ public class ReportService {
         return new Table("询价比价台账", List.of("询价单号", "标题", "轮次", "截止日期", "状态",
                 "邀请家数", "已报价家数", "物料编码", "物料名称", "询价数量", "单位",
                 "历史采购单价", "中标供应商", "中标含税单价", "生成采购单", "定标人", "定标时间"), rows);
+    }
+
+    private Table rfqClosureReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        rfqService.closureBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.rfqNo(), r.title(), "第" + r.roundNo() + "轮", r.deadline(), r.daysLeft(),
+                r.lineCount(), r.invitedCount(), r.quotedCount(), r.responseRatePct(), r.recommendedAction())));
+        return new Table("询价比价截止与未定标监控", List.of("风险分级", "询价单号", "标题", "轮次", "报价截止日", "剩余/超期天数",
+                "物料行数", "邀请家数", "已报价家数", "响应率(%)", "跟进建议"), rows);
     }
 
     private Table notificationLogsReport() {

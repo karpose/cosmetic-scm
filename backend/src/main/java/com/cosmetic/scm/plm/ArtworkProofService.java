@@ -51,6 +51,9 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class ArtworkProofService {
 
+    public static final int ARTWORK_REVIEW_SLA_DAYS = 5;
+    public static final int PROOF_SIGN_SLA_DAYS = 5;
+
     /** 签样核对清单。签样时要全部勾选。 */
     public static final Map<String, String> CHECKLIST = new LinkedHashMap<>();
 
@@ -109,6 +112,17 @@ public class ArtworkProofService {
     public record ReleaseResult(String text, Long artworkId, Long proofId) {
     }
 
+    public record ArtworkComplianceItem(String itemType, String itemTypeLabel, Long artworkId, Long proofId,
+                                        String refNo, String pkCode, String pkName, String fgCode, String fgName,
+                                        Integer versionNo, String supplierName, long agingDays, boolean overdue,
+                                        String riskLevel, String riskLabel, String recommendedAction) {
+    }
+
+    public record ArtworkComplianceBoard(int totalCount, int staleArtworkCount, int pendingArtworkCount,
+                                         int pendingProofCount, int overdueCount,
+                                         List<ArtworkComplianceItem> rows) {
+    }
+
     @Transactional(readOnly = true)
     public ArtworkDetail detail(Long artworkId) {
         LabelArtwork a = artworks.findById(artworkId).orElseThrow(() -> BizException.notFound("标签设计稿"));
@@ -121,6 +135,78 @@ public class ArtworkProofService {
     @Transactional(readOnly = true)
     public List<ProofView> pending() {
         return views(proofs.findByStatusInOrderById(List.of(ProofStatus.PENDING)), null);
+    }
+
+    /** 标签设计稿与包材打样合规闭环监控看板（V74）：汇聚配方变更失效、设计稿待签批与打样待签样事项。 */
+    @Transactional(readOnly = true)
+    public ArtworkComplianceBoard complianceBoard() {
+        LocalDate today = time.today();
+        List<ArtworkComplianceItem> items = new java.util.ArrayList<>();
+        int staleCnt = 0;
+        int pendingArtworkCnt = 0;
+        int pendingProofCnt = 0;
+        int overdueCnt = 0;
+
+        for (ArtworkView a : artworkService.stale()) {
+            staleCnt++;
+            overdueCnt++;
+            LocalDate base = a.approvedAt() != null ? a.approvedAt().toLocalDate()
+                    : (a.createdAt() != null ? a.createdAt().toLocalDate() : today);
+            long aging = Math.max(0L, java.time.temporal.ChronoUnit.DAYS.between(base, today));
+            items.add(new ArtworkComplianceItem(
+                    "STALE_ARTWORK", "配方变更失效", a.id(), null, a.artworkNo(),
+                    a.pkCode(), a.pkName(), a.fgCode(), a.fgName(), a.versionNo(), null,
+                    aging, true, "STALE", "阻断放行·需重评",
+                    "成品生效配方已升级，现行设计稿成分表可能失效且阻断包材放行，请提交新版设计稿重新评审"));
+        }
+
+        for (ArtworkView a : artworkService.pending()) {
+            pendingArtworkCnt++;
+            LocalDate base = a.createdAt() != null ? a.createdAt().toLocalDate() : today;
+            long aging = Math.max(0L, java.time.temporal.ChronoUnit.DAYS.between(base, today));
+            boolean overdue = aging > ARTWORK_REVIEW_SLA_DAYS;
+            if (overdue) {
+                overdueCnt++;
+            }
+            items.add(new ArtworkComplianceItem(
+                    "PENDING_ARTWORK", "设计稿待签批", a.id(), null, a.artworkNo(),
+                    a.pkCode(), a.pkName(), a.fgCode(), a.fgName(), a.versionNo(), null,
+                    aging, overdue, overdue ? "OVERDUE" : "PENDING_ARTWORK",
+                    overdue ? "评审超期(" + aging + "天)" : "待 QSO 评审",
+                    (overdue ? "已滞留 " + aging + " 天：" : "") + "请核对设计稿附件并由质量安全负责人完成逐项评审签批"));
+        }
+
+        for (ProofView p : pending()) {
+            pendingProofCnt++;
+            LocalDate base = p.proofDate() != null ? p.proofDate()
+                    : (p.createdAt() != null ? p.createdAt().toLocalDate() : today);
+            long aging = Math.max(0L, java.time.temporal.ChronoUnit.DAYS.between(base, today));
+            boolean overdue = aging > PROOF_SIGN_SLA_DAYS;
+            if (overdue) {
+                overdueCnt++;
+            }
+            items.add(new ArtworkComplianceItem(
+                    "PENDING_PROOF", "打样待签样", p.artworkId(), p.id(), p.proofNo(),
+                    p.pkCode(), p.pkName(), null, null, p.artworkVersionNo(), p.supplierName(),
+                    aging, overdue, overdue ? "OVERDUE" : "PENDING_PROOF",
+                    overdue ? "签样超期(" + aging + "天)" : "待质量签样",
+                    (overdue ? "样张已收到 " + aging + " 天未签样：" : "") + "请质量人员（非登记人）核对 " + p.supplierName() + " 第 " + p.roundNo() + " 次打样样张并完成签样"));
+        }
+
+        items.sort(java.util.Comparator.comparingInt((ArtworkComplianceItem x) -> complianceRank(x.riskLevel()))
+                .thenComparing(ArtworkComplianceItem::agingDays, java.util.Comparator.reverseOrder())
+                .thenComparing(ArtworkComplianceItem::refNo));
+
+        return new ArtworkComplianceBoard(items.size(), staleCnt, pendingArtworkCnt, pendingProofCnt, overdueCnt, items);
+    }
+
+    private static int complianceRank(String level) {
+        return switch (level) {
+            case "STALE" -> 0;
+            case "OVERDUE" -> 1;
+            case "PENDING_ARTWORK" -> 2;
+            default -> 3;
+        };
     }
 
     @Transactional
