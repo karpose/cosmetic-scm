@@ -6,7 +6,7 @@
         <p>质量签批后登记退货物流。供应商可在门户确认收货，未启用门户的由采购凭回单代录签收。</p>
       </div>
       <div class="toolbar">
-        <ExportButton report="supplier-returns" />
+        <ExportButton :report="activeTab === 'closure' ? 'supplier-return-closure' : 'supplier-returns'" :label="activeTab === 'closure' ? '导出闭环监控' : '导出台账'" />
         <el-button v-if="canMake" type="primary" @click="openCreate">发起退供</el-button>
       </div>
     </div>
@@ -30,7 +30,55 @@
       </div>
     </div>
 
-    <el-card shadow="never" body-style="padding:0 0 8px">
+    <el-tabs v-if="!selectedNo" v-model="activeTab" class="seg">
+      <el-tab-pane label="退供台账" name="list" />
+      <el-tab-pane :label="`闭环监控（${closureBoard?.totalOpenCount ?? 0}）`" name="closure" />
+    </el-tabs>
+
+    <el-card v-if="!selectedNo && activeTab === 'closure'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-radio-group v-model="closureFilter" size="small">
+            <el-radio-button value="ALL">全部未闭环 ({{ closureBoard?.totalOpenCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="OVERDUE">超期滞留 ({{ closureBoard?.overdueCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="PENDING_SIGN">待签批 ({{ closureBoard?.pendingSignCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="PENDING_SHIP">待登记物流 ({{ closureBoard?.pendingShipCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="RECEIPT">待签收 / 代录 ({{ closureBoard?.awaitingReceiptCount ?? 0 }})</el-radio-button>
+          </el-radio-group>
+          <el-button size="small" @click="load">刷新</el-button>
+        </div>
+        <div v-if="closureBoard" class="muted small" style="margin-top:8px">
+          未闭环退供单 <b class="mono">{{ closureBoard.totalOpenCount }}</b> 笔 · 超期滞留 <b class="mono" :class="{ late: closureBoard.overdueCount > 0 }">{{ closureBoard.overdueCount }}</b> 笔 · 待签批 <b class="mono">{{ closureBoard.pendingSignCount }}</b> · 待发运 <b class="mono">{{ closureBoard.pendingShipCount }}</b> · 待签收 <b class="mono">{{ closureBoard.awaitingReceiptCount }}</b>（其中需采购代录 <b class="mono">{{ closureBoard.offlineReceiptPendingCount }}</b>）
+        </div>
+      </template>
+      <el-table :data="filteredClosureRows" v-loading="loader.loading.value" size="small" empty-text="当前无未闭环的退供单">
+        <el-table-column label="风险分级" width="130" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.overdue ? 'danger' : row.stage === 'PENDING_SIGN' ? 'warning' : row.stage === 'PENDING_SHIP' ? 'primary' : 'warning'" disable-transitions>{{ row.riskLabel }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="stageLabel" label="当前环节" width="120" />
+        <el-table-column label="退供单 / 供应商" min-width="165">
+          <template #default="{ row }"><span class="mono">{{ row.returnNo }}</span><div class="muted small">{{ row.supplierName }}</div></template>
+        </el-table-column>
+        <el-table-column label="物料 / 批号" min-width="180">
+          <template #default="{ row }">{{ row.itemName }} · {{ fmtQty(row.qty) }} {{ row.unit }}<div class="muted small mono">{{ row.batchNo }}<template v-if="row.trackingNo"> · {{ row.carrier }} {{ row.trackingNo }}</template></div></template>
+        </el-table-column>
+        <el-table-column label="滞留" width="80" align="right">
+          <template #default="{ row }"><span class="mono" :class="{ late: row.overdue }">{{ row.agingDays }} 天</span></template>
+        </el-table-column>
+        <el-table-column prop="recommendedAction" label="闭环处置建议" min-width="220" />
+        <el-table-column label="" width="120" :fixed="narrow ? false : 'right'">
+          <template #default="{ row }">
+            <el-button v-if="row.stage === 'PENDING_SIGN' && canSign" size="small" type="primary" @click="openApproveById(row.id)">签批</el-button>
+            <el-button v-else-if="row.stage === 'PENDING_SHIP' && canMake" size="small" @click="openShipById(row.id)">登记物流</el-button>
+            <el-button v-else-if="row.offlineReceiptPending && canRecordReceipt" size="small" type="primary" @click="openReceiptById(row.id)">代录签收</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card v-else shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div v-if="selectedNo" class="filters">
           <span class="mono">{{ selectedNo }}</span>
@@ -177,21 +225,36 @@ const canMake = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'WAREHOUSE'))
 const canSign = computed(() => auth.hasAny('QA', 'QSO'))
 const canRecordReceipt = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
 
+const activeTab = ref(route.query.tab === 'closure' ? 'closure' : 'list')
 const rows = ref([])
 const summary = ref(null)
+const closureBoard = ref(null)
+const closureFilter = ref('ALL')
+const filteredClosureRows = computed(() => {
+  const list = closureBoard.value?.rows || []
+  if (closureFilter.value === 'ALL') return list
+  if (closureFilter.value === 'OVERDUE') return list.filter((r) => r.overdue)
+  if (closureFilter.value === 'RECEIPT') return list.filter((r) => r.stage === 'AWAITING_RECEIPT' || r.stage === 'OFFLINE_RECEIPT')
+  return list.filter((r) => r.stage === closureFilter.value)
+})
 const selectedNo = computed(() => typeof route.query.no === 'string' ? route.query.no : '')
 const listRequest = latestOnly()
 const loader = useLoader(async () => {
   const current = listRequest()
-  const [data, sum] = await Promise.all([
+  const [data, sum, cb] = await Promise.all([
     http.get('/supplier-returns', { params: { returnNo: selectedNo.value || undefined } }),
-    http.get('/supplier-returns/summary')
+    http.get('/supplier-returns/summary'),
+    http.get('/supplier-returns/closure-board')
   ])
   if (current()) {
     rows.value = data
     summary.value = sum
+    closureBoard.value = cb
   }
 })
+const openApproveById = (id) => { const r = rows.value.find((x) => x.id === id); if (r) openApprove(r) }
+const openShipById = (id) => { const r = rows.value.find((x) => x.id === id); if (r) openShip(r) }
+const openReceiptById = (id) => { const r = rows.value.find((x) => x.id === id); if (r) openReceipt(r) }
 const load = () => loader.run()
 const t = usePaged(rows, { match: textMatch('returnNo', 'supplierName', 'batchNo', 'extBatchNo', 'itemName', 'trackingNo', 'receiptReference') })
 watch(selectedNo, () => { rows.value = []; t.keyword.value = ''; t.page.value = 1; load() })
