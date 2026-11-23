@@ -39,6 +39,7 @@ import com.cosmetic.scm.sales.SalesService;
 import com.cosmetic.scm.sales.SalesService.SoLineReq;
 import com.cosmetic.scm.sales.SalesService.SoReq;
 import com.cosmetic.scm.sales.SalesService.SoView;
+import com.cosmetic.scm.security.PriceAccess;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -310,6 +311,7 @@ public class IntegrationService {
     @Transactional(readOnly = true)
     public IntegrationExceptionBoard exceptionBoard() {
         LocalDateTime now = time.now();
+        boolean canSeeFinance = PriceAccess.allowed();
         List<ChannelOrder> open = new ArrayList<>();
         open.addAll(orders.findByStatus(ChannelOrderStatus.FAILED));
         open.addAll(orders.findByStatus(ChannelOrderStatus.RECEIVED));
@@ -336,6 +338,9 @@ public class IntegrationService {
             if (o.getStatus() == ChannelOrderStatus.RECEIVED) {
                 causeCode = "STUCK_RECEIVED";
                 causeLabel = "待出库滞留";
+            } else if (err.contains("信用额度不足：授信 ¥")) {
+                causeCode = "CREDIT_LIMIT";
+                causeLabel = "客户信用额度不足";
             } else if (!unmatched.isEmpty() || err.contains("SKU") || err.contains("没有匹配到")) {
                 causeCode = "SKU_UNMAPPED";
                 causeLabel = "SKU 未匹配";
@@ -375,9 +380,10 @@ public class IntegrationService {
                         + (unmatched.isEmpty() ? "" : "（未匹配：" + String.join("、", unmatched) + "）")
                         + "，补建或启用成品后点击「重试出库」";
                 case "STOCK_SHORTAGE" -> "核查自有仓成品可用库存与客户效期门槛，待放行或补货后点击「重试出库」";
-                case "STUCK_RECEIVED" -> "订单已接收但未完成出库，核查对接日志或取消后由 ERP 重推";
+                case "CREDIT_LIMIT" -> "请联系财务核对客户授信与回款，解除限制后点击「重试出库」";
+                case "STUCK_RECEIVED" -> "订单已接收但未完成出库，请核查对接日志，确认不再发货后可取消";
                 default -> o.getAttempts() >= 3
-                        ? "已连续尝试 " + o.getAttempts() + " 次仍失败，建议排查客户/仓库主数据或取消重推"
+                        ? "已连续尝试 " + o.getAttempts() + " 次仍失败，请排查客户及仓库主数据，修正后重试"
                         : "核查失败原因后点击「重试出库」，若平台已退单请执行取消";
             };
 
@@ -390,7 +396,7 @@ public class IntegrationService {
                     wh == null ? "—" : wh.getName(),
                     o.getStatus(), o.getStatus().getLabel(), o.getAttempts(), agingHours,
                     o.getReceivedAt(), o.getUpdatedAt(), skuSummary,
-                    o.getError(), action));
+                    !canSeeFinance && "CREDIT_LIMIT".equals(causeCode) ? causeLabel : o.getError(), action));
         }
 
         rows.sort(java.util.Comparator
@@ -398,7 +404,6 @@ public class IntegrationService {
                 .thenComparing(java.util.Comparator.comparingLong(ExceptionRow::agingHours).reversed())
                 .thenComparing(java.util.Comparator.comparingLong(ExceptionRow::orderId).reversed()));
 
-        boolean canSeeFinance = com.cosmetic.scm.security.PriceAccess.allowed();
         List<IntegrationLog> recent7d = logs.findByCreatedAtGreaterThanEqualOrderByIdDesc(now.minusDays(7)).stream()
                 .filter(l -> canSeeFinance || !"FINANCE".equalsIgnoreCase(l.getPlatform()))
                 .toList();
@@ -424,10 +429,14 @@ public class IntegrationService {
     }
 
     public PushResult retry(Long id) {
-        ChannelOrder o = orders.findById(id).orElseThrow(() -> BizException.notFound("电商订单"));
-        if (o.getStatus() != ChannelOrderStatus.FAILED) {
-            throw new BizException("只有出库失败的订单可以重试，当前为" + o.getStatus().getLabel());
-        }
+        ChannelOrder o = tx.execute(st -> {
+            ChannelOrder order = orders.lockById(id).orElseThrow(() -> BizException.notFound("电商订单"));
+            if (order.getStatus() != ChannelOrderStatus.FAILED) {
+                throw new BizException("只有出库失败的订单可以重试，当前为" + order.getStatus().getLabel());
+            }
+            refreshUnmappedSkus(id);
+            return order;
+        });
         PushResult r = fulfil(id);
         // 对接日志不记操作人，手工操作要进审计日志
         tx.executeWithoutResult(st -> audit.log("重试电商订单", o.getPlatformOrderNo(), r.statusLabel()
@@ -455,6 +464,25 @@ public class IntegrationService {
     }
 
     // ---------- 内部 ----------
+
+    /** 在重试出库前保存已补齐的 SKU 映射，库存仍不足时也保留映射结果。 */
+    private void refreshUnmappedSkus(Long orderId) {
+        List<ChannelOrderLine> unmapped = lines.findByOrderIdIn(List.of(orderId)).stream()
+                .filter(line -> line.getItemId() == null)
+                .toList();
+        if (unmapped.isEmpty()) {
+            return;
+        }
+        List<String> codes = unmapped.stream().map(ChannelOrderLine::getSku).distinct().toList();
+        Map<String, Long> matched = items.findByItemTypeAndActiveTrueAndCodeIn(ItemType.FG, codes).stream()
+                .collect(Collectors.toMap(Item::getCode, Item::getId));
+        for (ChannelOrderLine line : unmapped) {
+            Long itemId = matched.get(line.getSku());
+            if (itemId != null) {
+                line.setItemId(itemId);
+            }
+        }
+    }
 
     private Long saveOrder(String platform, PushOrder po, Partner customer, Warehouse wh, Map<String, Item> skuMap) {
         LocalDateTime now = time.now();

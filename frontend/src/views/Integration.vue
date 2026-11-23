@@ -114,6 +114,7 @@
             <el-select v-model="excCause" size="small" clearable placeholder="按异常归类筛选" style="width: 150px">
               <el-option label="SKU 未匹配" value="SKU_UNMAPPED" />
               <el-option label="库存/效期不足" value="STOCK_SHORTAGE" />
+              <el-option label="客户信用额度不足" value="CREDIT_LIMIT" />
               <el-option label="待出库滞留" value="STUCK_RECEIVED" />
               <el-option label="其它出库异常" value="OTHER_ERROR" />
             </el-select>
@@ -121,7 +122,7 @@
             <ExportButton report="integration-exceptions" label="导出异常监控" />
           </div>
         </template>
-        <el-table :data="filteredExceptions" v-loading="loader.loading.value" empty-text="当前无待处理电商异常订单">
+        <el-table :data="filteredExceptions" scrollbar-tabindex="0" v-loading="loader.loading.value" empty-text="当前无待处理电商异常订单">
           <el-table-column label="风险分级" width="100">
             <template #default="{ row }">
               <el-tag :type="row.riskLevel === 'CRITICAL' ? 'danger' : row.riskLevel === 'HIGH' ? 'warning' : 'info'" size="small" disable-transitions>{{ row.riskLabel }}</el-tag>

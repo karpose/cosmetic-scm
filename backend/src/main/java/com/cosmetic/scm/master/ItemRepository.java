@@ -12,6 +12,8 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
 
     List<Item> findByItemTypeOrderByCode(ItemType itemType);
 
+    List<Item> findByItemTypeAndActiveTrueAndCodeIn(ItemType itemType, List<String> codes);
+
     /** 只在写事务里用。 */
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     @org.springframework.data.jpa.repository.Query("select x from Item x where x.id = :id")

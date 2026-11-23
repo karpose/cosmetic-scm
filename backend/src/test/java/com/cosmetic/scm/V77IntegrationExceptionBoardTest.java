@@ -3,11 +3,17 @@ package com.cosmetic.scm;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.io.ByteArrayInputStream;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
@@ -87,7 +93,12 @@ class V77IntegrationExceptionBoardTest {
                 ChannelOrderStatus.FAILED, 1, now.minusHours(1), "满足客户效期门槛的可售库存不足");
         saveLine(mediumOrder.getId(), fg.getCode(), fg.getId(), new BigDecimal("3"));
 
-        // 4) 近 7 日对接日志（含 1 条电商失败与 1 条财务失败，验证非涉价角色不计入 FINANCE 失败数）
+        String creditError = "客户 测试店铺 信用额度不足：授信 ¥987654.32，当前未结应收 ¥109876.54，本次出库 ¥882345.67";
+        ChannelOrder creditOrder = saveOrder("TMALL", "V77-TM-CREDIT", customer.getId(), wh.getId(),
+                ChannelOrderStatus.FAILED, 1, now.minusHours(1), creditError);
+        saveLine(creditOrder.getId(), fg.getCode(), fg.getId(), BigDecimal.ONE);
+
+        // 近 7 日对接日志（含 1 条电商失败与 1 条财务失败，验证非涉价角色不计入 FINANCE 失败数）
         saveLog("IN", "TMALL", "推送订单", "V77-TM-CRITICAL", false, "出库失败 1", now.minusHours(5));
         saveLog("IN", "TMALL", "推送订单", "V77-OK", true, "共 1 单，出库失败 0", now.minusHours(4));
         saveLog("OUT", "FINANCE", "凭证回执", "ST-V77", false, "财务接口超时", now.minusHours(3));
@@ -123,18 +134,55 @@ class V77IntegrationExceptionBoardTest {
         assertThat(rows.get(idxMedium).get("riskLevel").asText()).isEqualTo("MEDIUM");
         assertThat(rows.get(idxMedium).get("causeCode").asText()).isEqualTo("STOCK_SHORTAGE");
 
-        // 管理员可统计到 FINANCE 失败日志，数量应大于销售账号看到的近 7 日失败数
-        String adminToken = login("admin");
-        JsonNode adminBoard = json.readTree(mvc.perform(get("/api/channel-orders/exception-board")
-                        .header("Authorization", "Bearer " + adminToken))
+        int idxCredit = indexOfOrder(rows, "V77-TM-CREDIT");
+        assertThat(idxCredit).isGreaterThanOrEqualTo(0);
+        assertThat(rows.get(idxCredit).get("causeCode").asText()).isEqualTo("CREDIT_LIMIT");
+        assertThat(rows.get(idxCredit).get("error").asText()).isEqualTo("客户信用额度不足");
+
+        // 财务可统计到 FINANCE 失败日志，也可查看具体授信金额。
+        String financeToken = login("finance1");
+        JsonNode financeBoard = json.readTree(mvc.perform(get("/api/channel-orders/exception-board")
+                        .header("Authorization", "Bearer " + financeToken))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
-        assertThat(adminBoard.get("recent7dFailedCalls").asLong())
+        assertThat(financeBoard.get("recent7dFailedCalls").asLong())
                 .isGreaterThan(salesBoard.get("recent7dFailedCalls").asLong());
+        JsonNode financeRows = financeBoard.get("rows");
+        assertThat(financeRows.get(indexOfOrder(financeRows, "V77-TM-CREDIT")).get("error").asText())
+                .isEqualTo(creditError);
 
         byte[] xlsx = mvc.perform(get("/api/reports/integration-exceptions")
                         .header("Authorization", "Bearer " + salesToken))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
-        assertThat(xlsx.length).isGreaterThan(100);
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(xlsx))) {
+            for (ZipEntry entry; (entry = zip.getNextEntry()) != null; ) {
+                if ("xl/worksheets/sheet1.xml".equals(entry.getName())) {
+                    assertThat(new String(zip.readAllBytes(), StandardCharsets.UTF_8))
+                            .contains("V77-TM-CREDIT", "客户信用额度不足")
+                            .doesNotContain("987654.32", "109876.54", "882345.67");
+                    return;
+                }
+            }
+        }
+        throw new AssertionError("导出文件缺少第一张工作表");
+    }
+
+    @Test
+    void retryResolvesPreviouslyUnmappedSkuAndShips() throws Exception {
+        Partner customer = partnerRepo.findByCode("CUS-SY").orElseThrow();
+        Warehouse wh = warehouseRepo.findByKind(WarehouseKind.OWN).stream()
+                .filter(w -> "WH-MAIN".equals(w.getCode())).findFirst().orElseThrow();
+        Item fg = itemRepo.findByItemTypeOrderByCode(ItemType.FG).stream()
+                .filter(i -> "FG-SER-001".equals(i.getCode())).findFirst().orElseThrow();
+        ChannelOrder failed = saveOrder("TMALL", "V77-RETRY-SKU", customer.getId(), wh.getId(),
+                ChannelOrderStatus.FAILED, 1, time.now(), "SKU 没有匹配到在售成品：" + fg.getCode());
+        saveLine(failed.getId(), fg.getCode(), null, BigDecimal.ONE);
+
+        String salesToken = login("sales1");
+        mvc.perform(post("/api/channel-orders/{id}/retry", failed.getId()).header("Authorization", "Bearer " + salesToken))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("SHIPPED"));
+        assertThat(orderRepo.findById(failed.getId()).orElseThrow().getSoId()).isNotNull();
+        assertThat(lineRepo.findByOrderIdIn(List.of(failed.getId()))).singleElement()
+                .extracting(ChannelOrderLine::getItemId).isEqualTo(fg.getId());
     }
 
     private ChannelOrder saveOrder(String platform, String orderNo, Long customerId, Long whId,
