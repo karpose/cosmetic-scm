@@ -143,6 +143,7 @@ public class ReportService {
         m.put("quality-events-summary", () -> qualityEventsSummaryReport(from, to));
         m.put("quality-event-closure", this::qualityEventClosureReport);
         m.put("integration-logs", () -> integrationLogsReport(from, to));
+        m.put("integration-exceptions", this::integrationExceptionsReport);
         m.put("golive-checklist", this::goliveChecklistReport);
         m.put("expiry-risk", this::expiryRiskReport);
         m.put("sales-returns", this::salesReturnsReport);
@@ -657,6 +658,16 @@ public class ReportService {
                 l.createdAt(), "IN".equals(l.direction()) ? "平台→本系统" : "本系统→平台", l.platform(),
                 l.action(), l.ref(), l.success() ? "成功" : "失败", l.message())));
         return new Table("系统对接日志", List.of("时间", "方向", "平台", "动作", "对象", "结果", "说明"), rows);
+    }
+
+    private Table integrationExceptionsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        integration.exceptionBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.causeLabel(), r.platform(), r.platformOrderNo(),
+                r.customerName(), r.warehouseName(), r.skuSummary(), r.statusLabel(),
+                r.attempts(), r.agingHours(), r.receivedAt(), r.error(), r.recommendedAction())));
+        return new Table("电商与接口异常重试闭环监控", List.of("风险分级", "异常归类", "平台", "平台订单号",
+                "客户", "发货仓", "商品明细", "状态", "尝试次数", "滞留时长(小时)", "接收时间", "失败原因", "闭环处置建议"), rows);
     }
 
     private Table goliveChecklistReport() {

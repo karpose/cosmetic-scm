@@ -149,6 +149,19 @@ public class IntegrationService {
                                     List<PlatformHealth> byPlatform, List<FailureReasonRow> topFailures) {
     }
 
+    public record ExceptionRow(Long orderId, String riskLevel, String riskLabel, String causeCode, String causeLabel,
+                               String platform, String platformOrderNo, String customerName, String warehouseName,
+                               ChannelOrderStatus status, String statusLabel, int attempts, long agingHours,
+                               LocalDateTime receivedAt, LocalDateTime updatedAt, String skuSummary,
+                               String error, String recommendedAction) {
+    }
+
+    public record IntegrationExceptionBoard(int totalExceptions, int criticalCount, int highCount,
+                                            int skuUnmappedCount, int stockShortageCount, int overdue24hCount,
+                                            long recent7dFailedCalls, Double recent7dFailureRatePct,
+                                            List<ExceptionRow> rows) {
+    }
+
     // ---------- ERP 调用 ----------
 
     public List<PushResult> receive(PushReq req) {
@@ -291,6 +304,110 @@ public class IntegrationService {
         long failedBacklog = orders.findByStatus(ChannelOrderStatus.FAILED).size();
         long receivedBacklog = orders.findByStatus(ChannelOrderStatus.RECEIVED).size();
         return new IntegrationHealth(window, total, ok, fail, rate, failedBacklog, receivedBacklog, platformRows, topFailures);
+    }
+
+    /** 电商与接口集成异常监控与重试闭环看板：汇总所有失败待重试与滞留订单，按滞留时长与原因归类分级。 */
+    @Transactional(readOnly = true)
+    public IntegrationExceptionBoard exceptionBoard() {
+        LocalDateTime now = time.now();
+        List<ChannelOrder> open = new ArrayList<>();
+        open.addAll(orders.findByStatus(ChannelOrderStatus.FAILED));
+        open.addAll(orders.findByStatus(ChannelOrderStatus.RECEIVED));
+
+        Map<Long, List<ChannelOrderLine>> lineMap = open.isEmpty() ? Map.of()
+                : lines.findByOrderIdIn(open.stream().map(ChannelOrder::getId).toList())
+                        .stream().collect(Collectors.groupingBy(ChannelOrderLine::getOrderId));
+        Map<Long, Partner> pm = lookup.partnerMap();
+        Map<Long, Warehouse> wm = lookup.warehouseMap();
+
+        List<ExceptionRow> rows = new ArrayList<>();
+        int critical = 0, high = 0, skuUnmapped = 0, stockShortage = 0, overdue24h = 0;
+
+        for (ChannelOrder o : open) {
+            List<ChannelOrderLine> ls = lineMap.getOrDefault(o.getId(), List.of());
+            List<String> unmatched = ls.stream().filter(l -> l.getItemId() == null).map(ChannelOrderLine::getSku).toList();
+            String skuSummary = ls.stream()
+                    .map(l -> l.getSku() + "×" + l.getQty().stripTrailingZeros().toPlainString())
+                    .collect(Collectors.joining("、"));
+            String err = o.getError() == null ? "" : o.getError();
+
+            String causeCode;
+            String causeLabel;
+            if (o.getStatus() == ChannelOrderStatus.RECEIVED) {
+                causeCode = "STUCK_RECEIVED";
+                causeLabel = "待出库滞留";
+            } else if (!unmatched.isEmpty() || err.contains("SKU") || err.contains("没有匹配到")) {
+                causeCode = "SKU_UNMAPPED";
+                causeLabel = "SKU 未匹配";
+                skuUnmapped++;
+            } else if (err.contains("不足") || err.contains("缺") || err.contains("库存") || err.contains("效期")) {
+                causeCode = "STOCK_SHORTAGE";
+                causeLabel = "库存/效期不足";
+                stockShortage++;
+            } else {
+                causeCode = "OTHER_ERROR";
+                causeLabel = "其它出库异常";
+            }
+
+            long agingHours = o.getReceivedAt() == null ? 0L
+                    : Math.max(0L, java.time.Duration.between(o.getReceivedAt(), now).toHours());
+            if (agingHours >= 24) {
+                overdue24h++;
+            }
+
+            String riskLevel;
+            String riskLabel;
+            if (agingHours >= 24 || o.getAttempts() >= 3) {
+                riskLevel = "CRITICAL";
+                riskLabel = "严重滞留";
+                critical++;
+            } else if (agingHours >= 4 || "SKU_UNMAPPED".equals(causeCode)) {
+                riskLevel = "HIGH";
+                riskLabel = "高风险";
+                high++;
+            } else {
+                riskLevel = "MEDIUM";
+                riskLabel = "待重试";
+            }
+
+            String action = switch (causeCode) {
+                case "SKU_UNMAPPED" -> "核对平台 SKU 与成品物料编码映射"
+                        + (unmatched.isEmpty() ? "" : "（未匹配：" + String.join("、", unmatched) + "）")
+                        + "，补建或启用成品后点击「重试出库」";
+                case "STOCK_SHORTAGE" -> "核查自有仓成品可用库存与客户效期门槛，待放行或补货后点击「重试出库」";
+                case "STUCK_RECEIVED" -> "订单已接收但未完成出库，核查对接日志或取消后由 ERP 重推";
+                default -> o.getAttempts() >= 3
+                        ? "已连续尝试 " + o.getAttempts() + " 次仍失败，建议排查客户/仓库主数据或取消重推"
+                        : "核查失败原因后点击「重试出库」，若平台已退单请执行取消";
+            };
+
+            Partner cust = pm.get(o.getCustomerId());
+            Warehouse wh = wm.get(o.getWarehouseId());
+            rows.add(new ExceptionRow(
+                    o.getId(), riskLevel, riskLabel, causeCode, causeLabel,
+                    o.getPlatform(), o.getPlatformOrderNo(),
+                    cust == null ? "—" : cust.getName(),
+                    wh == null ? "—" : wh.getName(),
+                    o.getStatus(), o.getStatus().getLabel(), o.getAttempts(), agingHours,
+                    o.getReceivedAt(), o.getUpdatedAt(), skuSummary,
+                    o.getError(), action));
+        }
+
+        rows.sort(java.util.Comparator
+                .comparingInt((ExceptionRow r) -> "CRITICAL".equals(r.riskLevel()) ? 0 : "HIGH".equals(r.riskLevel()) ? 1 : 2)
+                .thenComparing(java.util.Comparator.comparingLong(ExceptionRow::agingHours).reversed())
+                .thenComparing(java.util.Comparator.comparingLong(ExceptionRow::orderId).reversed()));
+
+        boolean canSeeFinance = com.cosmetic.scm.security.PriceAccess.allowed();
+        List<IntegrationLog> recent7d = logs.findByCreatedAtGreaterThanEqualOrderByIdDesc(now.minusDays(7)).stream()
+                .filter(l -> canSeeFinance || !"FINANCE".equalsIgnoreCase(l.getPlatform()))
+                .toList();
+        long total7d = recent7d.size();
+        long failed7d = recent7d.stream().filter(l -> !l.isSuccess()).count();
+        Double failRate7d = total7d == 0 ? null : Math.round(failed7d * 1000.0 / total7d) / 10.0;
+
+        return new IntegrationExceptionBoard(rows.size(), critical, high, skuUnmapped, stockShortage, overdue24h,
+                failed7d, failRate7d, rows);
     }
 
     /** 按日期范围导出对接日志（无价格权限时过滤 FINANCE 平台日志）。 */
