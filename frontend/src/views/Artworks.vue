@@ -6,7 +6,7 @@
         <p>印刷包材的设计稿按包材分版本，对应提交时的生效配方。质量安全负责人对照成分表逐项评审、上传设计稿后才能批准（不能是提交人）；配方变了，已批准的设计稿要重新评审。</p>
       </div>
       <div class="toolbar">
-        <ExportButton report="artworks" />
+        <ExportButton :report="activeTab === 'compliance' ? 'artwork-compliance' : 'artworks'" :label="activeTab === 'compliance' ? '导出合规清单' : '导出台账'" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="canEdit" type="primary" @click="openCreate">提交设计稿</el-button>
       </div>
@@ -31,7 +31,49 @@
       </div>
     </div>
 
+    <el-tabs v-model="activeTab" class="seg">
+      <el-tab-pane label="设计稿台账" name="list" />
+      <el-tab-pane :label="`合规闭环监控（${compBoard?.totalCount ?? 0}）`" name="compliance" />
+    </el-tabs>
+
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
+    <el-card v-else-if="activeTab === 'compliance'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-radio-group v-model="compFilter" size="small">
+            <el-radio-button value="ALL">全部 ({{ compBoard?.totalCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="STALE">配方失效 ({{ compBoard?.staleArtworkCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="OVERDUE">超期滞留 ({{ compBoard?.overdueCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="PENDING_ARTWORK">设计稿待评 ({{ compBoard?.pendingArtworkCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="PENDING_PROOF">打样待签 ({{ compBoard?.pendingProofCount ?? 0 }})</el-radio-button>
+          </el-radio-group>
+        </div>
+        <div v-if="compBoard" class="muted small" style="margin-top:8px">
+          待闭环标签与打样事项 <b class="mono">{{ compBoard.totalCount }}</b> 项 · 配方失效阻断放行 <b class="mono" :class="{ late: compBoard.staleArtworkCount > 0 }">{{ compBoard.staleArtworkCount }}</b> · 超期滞留 <b class="mono" :class="{ late: compBoard.overdueCount > 0 }">{{ compBoard.overdueCount }}</b> · 设计稿待签批 <b class="mono">{{ compBoard.pendingArtworkCount }}</b> · 打样待签样 <b class="mono">{{ compBoard.pendingProofCount }}</b>
+        </div>
+      </template>
+      <el-table :data="filteredCompRows" v-loading="loader.loading.value" size="small" empty-text="当前所有标签设计稿与包材打样均已合规闭环">
+        <el-table-column label="风险分级" width="130" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.riskLevel === 'STALE' || row.overdue ? 'danger' : row.itemType === 'PENDING_ARTWORK' ? 'warning' : 'primary'" disable-transitions>{{ row.riskLabel }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="itemTypeLabel" label="合规事项" width="115" />
+        <el-table-column label="编号 / 版本" width="155">
+          <template #default="{ row }"><span class="mono">{{ row.refNo }}</span><div class="muted small">第 {{ row.versionNo }} 版<template v-if="row.supplierName"> · {{ row.supplierName }}</template></div></template>
+        </el-table-column>
+        <el-table-column label="包材 / 成品" min-width="185">
+          <template #default="{ row }">{{ row.pkName }} <span class="muted small mono">{{ row.pkCode }}</span><div v-if="row.fgName" class="muted small">{{ row.fgName }} ({{ row.fgCode }})</div></template>
+        </el-table-column>
+        <el-table-column label="滞留" width="80" align="right">
+          <template #default="{ row }"><span class="mono" :class="{ late: row.overdue }">{{ row.agingDays }} 天</span></template>
+        </el-table-column>
+        <el-table-column prop="recommendedAction" label="合规处置建议" min-width="220" />
+        <el-table-column label="" width="85" :fixed="narrow ? false : 'right'">
+          <template #default="{ row }"><el-button size="small" @click="openComplianceItem(row)">处理</el-button></template>
+        </el-table-column>
+      </el-table>
+    </el-card>
     <el-card v-else shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="filters">
@@ -206,15 +248,34 @@ const canEdit = computed(() => auth.hasAny('MASTER_DATA', 'QA', 'QSO'))
 const isQso = computed(() => auth.hasAny('QSO'))
 const isQuality = computed(() => auth.hasAny('QA', 'QSO'))
 const canProof = computed(() => auth.hasAny('MASTER_DATA', 'PURCHASE', 'QA', 'QSO'))
+const activeTab = ref('list')
 const artworks = ref([])
 const checklist = ref([])
 const summary = ref(null)
+const compBoard = ref(null)
+const compFilter = ref('ALL')
+const filteredCompRows = computed(() => {
+  const list = compBoard.value?.rows || []
+  if (compFilter.value === 'ALL') return list
+  if (compFilter.value === 'OVERDUE') return list.filter((r) => r.overdue)
+  if (compFilter.value === 'STALE') return list.filter((r) => r.riskLevel === 'STALE')
+  return list.filter((r) => r.itemType === compFilter.value)
+})
+function openComplianceItem(row) {
+  const target = artworks.value.find((x) => x.id === row.artworkId)
+  if (target) openDetail(target)
+}
 const currentOnly = ref(true)
 const loader = useLoader(async () => {
-  const [o, sum] = await Promise.all([http.get('/artworks'), http.get('/artworks/summary')])
+  const [o, sum, cb] = await Promise.all([
+    http.get('/artworks'),
+    http.get('/artworks/summary'),
+    http.get('/artworks/compliance-board')
+  ])
   artworks.value = o.artworks
   checklist.value = o.checklist
   summary.value = sum
+  compBoard.value = cb
 })
 const load = () => loader.run()
 const shown = computed(() => currentOnly.value ? artworks.value.filter((x) => x.status === 'APPROVED' || x.status === 'PENDING') : artworks.value)
