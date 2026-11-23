@@ -6,7 +6,7 @@
         <p>向合格供应商询价，供应商在门户报价，互相看不到。截止或开标前内部也看不到价格。支持多轮议价与历史采购价对比，定标要签批（定标人不能是询价人），定标后自动生成带价格的采购单。</p>
       </div>
       <div class="toolbar">
-        <ExportButton report="rfqs" />
+        <ExportButton :report="activeTab === 'closure' ? 'rfq-closure' : 'rfqs'" :label="activeTab === 'closure' ? '导出寻源监控' : '导出台账'" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="canBuy" type="primary" @click="openCreate">发起询价</el-button>
       </div>
@@ -35,7 +35,56 @@
       </div>
     </div>
 
-    <el-card shadow="never" body-style="padding:0 0 8px">
+    <el-tabs v-model="activeTab" class="seg">
+      <el-tab-pane label="询价台账" name="list" />
+      <el-tab-pane :label="`寻源监控（${closureBoard?.totalOpenCount ?? 0}）`" name="closure" />
+    </el-tabs>
+
+    <el-card v-if="activeTab === 'closure'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-radio-group v-model="closureFilter" size="small">
+            <el-radio-button value="ALL">全部未定标 ({{ closureBoard?.totalOpenCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="OVERDUE">超期未定标 ({{ closureBoard?.overdueAwardCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="WAITING_AWARD">待比价定标 ({{ closureBoard?.waitingAwardCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="DUE_SOON">3天内截止 ({{ closureBoard?.dueSoonCount ?? 0 }})</el-radio-button>
+            <el-radio-button value="LOW_RESPONSE">响应不足 ({{ closureBoard?.lowResponseCount ?? 0 }})</el-radio-button>
+          </el-radio-group>
+        </div>
+        <div v-if="closureBoard" class="muted small" style="margin-top:8px">
+          未定标询价单 <b class="mono">{{ closureBoard.totalOpenCount }}</b> 单 · 超期未定标 <b class="mono" :class="{ late: closureBoard.overdueAwardCount > 0 }">{{ closureBoard.overdueAwardCount }}</b> · 待比价定标 <b class="mono">{{ closureBoard.waitingAwardCount }}</b> · 3天内截止 <b class="mono">{{ closureBoard.dueSoonCount }}</b> · 报价响应不足 <b class="mono">{{ closureBoard.lowResponseCount }}</b>
+        </div>
+      </template>
+      <el-table :data="filteredClosureRows" v-loading="loader.loading.value" size="small" empty-text="当前无未定标的询价单">
+        <el-table-column label="风险分级" width="135" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.riskLevel === 'OVERDUE' ? 'danger' : row.riskLevel === 'WAITING_AWARD' ? 'warning' : row.riskLevel === 'DUE_SOON' ? 'warning' : row.riskLevel === 'LOW_RESPONSE' ? 'info' : 'primary'" disable-transitions>{{ row.riskLabel }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="询价单 / 轮次" width="160">
+          <template #default="{ row }"><span class="mono">{{ row.rfqNo }}</span><div class="muted small">第 {{ row.roundNo }} 轮 · {{ row.lineCount }} 行物料</div></template>
+        </el-table-column>
+        <el-table-column prop="title" label="询价标题" min-width="180" />
+        <el-table-column label="报价截止 / 剩余" width="130" align="right">
+          <template #default="{ row }">
+            <span class="mono">{{ row.deadline }}</span>
+            <div class="small mono" :class="{ late: row.daysLeft < 0 }">{{ row.daysLeft < 0 ? `已过 ${-row.daysLeft} 天` : `剩 ${row.daysLeft} 天` }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="报价响应" width="115" align="right">
+          <template #default="{ row }"><span class="mono">{{ row.quotedCount }} / {{ row.invitedCount }} 家</span><div v-if="row.responseRatePct != null" class="muted small mono">{{ row.responseRatePct }}%</div></template>
+        </el-table-column>
+        <el-table-column prop="recommendedAction" label="跟进建议" min-width="220" />
+        <el-table-column label="" width="110" :fixed="narrow ? false : 'right'">
+          <template #default="{ row }">
+            <el-button v-if="row.canAward && canBuy" size="small" type="primary" @click="openAwardById(row.id)">比价定标</el-button>
+            <el-button v-else-if="row.sealed && canBuy" size="small" @click="openEarlyById(row.id)">提前开标</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card v-else shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="filters"><el-input v-model="t.keyword.value" placeholder="搜索单号、标题、物料" clearable /></div>
       </template>
@@ -212,16 +261,29 @@ const auth = useAuth()
 const rd = useRefData()
 const canBuy = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
 
+const activeTab = ref('list')
 const rows = ref([])
 const summary = ref(null)
+const closureBoard = ref(null)
+const closureFilter = ref('ALL')
+const filteredClosureRows = computed(() => {
+  const list = closureBoard.value?.rows || []
+  if (closureFilter.value === 'ALL') return list
+  if (closureFilter.value === 'WAITING_AWARD') return list.filter((r) => r.canAward)
+  return list.filter((r) => r.riskLevel === closureFilter.value)
+})
 const loader = useLoader(async () => {
-  const [list, sum] = await Promise.all([
+  const [list, sum, cb] = await Promise.all([
     http.get('/rfqs'),
-    http.get('/rfqs/summary', { silent: true }).catch(() => null)
+    http.get('/rfqs/summary', { silent: true }).catch(() => null),
+    http.get('/rfqs/closure-board', { silent: true }).catch(() => null)
   ])
   rows.value = list
   summary.value = sum
+  closureBoard.value = cb
 })
+const openAwardById = (id) => { const r = rows.value.find((x) => x.id === id); if (r) openAward(r) }
+const openEarlyById = (id) => { const r = rows.value.find((x) => x.id === id); if (r) openEarly(r) }
 const load = () => loader.run()
 const t = usePaged(rows, { match: textMatch('rfqNo', 'title', (r) => r.lines.map((l) => l.itemName).join(' ')) })
 const startOfToday = startOfBusinessDay()
