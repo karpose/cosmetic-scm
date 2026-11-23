@@ -167,6 +167,7 @@ public class ReportService {
         m.put("planning-fg", this::planningFgReport);
         m.put("planning-kitting", this::planningKittingReport);
         m.put("rfqs", this::rfqsReport);
+        m.put("rfq-closure", this::rfqClosureReport);
         m.put("notification-logs", this::notificationLogsReport);
         m.put("todos", this::todosReport);
         m.put("npd-projects", this::npdProjectsReport);
@@ -183,7 +184,7 @@ public class ReportService {
     @Transactional
     public Export export(String key, LocalDate from, LocalDate to, String q, String action) {
         // 金额只给采购和财务看，应收报表给销售、财务和管理员看，上线检查仅限管理员/主数据/质量导出，其它报表所有内部岗位都能导
-        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "rfqs".equals(key) || "batch-costs".equals(key) || "margins".equals(key) || "cashflow-forecast".equals(key) || "inventory-variance".equals(key) || "inventory-abc".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
+        if (("statements".equals(key) || "ap-aging".equals(key) || "invoice-ledger".equals(key) || "supplier-prices".equals(key) || "rfqs".equals(key) || "rfq-closure".equals(key) || "batch-costs".equals(key) || "margins".equals(key) || "cashflow-forecast".equals(key) || "inventory-variance".equals(key) || "inventory-abc".equals(key)) && !com.cosmetic.scm.security.PriceAccess.allowed()) {
             throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限导出财务对账与成本数据");
         }
         if (("ar-statements".equals(key) || "ar-aging".equals(key) || "ar-invoice-ledger".equals(key) || "customer-credit".equals(key) || "ar-collection".equals(key) || "customer-prices".equals(key)) && !arReportAllowed()) {
@@ -927,6 +928,15 @@ public class ReportService {
         return new Table("询价比价台账", List.of("询价单号", "标题", "轮次", "截止日期", "状态",
                 "邀请家数", "已报价家数", "物料编码", "物料名称", "询价数量", "单位",
                 "历史采购单价", "中标供应商", "中标含税单价", "生成采购单", "定标人", "定标时间"), rows);
+    }
+
+    private Table rfqClosureReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        rfqService.closureBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.rfqNo(), r.title(), "第" + r.roundNo() + "轮", r.deadline(), r.daysLeft(),
+                r.lineCount(), r.invitedCount(), r.quotedCount(), r.responseRatePct(), r.recommendedAction())));
+        return new Table("询价比价截止与未定标监控", List.of("风险分级", "询价单号", "标题", "轮次", "报价截止日", "剩余/超期天数",
+                "物料行数", "邀请家数", "已报价家数", "响应率(%)", "跟进建议"), rows);
     }
 
     private Table notificationLogsReport() {
