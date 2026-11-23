@@ -132,6 +132,7 @@ public class ReportService {
         m.put("plm-readiness", this::plmReadiness);
         m.put("where-used", this::whereUsedReport);
         m.put("npd-readiness", this::npdReadinessReport);
+        m.put("npd-risk", this::npdRiskReport);
         m.put("pqr", () -> pqrReport(from, to));
         m.put("controlled-docs", this::controlledDocsReport);
         m.put("doc-compliance", this::docComplianceReport);
@@ -377,6 +378,16 @@ public class ReportService {
                 r.ready() ? "就绪" : String.join("、", r.missingItems()))));
         return new Table("新品上市就绪度", List.of("项目编号", "产品名称", "品类", "备案类型", "状态",
                 "计划上市日", "剩余天数", "成品编码", "成品名称", "通过项", "完成率(%)", "待补齐门禁"), rows);
+    }
+
+    private Table npdRiskReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        plmInsights.npdRiskBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.projectNo(), r.name(), r.category(), r.filingTypeLabel(), r.statusLabel(),
+                r.targetLaunch(), r.daysLeft(), r.passedCount() + "/" + r.totalCount(), r.readinessPct(),
+                String.join("、", r.missingItems()), r.recommendedAction())));
+        return new Table("新品上市门禁缺口与超期风险预警", List.of("风险分级", "项目编号", "产品名称", "品类", "备案类型", "状态",
+                "计划上市日", "剩余/超期天数", "门禁进度", "就绪率(%)", "待补齐项", "推进建议"), rows);
     }
 
     private Table pqrReport(LocalDate from, LocalDate to) {

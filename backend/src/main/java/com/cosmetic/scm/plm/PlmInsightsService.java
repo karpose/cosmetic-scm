@@ -329,6 +329,21 @@ public class PlmInsightsService {
                                   List<Check> checks) {
     }
 
+    public static final int NPD_AT_RISK_DAYS = 30;
+
+    public record NpdRiskRow(Long projectId, String projectNo, String name, String category,
+                             String filingTypeLabel, String status, String statusLabel,
+                             LocalDate targetLaunch, long daysLeft, String fgCode, String fgName,
+                             int passedCount, int totalCount, BigDecimal readinessPct,
+                             List<String> missingItems, String riskLevel, String riskLabel,
+                             String recommendedAction) {
+    }
+
+    public record NpdRiskBoard(int totalActiveCount, int overdueCount, int atRiskCount,
+                               int pendingApprovalCount, int readyToLaunchCount,
+                               List<NpdRiskRow> rows) {
+    }
+
     @Transactional(readOnly = true)
     public List<NpdReadinessRow> npdReadiness() {
         LocalDate today = time.today();
@@ -355,6 +370,77 @@ public class PlmInsightsService {
                     total > 0 && passed == total, missing, checks));
         }
         return out;
+    }
+
+    /** 新品研发（NPD）上市门禁缺口与超期风险监控看板（V76）。 */
+    @Transactional(readOnly = true)
+    public NpdRiskBoard npdRiskBoard() {
+        List<NpdRiskRow> rows = new ArrayList<>();
+        int overdueCnt = 0;
+        int atRiskCnt = 0;
+        int pendingApproveCnt = 0;
+        int readyCnt = 0;
+
+        for (NpdReadinessRow r : npdReadiness()) {
+            if ("LAUNCHED".equals(r.status())) {
+                continue;
+            }
+            String riskLevel;
+            String riskLabel;
+            String action;
+            String missText = r.missingItems().isEmpty() ? "待立项/关联成品" : String.join("、", r.missingItems());
+            if (r.daysLeft() < 0) {
+                overdueCnt++;
+                riskLevel = "OVERDUE";
+                riskLabel = "已超期(" + (-r.daysLeft()) + "天)";
+                action = "已超计划上市日 " + (-r.daysLeft()) + " 天，"
+                        + (r.ready() ? "门禁已全通过，请尽快提交或批准上市" : "仍缺 " + missText + "，请升级督办补齐");
+            } else if ("LAUNCH_REVIEW".equals(r.status())) {
+                pendingApproveCnt++;
+                riskLevel = "PENDING_APPROVAL";
+                riskLabel = "待 QSO 批上市";
+                action = "上市门禁已全部通过，请质量安全负责人复核并签批上市";
+            } else if ("PROPOSED".equals(r.status())) {
+                pendingApproveCnt++;
+                riskLevel = "PENDING_APPROVAL";
+                riskLabel = "待立项审批";
+                action = "立项申请待管理员审批，批准后方可启动研发与试制";
+            } else if (r.ready()) {
+                readyCnt++;
+                riskLevel = "READY_TO_LAUNCH";
+                riskLabel = "门禁齐套待提";
+                action = "全部 " + r.totalCount() + " 项上市门禁已通过，请提交上市审核";
+            } else if (r.daysLeft() <= NPD_AT_RISK_DAYS) {
+                atRiskCnt++;
+                riskLevel = "AT_RISK";
+                riskLabel = "30天内临期缺口";
+                action = "距计划上市仅 " + r.daysLeft() + " 天，仍缺 " + missText + "，存在延期风险";
+            } else {
+                riskLevel = "ON_TRACK";
+                riskLabel = "正常推进";
+                action = "距计划上市还有 " + r.daysLeft() + " 天，门禁完成 " + r.passedCount() + "/" + r.totalCount() + " 项";
+            }
+            rows.add(new NpdRiskRow(r.projectId(), r.projectNo(), r.name(), r.category(), r.filingTypeLabel(),
+                    r.status(), r.statusLabel(), r.targetLaunch(), r.daysLeft(), r.fgCode(), r.fgName(),
+                    r.passedCount(), r.totalCount(), r.readinessPct(), r.missingItems(),
+                    riskLevel, riskLabel, action));
+        }
+
+        rows.sort(Comparator.comparingInt((NpdRiskRow x) -> npdRiskRank(x.riskLevel()))
+                .thenComparingLong(NpdRiskRow::daysLeft)
+                .thenComparing(NpdRiskRow::projectNo));
+
+        return new NpdRiskBoard(rows.size(), overdueCnt, atRiskCnt, pendingApproveCnt, readyCnt, rows);
+    }
+
+    private static int npdRiskRank(String level) {
+        return switch (level) {
+            case "OVERDUE" -> 0;
+            case "AT_RISK" -> 1;
+            case "PENDING_APPROVAL" -> 2;
+            case "READY_TO_LAUNCH" -> 3;
+            default -> 4;
+        };
     }
 
     private static BigDecimal pctOf(Item fg, Item m, BigDecimal qtyPer) {
