@@ -43,6 +43,11 @@ public class SupplierReturnController {
         return returns.summary();
     }
 
+    @GetMapping("/closure-board")
+    public SupplierReturnService.ReturnClosureBoard closureBoard() {
+        return returns.closureBoard();
+    }
+
     @GetMapping("/candidates")
     @PreAuthorize(MAKER)
     public List<Candidate> candidates(@RequestParam Long supplierId) {

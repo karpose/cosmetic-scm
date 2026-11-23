@@ -126,6 +126,7 @@ public class ReportService {
         m.put("inventory-variance", () -> inventoryVarianceReport(from, to));
         m.put("supplier-performance", () -> supplierPerformanceReport(from, to));
         m.put("supplier-returns", this::supplierReturns);
+        m.put("supplier-return-closure", this::supplierReturnClosureReport);
         m.put("stability", this::stabilityResults);
         m.put("plm-readiness", this::plmReadiness);
         m.put("where-used", this::whereUsedReport);
@@ -227,6 +228,16 @@ public class ReportService {
                 }, r.receivedOn(), r.receiptReference())));
         return new Table("退供记录", List.of("退供单", "供应商", "批号", "供应商批号", "物料", "数量", "单位", "仓库", "原因", "状态", "发起人", "签批人", "签批时间",
                 "承运商", "运单号", "物流登记人", "物流登记时间", "签收登记人", "签收登记时间", "签收备注", "签收来源", "实际签收日期", "回单或凭证编号"), rows);
+    }
+
+    private Table supplierReturnClosureReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        supplierReturns.closureBoard().rows().forEach(r -> rows.add(row(
+                r.riskLabel(), r.stageLabel(), r.returnNo(), r.supplierName(), r.batchNo(), r.extBatchNo(),
+                r.itemName(), r.qty(), r.unit(), r.warehouseName(), r.carrier(), r.trackingNo(),
+                r.agingDays(), r.recommendedAction())));
+        return new Table("退供执行与签收闭环监控", List.of("风险分级", "当前环节", "退供单号", "供应商", "批号", "供应商批号",
+                "物料", "数量", "单位", "仓库", "承运商", "运单号", "当前环节滞留(天)", "闭环处置建议"), rows);
     }
 
     private static boolean arReportAllowed() {
