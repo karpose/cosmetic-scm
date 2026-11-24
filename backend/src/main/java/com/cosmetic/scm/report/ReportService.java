@@ -44,6 +44,7 @@ public class ReportService {
     private final MasterService master;
     private final ProductionService production;
     private final SalesService sales;
+    private final com.cosmetic.scm.sales.SalesRecordService salesRecords;
     private final ComplaintService complaints;
     private final DeviationService deviations;
     private final com.cosmetic.scm.plm.StabilityService stability;
@@ -103,6 +104,7 @@ public class ReportService {
         m.put("purchase-expedite", this::purchaseExpediteReport);
         m.put("production", this::production);
         m.put("shipments", this::shipments);
+        m.put("sales-records", () -> salesRecordsReport(from, to));
         m.put("complaints", this::complaints);
         m.put("deviations", this::deviations);
         m.put("capas", this::capas);
@@ -557,6 +559,18 @@ public class ReportService {
         sales.listAll().forEach(s -> s.allocations().forEach(a -> rows.add(row(s.soNo(), s.orderDate(), s.customerName(), s.channel(),
                 s.warehouseName(), a.itemName(), a.batchNo(), a.qty()))));
         return new Table("出库明细", List.of("出库单", "日期", "客户", "渠道", "发货仓", "产品", "批号", "数量"), rows);
+    }
+
+    /** 产品销售记录（规范第五十九条）：价格只有销售、财务、管理员导得出，别的岗位这两列为空。 */
+    private Table salesRecordsReport(LocalDate from, LocalDate to) {
+        var r = salesRecords.records(from, to);
+        List<List<Object>> rows = new ArrayList<>();
+        r.rows().forEach(x -> rows.add(row(x.saleDate(), x.soNo(), x.itemName(), x.itemCode(), x.filingNo(), x.batchNo(), x.expDate(), x.netContent(),
+                x.qty(), x.unit(), x.unitPrice(), x.amount(), x.priceSource(), x.buyerName(), x.buyerAddress(), x.buyerContact(), x.channel(),
+                x.platformOrderNo(), x.warehouseName(), String.join("；", x.gaps()))));
+        return new Table("产品销售记录", List.of("销售日期", "出库单", "产品名称", "产品编码", "注册证或备案编号", "批号", "限期使用日期", "净含量",
+                "数量", "单位", r.priceVisible() ? "含税单价" : "含税单价（无权限）", r.priceVisible() ? "金额" : "金额（无权限）", "价格来源",
+                "购买者名称", "购买者地址", "购买者联系方式", "渠道", "平台订单号", "发货仓", "缺的内容"), rows);
     }
 
     private Table complaints() {

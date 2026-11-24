@@ -31,4 +31,9 @@ public class SoLine {
     private BigDecimal unitPrice;
 
     private BigDecimal taxRate;
+
+    /** 出库时的注册证或备案编号、净含量（销售记录用，V50 起记录）。 */
+    private String filingNo;
+
+    private String netContent;
 }

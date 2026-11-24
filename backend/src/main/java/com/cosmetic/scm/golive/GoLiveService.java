@@ -147,7 +147,7 @@ public class GoLiveService {
         List<Partner> noContact = all.stream().filter(p -> p.getKind() == PartnerKind.CUSTOMER && (p.getContact() == null || p.getAddress() == null)).toList();
         boolean noCustomers = all.stream().noneMatch(p -> p.getKind() == PartnerKind.CUSTOMER);
         c.add(noContact.isEmpty() ? new Check(g, "客户联系方式", "OK", noCustomers ? "还没有客户，导入后再检查" : "都已填写", "/master")
-                : new Check(g, "客户联系方式", "WARN", noContact.size() + " 家缺联系人或地址，召回时要用：" + names(noContact), "/master"));
+                : new Check(g, "客户联系方式", "WARN", noContact.size() + " 家缺联系方式或地址，销售记录和召回要用：" + names(noContact), "/master"));
     }
 
     private void formulas(List<Check> c) {
@@ -159,6 +159,9 @@ public class GoLiveService {
         List<Item> noFiling = fg.stream().filter(i -> i.getFilingNo() == null).toList();
         c.add(noFiling.isEmpty() ? new Check(g, "备案编号", "OK", fg.isEmpty() ? "还没有成品，导入后再检查" : "都已登记", "/formulas?tab=filings")
                 : new Check(g, "备案编号", "BLOCK", noFiling.size() + " 个成品没有备案编号，不能上市放行：" + codes(noFiling), "/formulas?tab=filings"));
+        List<Item> noNet = fg.stream().filter(i -> i.getNetG() == null && (i.getNetLabel() == null || i.getNetLabel().isBlank())).toList();
+        c.add(noNet.isEmpty() ? new Check(g, "净含量", "OK", fg.isEmpty() ? "还没有成品，导入后再检查" : "都已填写", "/master")
+                : new Check(g, "净含量", "WARN", noNet.size() + " 个成品没填净含量，销售记录要写：" + codes(noNet), "/master"));
         long unchecked = filings.findByStatus(FilingStatus.FILED).stream().filter(f -> f.getFiledDate() == null).count();
         c.add(unchecked == 0 ? new Check(g, "备案记录", "OK", fg.isEmpty() ? "还没有成品，导入后再检查" : "类型和日期都已核对", "/formulas?tab=filings")
                 : new Check(g, "备案记录", "WARN", unchecked + " 条是自动生成的，请核对类型和日期；特殊化妆品要补注册证有效期，否则到期提醒不生效", "/formulas?tab=filings"));

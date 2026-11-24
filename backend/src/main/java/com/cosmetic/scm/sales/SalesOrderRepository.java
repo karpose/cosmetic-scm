@@ -16,4 +16,7 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
     List<SalesOrder> findByCustomerId(Long customerId);
 
     List<SalesOrder> findByOrderDateGreaterThanEqual(LocalDate date);
+
+    /** 销售记录：按出库日期区间，日期、单号顺序。 */
+    List<SalesOrder> findByOrderDateBetweenOrderByOrderDateAscIdAsc(LocalDate from, LocalDate to);
 }

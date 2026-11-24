@@ -47,10 +47,6 @@ import com.cosmetic.scm.production.MfgOrderRepository;
 import com.cosmetic.scm.quality.QualityDecision;
 import com.cosmetic.scm.quality.QualityDecisionRepository;
 import com.cosmetic.scm.recall.RecallRepository;
-import com.cosmetic.scm.sales.SalesOrder;
-import com.cosmetic.scm.sales.SalesOrderRepository;
-import com.cosmetic.scm.sales.SoLine;
-import com.cosmetic.scm.sales.SoLineRepository;
 import com.cosmetic.scm.salesreturn.SalesReturnRepository;
 import com.cosmetic.scm.security.AppUser;
 import com.cosmetic.scm.security.UserRepository;
@@ -86,8 +82,7 @@ public class GmpEvidenceService {
     private final QualityDecisionRepository decisions;
     private final BatchRepository batches;
     private final RetainSampleRepository retains;
-    private final SalesOrderRepository salesOrders;
-    private final SoLineRepository soLines;
+    private final com.cosmetic.scm.sales.SalesRecordService salesRecordService;
     private final StockRepository stocks;
     private final ComplaintRepository complaints;
     private final RecallRepository recalls;
@@ -420,32 +415,18 @@ public class GmpEvidenceService {
     // ---- 销售、贮存、退货、投诉、不良反应、召回 ----
 
     private Evidence salesRecords(Ctx c) {
-        List<SalesOrder> sos = salesOrders.findByOrderDateGreaterThanEqual(c.from()).stream().filter(s -> !s.getOrderDate().isAfter(c.to())).toList();
-        if (sos.isEmpty()) {
+        var r = salesRecordService.records(c.from(), c.to());
+        if (r.orders() == 0) {
             return new Evidence(19, "INFO", "期间内没有销售出库。", List.of());
         }
-        List<SoLine> lines = soLines.findBySoIdIn(sos.stream().map(SalesOrder::getId).toList());
-        List<String> problems = new ArrayList<>();
-        lines.stream().map(SoLine::getItemId).distinct().map(id -> c.items().get(id)).filter(Objects::nonNull).forEach(i -> {
-            if (i.getFilingNo() == null || i.getFilingNo().isBlank()) {
-                problems.add(i.getName() + "（" + i.getCode() + "）：没有注册证编号或备案编号");
-            }
-            if (i.getNetG() == null) {
-                problems.add(i.getName() + "（" + i.getCode() + "）：没有净含量");
-            }
-        });
-        long noPrice = lines.stream().filter(l -> l.getUnitPrice() == null).count();
-        if (noPrice > 0) {
-            problems.add(noPrice + " 行出库没有价格");
+        if (r.incompleteRows() == 0) {
+            return new Evidence(19, "OK", "期间内销售出库 " + r.orders() + " 单、" + r.rows().size() + " 行，产品名称、注册证或备案编号、限期使用日期、净含量、数量、"
+                    + "销售日期、价格和购买者名称、地址、联系方式都有记录（出库时记下，见“销售出库 → 产品销售记录”）。", List.of());
         }
-        sos.stream().map(SalesOrder::getCustomerId).distinct().map(id -> c.partners().get(id)).filter(Objects::nonNull).forEach(p -> {
-            if (p.getAddress() == null || p.getAddress().isBlank() || p.getContact() == null || p.getContact().isBlank()) {
-                problems.add(p.getName() + "：购买者地址或联系方式没有登记");
-            }
-        });
-        return problems.isEmpty()
-                ? new Evidence(19, "OK", "期间内销售出库 " + sos.size() + " 单、" + lines.size() + " 行，产品都有备案编号和净含量，购买者都有地址和联系方式，都有价格；使用期限按批号的限期使用日期记录。", List.of())
-                : new Evidence(19, "WARN", "期间内销售出库 " + sos.size() + " 单，销售记录有 " + problems.size() + " 处不全。", limit(problems));
+        List<String> details = new ArrayList<>(r.gapSummary());
+        r.rows().stream().filter(x -> !x.complete()).limit(10)
+                .forEach(x -> details.add(x.soNo() + " " + x.itemName() + " " + (x.batchNo() == null ? "" : x.batchNo() + " ") + "：" + String.join("、", x.gaps())));
+        return new Evidence(19, "WARN", "期间内销售出库 " + r.orders() + " 单，" + r.incompleteRows() + " 行销售记录不全。", limit(details));
     }
 
     private Evidence expiredStock(Ctx c) {

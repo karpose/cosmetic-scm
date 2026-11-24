@@ -65,7 +65,7 @@
             </el-table-column>
             <el-table-column label="保质期" width="90"><template #default="{ row }">{{ row.shelfMonths ? `${row.shelfMonths} 个月` : '—' }}</template></el-table-column>
             <el-table-column prop="filingNo" label="备案编号" min-width="150" />
-            <el-table-column label="净含量" width="90"><template #default="{ row }">{{ row.netG ? `${fmtQty(row.netG)} g` : '' }}</template></el-table-column>
+            <el-table-column label="净含量" width="90"><template #default="{ row }">{{ row.netLabel || (row.netG ? `${fmtQty(row.netG)} g` : '') }}</template></el-table-column>
             <el-table-column v-if="canEdit" label="" width="80" fixed="right"><template #default="{ row }"><el-button size="small" text @click="openItem(row)">编辑</el-button></template></el-table-column>
           </el-table>
           <ListPager v-model:page="it.page.value" v-model:size="it.size.value" :total="it.total.value" />
@@ -177,6 +177,7 @@
             <span v-if="item.filingLocked" class="muted small">要修改请到“配方与备案 → 备案登记”登记新的备案</span>
           </el-form-item>
           <el-form-item label="净含量（g）"><el-input-number id="it-net" v-model="item.netG" :min="0" :precision="3" :controls="false" style="width:100%" /></el-form-item>
+          <el-form-item label="标签净含量（选填）"><el-input id="it-net-label" v-model="item.netLabel" maxlength="30" placeholder="按标签写，如 30mL；不填按克数" /></el-form-item>
         </div>
         <el-checkbox id="it-active" v-model="item.active">启用</el-checkbox>
       </el-form>
@@ -318,7 +319,7 @@ const summary = ref(null)
 const canEdit = computed(() => auth.hasAny('ADMIN', 'MASTER_DATA'))
 const addLabel = computed(() => ({ items: '新增物料', partners: '新增往来单位', warehouses: '新增仓库', boms: '维护 BOM' }[tab.value]))
 
-const emptyItem = () => ({ id: null, code: '', name: '', itemType: 'RM', unit: 'kg', inci: '', casNo: '', limitPct: null, banned: false, shelfMonths: null, filingNo: '', netG: null, active: true, stdCost: null, listPrice: null })
+const emptyItem = () => ({ id: null, code: '', name: '', itemType: 'RM', unit: 'kg', inci: '', casNo: '', limitPct: null, banned: false, shelfMonths: null, filingNo: '', netG: null, netLabel: '', active: true, stdCost: null, listPrice: null })
 const emptyPartner = () => ({ id: null, code: '', name: '', kind: 'SUPPLIER', licenseNo: '', licenseExpiry: null, licenseScope: '', batchPrefix: '', channel: '', minShelfPct: 0, contact: '', address: '', qualified: true, criticalSupplier: false, taxId: '', bankName: '', bankAccount: '', defaultCreditDays: null, defaultTaxRate: null, financeCode: '', creditLimit: null })
 const item = reactive({ visible: false, saving: false, ...emptyItem() })
 const partner = reactive({ visible: false, saving: false, ...emptyPartner() })

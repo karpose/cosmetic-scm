@@ -102,6 +102,7 @@ public class DashboardService {
     private final AuditService audit;
     private final com.cosmetic.scm.qms.GmpSelfCheckService selfChecks;
     private final com.cosmetic.scm.qms.QsoService qso;
+    private final com.cosmetic.scm.sales.SalesRecordService salesRecords;
     private final TimeProvider time;
 
     public record Counts(long openPurchaseOrders, long quarantine, long availableMaterialBatches,
@@ -252,6 +253,12 @@ public class DashboardService {
         for (com.cosmetic.scm.plm.DocControlService.DocRow d : docControl.assessPending()) {
             todos.add(new Todo("DOC_ASSESS", d.assessOverdue() ? "受控文件考核已超期" : "受控文件待考核", d.assessOverdue() ? "bad" : "info", d.title(), d.docCode(),
                     "第 " + d.currentRev() + " 版还有 " + d.assessPending() + " 人确认了还没考核通过", "/docs"));
+        }
+        // 销售记录（检查要点第 19 项）：近 30 天出库里缺内容的行
+        var sr = salesRecords.records(null, null);
+        if (sr.incompleteRows() > 0) {
+            todos.add(new Todo("SALES_RECORD_GAPS", "销售记录不全", "warn", "近 " + com.cosmetic.scm.sales.SalesRecordService.DEFAULT_DAYS + " 天 " + sr.incompleteRows() + " 行",
+                    "—", String.join("，", sr.gapSummary()), "/sales?tab=records"));
         }
         for (com.cosmetic.scm.qms.QsoService.DelegationView d : qso.expiringSoon()) {
             todos.add(new Todo("QSO_DELEGATION_EXPIRING", "协助履职授权快到期", "warn", d.delegateName(), d.delegationNo(), d.dutyLabels() + "，" + d.validTo() + " 到期", "/qso"));

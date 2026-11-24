@@ -6,16 +6,47 @@
         <p>出库时系统只分配已上市放行的批次，按“先到期先出”排序，并排除剩余效期达不到客户接收标准的批次。批号随出库单记录到客户，用于召回。</p>
       </div>
       <div class="toolbar">
-        <ExportButton :report="activeTab === 'prices' ? 'customer-prices' : 'shipments'" />
+        <ExportButton v-if="activeTab === 'records'" report="sales-records" :params="{ from: sr.from, to: sr.to }" label="导出销售记录" />
+        <ExportButton v-else :report="activeTab === 'prices' ? 'customer-prices' : 'shipments'" />
         <el-button v-if="canCreate && activeTab === 'orders'" type="primary" @click="openCreate">新建出库单</el-button>
         <el-button v-if="canPrice && activeTab === 'prices'" type="primary" @click="openPriceCreate">新增客户协议价</el-button>
       </div>
     </div>
 
-    <el-tabs v-if="canPrice" v-model="activeTab" class="seg" @tab-change="onTabChange">
+    <el-tabs v-model="activeTab" class="seg" @tab-change="onTabChange">
       <el-tab-pane label="销售出库单" name="orders" />
-      <el-tab-pane label="客户协议价" name="prices" />
+      <el-tab-pane label="产品销售记录" name="records" />
+      <el-tab-pane v-if="canPrice" label="客户协议价" name="prices" />
     </el-tabs>
+
+    <template v-if="activeTab === 'records'">
+      <el-card shadow="never" body-style="padding:0 0 8px">
+        <template #header>
+          <div class="filters">
+            <el-date-picker v-model="sr.range" type="daterange" value-format="YYYY-MM-DD" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期"
+                            :clearable="false" aria-label="销售日期范围" @change="loadRecords" />
+            <el-checkbox v-model="sr.onlyGaps">只看不全的</el-checkbox>
+            <span v-if="sr.data" class="muted small">{{ sr.data.orders }} 张出库单、{{ sr.data.rows.length }} 行<template v-if="sr.data.incompleteRows">，<span class="warn">{{ sr.data.incompleteRows }} 行不全</span></template></span>
+          </div>
+          <p class="muted small rec-hint">按《化妆品生产质量管理规范》第五十九条：产品名称、注册证或备案编号、使用期限（限期使用日期）、净含量、数量、销售日期、价格，以及购买者名称、地址和联系方式。购买者和产品信息是出库时记下的；价格取出库单价，出库时没定价的取对账单上的价<template v-if="sr.data && !sr.data.priceVisible">，价格只有销售、财务和管理员能看</template>。最多查一年。</p>
+          <el-alert v-if="sr.data?.gapSummary.length" type="warning" :closable="false" show-icon :title="`缺的内容：${sr.data.gapSummary.join('，')}`"
+                    description="购买者地址、联系方式和成品净含量到“主数据”补；价格在对账时补；以后的出库会自动带上。" />
+        </template>
+        <LoadError v-if="sr.error" :message="sr.error" :loading="sr.loading" @retry="loadRecords" />
+        <el-table v-else :data="srRows" v-loading="sr.loading" empty-text="这段时间没有销售出库" class="rec-table">
+          <el-table-column label="销售日期" width="110" fixed><template #default="{ row }"><span class="mono">{{ row.saleDate }}</span><div class="muted small mono">{{ row.soNo }}</div></template></el-table-column>
+          <el-table-column label="产品" min-width="170"><template #default="{ row }">{{ row.itemName }}<div class="muted small">{{ row.filingNo || '没有备案编号' }}</div></template></el-table-column>
+          <el-table-column label="批号和使用期限" min-width="160"><template #default="{ row }"><BatchNo :no="row.batchNo" /><div class="muted small">{{ row.expDate ? `限期使用 ${row.expDate}` : '没有限期使用日期' }}</div></template></el-table-column>
+          <el-table-column label="净含量" width="90"><template #default="{ row }">{{ row.netContent || '—' }}</template></el-table-column>
+          <el-table-column label="数量" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span> <span class="muted small">{{ row.unit }}</span></template></el-table-column>
+          <el-table-column v-if="sr.data?.priceVisible" label="含税单价" width="120" align="right">
+            <template #default="{ row }"><template v-if="row.unitPrice != null"><span class="mono">¥{{ fmtQty(row.unitPrice) }}</span><div class="muted small">{{ row.priceSource }} · ¥{{ fmtMoney(row.amount) }}</div></template><span v-else class="muted">—</span></template>
+          </el-table-column>
+          <el-table-column label="购买者" min-width="220"><template #default="{ row }">{{ row.buyerName }}<div class="muted small">{{ row.buyerAddress || '没有地址' }} · {{ row.buyerContact || '没有联系方式' }}</div><div v-if="row.platformOrderNo" class="muted small mono">{{ row.platformOrderNo }}</div></template></el-table-column>
+          <el-table-column label="核对" min-width="150"><template #default="{ row }"><el-tag v-if="!row.gaps.length" type="success" size="small" disable-transitions>齐全</el-tag><span v-else class="warn small">{{ row.gaps.join('、') }}</span></template></el-table-column>
+        </el-table>
+      </el-card>
+    </template>
 
     <div v-if="activeTab === 'orders' && summary" class="kpi-grid">
       <div class="kpi-card">
@@ -62,7 +93,7 @@
       </el-table>
     </el-card>
 
-    <el-card v-else shadow="never" body-style="padding:0 0 8px">
+    <el-card v-else-if="activeTab === 'orders'" shadow="never" body-style="padding:0 0 8px">
       <template #header>
         <div class="filters">
           <el-input v-model="t.keyword.value" placeholder="搜索单号、客户、批号" clearable />
@@ -89,6 +120,12 @@
           <template #default="{ row }"><div v-for="a in row.allocations" :key="a.batchId"><BatchNo :no="a.batchNo" /> <span class="mono small">{{ fmtQty(a.qty) }}</span></div></template>
         </el-table-column>
         <el-table-column label="日期" width="110"><template #default="{ row }"><span class="mono">{{ row.orderDate }}</span></template></el-table-column>
+        <el-table-column label="销售记录" width="110">
+          <template #default="{ row }">
+            <el-tooltip v-if="row.recordGaps.length" :content="row.recordGaps.join('、')" placement="top"><el-tag type="warning" size="small" disable-transitions tabindex="0">不全</el-tag></el-tooltip>
+            <span v-else class="muted small">齐全</span>
+          </template>
+        </el-table-column>
       </el-table>
       <ListCapHint :count="orders.length" />
       <ListPager v-model:page="t.page.value" v-model:size="t.size.value" :total="t.total.value" />
@@ -180,6 +217,7 @@
 import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import http from '../api'
 import ListPager from '../components/ListPager.vue'
@@ -188,7 +226,8 @@ import BatchNo from '../components/BatchNo.vue'
 import { useAuth } from '../stores/auth'
 import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
-import { fmtMoney, fmtQty } from '../utils/format'
+import { daysFromToday, fmtMoney, fmtQty, today } from '../utils/format'
+import { latestOnly } from '../utils/latest'
 
 const auth = useAuth()
 const rd = useRefData()
@@ -206,14 +245,35 @@ const t = usePaged(orders, {
 const plan = ref(null)
 const canCreate = computed(() => auth.hasAny('ADMIN', 'SALES', 'WAREHOUSE'))
 const canPrice = computed(() => auth.hasAny('ADMIN', 'SALES', 'FINANCE'))
-const activeTab = ref('orders')
+const route = useRoute()
+const activeTab = ref(route.query.tab === 'records' || (route.query.tab === 'prices' && canPrice.value) ? route.query.tab : 'orders')
+// 产品销售记录
+const sr = reactive({ range: [daysFromToday(-29), today()], onlyGaps: false, loading: false, error: '', data: null, get from() { return this.range[0] }, get to() { return this.range[1] } })
+const srRows = computed(() => (sr.data?.rows || []).filter((r) => !sr.onlyGaps || r.gaps.length))
+const srReq = latestOnly()
+async function loadRecords() {
+  const current = srReq()
+  sr.loading = true
+  sr.error = ''
+  try {
+    const d = await http.get('/sales-orders/records', { params: { from: sr.from, to: sr.to } })
+    if (current()) sr.data = d
+  } catch (e) {
+    if (current()) sr.error = e.message
+  } finally {
+    if (current()) sr.loading = false
+  }
+}
 const cp = reactive({ loading: false, rows: [] })
 const cpForm = reactive({ visible: false, saving: false, customerId: null, itemId: null, unitPrice: null, taxRate: null, validFrom: null, validTo: null, note: '' })
 async function loadCp() {
   cp.loading = true
   try { cp.rows = await http.get('/customer-prices') } finally { cp.loading = false }
 }
-function onTabChange(name) { if (name === 'prices') loadCp() }
+function onTabChange(name) {
+  if (name === 'prices') loadCp()
+  if (name === 'records') loadRecords()
+}
 async function openPriceCreate() {
   await rd.ready()
   Object.assign(cpForm, { visible: true, saving: false, customerId: null, itemId: null, unitPrice: null, taxRate: null, validFrom: null, validTo: null, note: '' })
@@ -290,7 +350,8 @@ async function submit() {
   form.saving = true
   try {
     const so = await http.post('/sales-orders', payload())
-    ElMessage.success(`出库单 ${so.soNo} 已完成`)
+    if (so.recordGaps?.length) ElMessage.warning({ message: `出库单 ${so.soNo} 已完成，但销售记录缺：${so.recordGaps.join('、')}。请到主数据补齐，以后的出库会自动带上`, duration: 8000 })
+    else ElMessage.success(`出库单 ${so.soNo} 已完成`)
     form.visible = false
     load()
   } finally {
@@ -298,7 +359,10 @@ async function submit() {
   }
 }
 
-onMounted(() => Promise.all([load(), rd.load()]))
+onMounted(() => {
+  if (activeTab.value !== 'orders') onTabChange(activeTab.value)
+  return Promise.all([load(), rd.load()])
+})
 </script>
 
 <style scoped>
@@ -312,5 +376,7 @@ onMounted(() => Promise.all([load(), rd.load()]))
 .preview { background: var(--el-fill-color-lighter); }
 .pl { margin-top: 8px; line-height: 2; }
 .pick { margin-right: 10px; }
+.warn { color: var(--el-color-danger); }
+.rec-hint { margin: 8px 0 0; line-height: 1.6; }
 @media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

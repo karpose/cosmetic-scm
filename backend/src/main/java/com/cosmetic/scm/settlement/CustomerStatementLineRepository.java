@@ -17,6 +17,13 @@ public interface CustomerStatementLineRepository extends JpaRepository<CustomerS
             """)
     List<Long> billedSoLineIds(@Param("soLineIds") Collection<Long> soLineIds);
 
+    /** 出库行在没作废的对账单里的单价（出库时没定价、对账时才定价的，销售记录用）：[soLineId, unitPrice]。 */
+    @Query("""
+            select l.soLineId, l.unitPrice from CustomerStatementLine l, CustomerStatement s
+            where s.id = l.statementId and s.status <> 'CANCELLED' and l.soLineId in :soLineIds
+            """)
+    List<Object[]> billedPrices(@Param("soLineIds") Collection<Long> soLineIds);
+
     @Query("""
             select l.salesReturnLineId from CustomerStatementLine l, CustomerStatement s
             where s.id = l.statementId and s.status <> 'CANCELLED' and l.salesReturnLineId in :returnLineIds

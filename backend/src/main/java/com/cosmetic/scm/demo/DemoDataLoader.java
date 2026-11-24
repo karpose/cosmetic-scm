@@ -168,8 +168,8 @@ public class DemoDataLoader implements ApplicationRunner {
         Item box2 = as("admin", () -> pk("PK-BOX-002", "精华彩盒 v2", "1.20"));
         Item jar = as("admin", () -> pk("PK-JAR-003", "50g 面霜瓶", "3.50"));
         Item box4 = as("admin", () -> pk("PK-BOX-004", "面霜彩盒 v1", "1.50"));
-        Item serum = as("admin", () -> fg("FG-SER-001", "烟酰胺精华液 30ml", "示例备案编号-0001", "30", "199"));
-        Item cream = as("admin", () -> fg("FG-CRM-002", "角鲨烷修护面霜 50g", "示例备案编号-0002", "50", "259"));
+        Item serum = as("admin", () -> fg("FG-SER-001", "烟酰胺精华液 30ml", "示例备案编号-0001", "30", "30mL", "199"));
+        Item cream = as("admin", () -> fg("FG-CRM-002", "角鲨烷修护面霜 50g", "示例备案编号-0002", "50", null, "259"));
 
         PartnerView hc = as("admin", () -> partner("SUP-HC", "华澄化工原料（示例）", PartnerKind.SUPPLIER,
                 "示例质量体系证书 QS-118", t.plusDays(300), null, null, null, 0, true));
@@ -422,15 +422,15 @@ public class DemoDataLoader implements ApplicationRunner {
     }
 
     /** 成品不填标准成本，按 BOM 物料成本估算；只填指导价。 */
-    private Item fg(String code, String name, String filing, String netG, String price) {
+    private Item fg(String code, String name, String filing, String netG, String netLabel, String price) {
         return master.createItem(new ItemReq(code, name, ItemType.FG, "瓶", null, null, false, 36, filing, new BigDecimal(netG), true,
-                null, new BigDecimal(price)));
+                null, new BigDecimal(price), null, netLabel));
     }
 
     private PartnerView partner(String code, String name, PartnerKind kind, String license, LocalDate expiry,
                                 String scope, String prefix, String channel, int minShelf, boolean critical) {
         return master.createPartner(new PartnerReq(code, name, kind, license, expiry, scope, prefix, channel, minShelf,
-                kind == PartnerKind.CUSTOMER ? "示例联系人" : null, null, true, critical));
+                kind == PartnerKind.CUSTOMER ? "示例联系人 400-000-0000" : null, kind == PartnerKind.CUSTOMER ? "示例地址（上线前改为实际地址）" : null, true, critical));
     }
 
     private static PoLineReq line(Item item, String qty) {
