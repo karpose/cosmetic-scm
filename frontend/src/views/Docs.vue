@@ -46,6 +46,7 @@
     <el-tabs v-model="activeTab" class="seg">
       <el-tab-pane label="受控文件台账" name="list" />
       <el-tab-pane :label="`合规闭环监控（${compBoard?.totalCount ?? 0}）`" name="compliance" />
+      <el-tab-pane :label="`制度覆盖（缺 ${procMissing}）`" name="procedures" />
     </el-tabs>
 
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
@@ -90,6 +91,22 @@
         <el-table-column prop="recommendedAction" label="合规处置建议" min-width="210" />
         <el-table-column label="" width="80" :fixed="narrow ? false : 'right'">
           <template #default="{ row }"><el-button size="small" @click="openDetail(row.docId)">处理</el-button></template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+    <el-card v-else-if="activeTab === 'procedures'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <span class="small">《化妆品生产质量管理规范检查要点（委托生产版）》要求建立的制度。受控文件标注“对应的制度”后在这里汇总：有生效版本的算已建立。标了“提供物料时才要”的，不向受托方提供物料可以不建。</span>
+      </template>
+      <el-table :data="procs" size="small" scrollbar-tabindex="0">
+        <el-table-column label="制度" min-width="180"><template #default="{ row }">{{ row.label }}<div v-if="row.optional" class="muted small">提供物料时才要</div></template></el-table-column>
+        <el-table-column label="检查项目" width="150"><template #default="{ row }">第 {{ row.items.join('、') }} 项</template></el-table-column>
+        <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.state === 'ESTABLISHED' ? 'success' : row.optional ? 'info' : row.state === 'DRAFTING' ? 'warning' : 'danger'" size="small" disable-transitions>{{ row.stateLabel }}</el-tag></template></el-table-column>
+        <el-table-column label="受控文件" min-width="220">
+          <template #default="{ row }">
+            <span v-for="x in row.docs" :key="x.id" class="proc-doc"><a href="#" class="mono" @click.prevent="openDetail(x.id)">{{ x.docCode }}</a> {{ x.title }} 第 {{ x.currentRev }} 版</span>
+            <span v-if="!row.docs.length" class="muted small">{{ row.state === 'DRAFTING' ? '有文件还没生效' : '还没有' }}</span>
+          </template>
         </el-table-column>
       </el-table>
     </el-card>
@@ -146,6 +163,11 @@
             <el-option v-for="r in roles" :key="r.code" :value="r.code" :label="r.label" />
           </el-select>
         </el-form-item>
+        <el-form-item label="对应的制度（选填）">
+          <el-select id="dc-procedures" v-model="cr.procedures" multiple filterable placeholder="这份文件属于哪些制度" style="width:100%">
+            <el-option v-for="p in procs" :key="p.code" :value="p.code" :label="p.label + (p.optional ? '（提供物料时）' : '')" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="制定说明"><el-input id="dc-summary" v-model="cr.changeSummary" maxlength="300" placeholder="如：首版" /></el-form-item>
         <p class="muted small">保存后上传文件，再由质量安全负责人签批。</p>
       </el-form>
@@ -169,6 +191,17 @@
             <el-checkbox id="dc-assess-required" v-model="tr.assess" :disabled="!tr.roles.length">确认后还要考核</el-checkbox>
             <el-button size="small" type="primary" :loading="tr.saving" @click="saveRoles">保存</el-button>
             <el-button size="small" text @click="tr.editing = false">取消</el-button>
+          </template>
+        </div>
+        <div class="proc-row small">
+          <span>对应的制度：{{ d.procedures.length ? d.procedures.map(procLabel).join('、') : '没有标注' }}</span>
+          <el-button v-if="canEdit && d.status === 'ACTIVE' && !pr.editing" size="small" text @click="pr.editing = true; pr.codes = [...d.procedures]">修改</el-button>
+          <template v-if="pr.editing">
+            <el-select v-model="pr.codes" multiple filterable size="small" placeholder="不选表示不对应任何制度" aria-label="对应的制度" style="min-width:280px">
+              <el-option v-for="p in procs" :key="p.code" :value="p.code" :label="p.label" />
+            </el-select>
+            <el-button size="small" type="primary" :loading="pr.saving" @click="saveProcedures">保存</el-button>
+            <el-button size="small" text @click="pr.editing = false">取消</el-button>
           </template>
         </div>
         <div v-if="dt.data.ack" class="ack-box">
@@ -290,6 +323,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
@@ -312,7 +346,11 @@ const roles = ref([])
 const roleLabel = (code) => roles.value.find((r) => r.code === code)?.label || code
 const mine = ref([])
 const isQso = computed(() => auth.hasAny('QSO'))
-const activeTab = ref('list')
+const route = useRoute()
+const activeTab = ref(['compliance', 'procedures'].includes(route.query.tab) ? route.query.tab : 'list')
+const procs = ref([])
+const procLabel = (code) => procs.value.find((p) => p.code === code)?.label || code
+const procMissing = computed(() => procs.value.filter((p) => !p.optional && p.state !== 'ESTABLISHED').length)
 const docs = ref([])
 const docSum = ref(null)
 const compBoard = ref(null)
@@ -324,12 +362,14 @@ const filteredCompRows = computed(() => {
 const activeOnly = ref(true)
 const categoryFilter = ref('')
 const loader = useLoader(async () => {
-  const [d, m, s, cb] = await Promise.all([
+  const [d, m, s, cb, pc] = await Promise.all([
     http.get('/docs'),
     http.get('/docs/my-pending'),
     http.get('/docs/summary'),
-    http.get('/docs/compliance-board')
+    http.get('/docs/compliance-board'),
+    http.get('/docs/procedures')
   ])
+  procs.value = pc
   docs.value = d
   mine.value = m
   docSum.value = s
@@ -352,15 +392,15 @@ onMounted(() => {
 })
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
-const cr = reactive({ visible: false, saving: false, docCode: '', title: '', category: 'SOP', ownerDept: '', reviewMonths: 24, effectiveDate: null, changeSummary: '首版', trainRoles: [] })
+const cr = reactive({ visible: false, saving: false, docCode: '', title: '', category: 'SOP', ownerDept: '', reviewMonths: 24, effectiveDate: null, changeSummary: '首版', trainRoles: [], procedures: [] })
 function openCreate() {
-  Object.assign(cr, { visible: true, saving: false, docCode: '', title: '', category: 'SOP', ownerDept: '', reviewMonths: 24, effectiveDate: null, changeSummary: '首版', trainRoles: [] })
+  Object.assign(cr, { visible: true, saving: false, docCode: '', title: '', category: 'SOP', ownerDept: '', reviewMonths: 24, effectiveDate: null, changeSummary: '首版', trainRoles: [], procedures: [] })
 }
 async function submitCreate() {
   if (!cr.docCode.trim() || !cr.title.trim() || !cr.changeSummary.trim()) return ElMessage.warning('请填写文件编号、名称和制定说明')
   cr.saving = true
   try {
-    const x = await http.post('/docs', { docCode: cr.docCode, title: cr.title, category: cr.category, ownerDept: cr.ownerDept, reviewMonths: cr.reviewMonths, effectiveDate: cr.effectiveDate, changeSummary: cr.changeSummary, trainRoles: cr.trainRoles })
+    const x = await http.post('/docs', { docCode: cr.docCode, title: cr.title, category: cr.category, ownerDept: cr.ownerDept, reviewMonths: cr.reviewMonths, effectiveDate: cr.effectiveDate, changeSummary: cr.changeSummary, trainRoles: cr.trainRoles, procedures: cr.procedures })
     ElMessage.success(`文件 ${x.doc.docCode} 已保存，请上传文件`)
     cr.visible = false
     load()
@@ -430,6 +470,18 @@ async function submitAssess() {
   }
 }
 
+const pr = reactive({ editing: false, saving: false, codes: [] })
+async function saveProcedures() {
+  pr.saving = true
+  try {
+    apply(await http.post(`/docs/${d.value.id}/procedures`, { procedures: pr.codes }))
+    pr.editing = false
+    ElMessage.success('已修改对应的制度')
+  } finally {
+    pr.saving = false
+  }
+}
+
 async function ackMine() {
   dt.saving = true
   try {
@@ -441,6 +493,7 @@ async function ackMine() {
 }
 function show(x) {
   tr.editing = false
+  pr.editing = false
   dt.data = x
   dt.rev = x.revisions.find((r) => r.status === 'PENDING') || x.revisions.find((r) => r.current) || x.revisions[0] || null
   dt.password = ''
@@ -550,10 +603,11 @@ async function submitRevise() {
 .summary-line { margin: 0 0 6px; line-height: 1.8; }
 .mine { margin-bottom: 14px; }
 .mine-row { padding: 4px 0; }
-.roles-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 6px 0; }
+.roles-row, .proc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 6px 0; }
 .ack-box { margin: 8px 0; padding: 10px 12px; border-radius: 12px; background: var(--lg-tint); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .ack-box > .small { flex: 1 1 100%; }
 .person { margin-right: 12px; }
+.proc-doc { display: block; }
 .assess-head { display: flex; flex-wrap: wrap; gap: 0 16px; }
 .assess-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 0; border-top: 1px solid var(--el-border-color-lighter); }
 .assess-name { flex: 0 0 140px; }

@@ -57,6 +57,9 @@ public class ControlledDoc {
     /** 已读确认之后还要考核。 */
     private boolean assessRequired;
 
+    /** 对应的质量管理制度（QualityProcedure 代码，逗号分隔）。 */
+    private String procedures;
+
     private String createdBy;
 
     private LocalDateTime createdAt;

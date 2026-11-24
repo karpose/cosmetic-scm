@@ -79,6 +79,7 @@ public class GmpEvidenceService {
     private final SupplierAuditRepository audits;
     private final UserRepository users;
     private final ControlledDocRepository docs;
+    private final com.cosmetic.scm.plm.DocRevisionRepository revisions;
     private final QualityDecisionRepository decisions;
     private final BatchRepository batches;
     private final RetainSampleRepository retains;
@@ -141,8 +142,47 @@ public class GmpEvidenceService {
         out.add(complaintsCheck(c, cs));
         out.add(adverse(cs));
         out.add(recallCheck(c));
+        out = withProcedures(out, c.today());
         out.sort(Comparator.comparingInt(Evidence::itemNo));
         return out;
+    }
+
+    /**
+     * 把制度覆盖并进各项：列出对应制度已建立（文件编号）还是缺，缺必备制度的项目标为要注意；
+     * 只有可选制度（提供物料时才要）缺的，提示即可。原来没有核对的项目（第 3、5、18 项）也加上制度核对。
+     */
+    private List<Evidence> withProcedures(List<Evidence> base, LocalDate today) {
+        List<ControlledDoc> active = docs.findByStatus(DocStatus.ACTIVE).stream().filter(d -> d.getProcedures() != null).toList();
+        Map<Long, List<com.cosmetic.scm.plm.DocRevision>> byDoc = active.isEmpty() ? Map.of()
+                : revisions.findByDocIdIn(active.stream().map(ControlledDoc::getId).toList()).stream()
+                        .collect(Collectors.groupingBy(com.cosmetic.scm.plm.DocRevision::getDocId));
+        List<com.cosmetic.scm.plm.ProcedureCoverage.Row> rows = com.cosmetic.scm.plm.ProcedureCoverage.compute(active, byDoc, today);
+        Map<Integer, Evidence> byNo = new java.util.TreeMap<>();
+        base.forEach(e -> byNo.put(e.itemNo(), e));
+        Map<Integer, List<com.cosmetic.scm.plm.ProcedureCoverage.Row>> byItem = new java.util.TreeMap<>();
+        rows.forEach(r -> r.items().forEach(no -> byItem.computeIfAbsent(no, k -> new ArrayList<>()).add(r)));
+        byItem.forEach((no, list) -> {
+            List<String> lines = new ArrayList<>();
+            for (com.cosmetic.scm.plm.ProcedureCoverage.Row r : list) {
+                switch (r.state()) {
+                    case ESTABLISHED -> lines.add("制度“" + r.label() + "”已建立：" + r.docs().stream().map(x -> x.docCode() + " 第 " + x.currentRev() + " 版")
+                            .collect(Collectors.joining("、")));
+                    case DRAFTING -> lines.add("制度“" + r.label() + "”的文件还没生效" + (r.optional() ? "（提供物料时才要）" : ""));
+                    default -> lines.add("制度“" + r.label() + "”还没有对应的受控文件" + (r.optional() ? "（提供物料时才要）" : ""));
+                }
+            }
+            long missing = list.stream().filter(r -> !r.optional() && r.state() != com.cosmetic.scm.plm.ProcedureCoverage.State.ESTABLISHED).count();
+            Evidence old = byNo.get(no);
+            String note = missing > 0 ? "缺 " + missing + " 项制度的生效文件。" : "对应的制度都有生效文件。";
+            if (old == null) {
+                byNo.put(no, new Evidence(no, missing > 0 ? "WARN" : "OK", note + "制度是否执行到位请人工核对。", lines));
+            } else {
+                List<String> details = new ArrayList<>(old.details());
+                details.addAll(lines);
+                byNo.put(no, new Evidence(no, missing > 0 ? "WARN" : old.level(), old.summary() + (missing > 0 ? " " + note : ""), details));
+            }
+        });
+        return new ArrayList<>(byNo.values());
     }
 
     // ---- 委托资格和受托生产企业 ----

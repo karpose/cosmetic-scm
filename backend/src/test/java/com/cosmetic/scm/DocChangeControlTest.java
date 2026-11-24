@@ -344,6 +344,51 @@ class DocChangeControlTest {
         return sb.toString();
     }
 
+    private JsonNode coverage(String t, String code) throws Exception {
+        for (JsonNode r : read(t, "/api/docs/procedures")) {
+            if (r.get("code").asText().equals(code)) {
+                return r;
+            }
+        }
+        throw new AssertionError(code);
+    }
+
+    @Test
+    void documentsAreTaggedWithTheProceduresTheChecklistRequires() throws Exception {
+        String qa = login("qa1");
+        String qso = login("qso1");
+        Map<String, Object> m = doc("SOP-PR-1", null);
+        m.put("procedures", List.of("BOGUS"));
+        call(qa, "/api/docs", m).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("不认识的制度")));
+        m.put("procedures", List.of("RELEASE", "RETAIN"));
+        JsonNode d = ok(call(qa, "/api/docs", m));
+        String base = "/api/docs/" + d.get("doc").get("id").asLong();
+        assertThat(d.get("doc").get("procedures").toString()).contains("RELEASE").contains("RETAIN");
+        // 还没生效：在建
+        assertThat(coverage(qa, "RELEASE").get("state").asText()).isEqualTo("DRAFTING");
+        assertThat(coverage(qa, "SALES_RECORD").get("state").asText()).isEqualTo("MISSING");
+        assertThat(coverage(qa, "MATERIAL_RELEASE").get("optional").asBoolean()).isTrue();
+        long rev = d.get("revisions").get(0).get("id").asLong();
+        upload(qa, rev);
+        ok(call(qso, base + "/revisions/" + rev + "/approve", Map.of("password", PWD)));
+        JsonNode release = coverage(qa, "RELEASE");
+        assertThat(release.get("state").asText()).isEqualTo("ESTABLISHED");
+        assertThat(release.get("docs").get(0).get("docCode").asText()).isEqualTo("SOP-PR-1");
+        assertThat(release.get("items").toString()).contains("13");
+        // 改对应的制度：只给主数据和质量
+        call(login("sales1"), base + "/procedures", Map.of("procedures", List.of("RELEASE"))).andExpect(status().isForbidden());
+        d = ok(call(qa, base + "/procedures", Map.of("procedures", List.of("RELEASE", "SALES_RECORD"))));
+        assertThat(d.get("doc").get("procedures").toString()).contains("SALES_RECORD").doesNotContain("RETAIN");
+        assertThat(coverage(qa, "RETAIN").get("state").asText()).isEqualTo("MISSING");
+        assertThat(coverage(qa, "SALES_RECORD").get("state").asText()).isEqualTo("ESTABLISHED");
+        assertThat(read(login("admin", "Admin@123456"), "/api/golive").toString()).contains("必备制度");
+        assertThat(read(qa, "/api/audit?q=SOP-PR-1").toString()).contains("修改文件对应的制度").contains("产品放行、留样 改为");
+        // 作废后不算
+        ok(call(qso, base + "/obsolete", Map.of("note", "合并")));
+        assertThat(coverage(qa, "RELEASE").get("state").asText()).isEqualTo("MISSING");
+        call(qa, base + "/procedures", Map.of("procedures", List.of())).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("作废")));
+    }
+
     @Test
     void peopleInTheChosenRolesAcknowledgeEachNewRevisionOnce() throws Exception {
         String qa = login("qa1");

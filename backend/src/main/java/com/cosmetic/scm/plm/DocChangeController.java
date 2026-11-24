@@ -97,6 +97,17 @@ public class DocChangeController {
         return docs.recordAssessments(id, revId, req);
     }
 
+    @GetMapping("/docs/procedures")
+    public List<ProcedureCoverage.Row> procedureCoverage() {
+        return docs.procedureCoverage();
+    }
+
+    @PostMapping("/docs/{id}/procedures")
+    @PreAuthorize("hasAnyRole('MASTER_DATA','QA','QSO')")
+    public DocControlService.DocDetail setProcedures(@PathVariable Long id, @RequestBody DocControlService.ProceduresReq req) {
+        return docs.setProcedures(id, req);
+    }
+
     @PostMapping("/docs/{id}/copies")
     @PreAuthorize("hasAnyRole('QA','QSO')")
     public DocControlService.DocDetail issueCopies(@PathVariable Long id, @Valid @RequestBody DocControlService.IssueReq req) {

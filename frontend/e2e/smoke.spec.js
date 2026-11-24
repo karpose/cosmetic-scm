@@ -2093,6 +2093,29 @@ test('受控文件培训考核：确认已读后由质量人员登记考核，�
   expect((await download).suggestedFilename()).toMatch(/^培训考核记录-.*\.xlsx$/)
 })
 
+test('制度覆盖：受控文件标注对应的制度，按检查要点汇总已建立和缺的制度', async ({ page }) => {
+  await login(page, 'qa1')
+  await page.goto('/docs?tab=procedures')
+  const row = (label) => page.locator('.el-table__row').filter({ hasText: label }).first()
+  // 示例 SOP-QA-001 标了物料放行，前面的用例已签批生效
+  await expect(row('物料放行')).toContainText('已建立')
+  await expect(row('物料放行')).toContainText('SOP-QA-001')
+  await expect(row('产品放行')).toContainText('缺')
+  await row('物料放行').getByRole('link', { name: 'SOP-QA-001' }).click()
+  const dt = page.getByRole('dialog', { name: /^受控文件 SOP-QA-001/ })
+  const pr = dt.locator('.proc-row')
+  await expect(pr).toContainText('物料进货查验')
+  await pr.getByRole('button', { name: '修改' }).click()
+  await pr.locator('.el-select').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: /^产品放行$/ }).click()
+  await page.keyboard.press('Escape')
+  await pr.getByRole('button', { name: '保存' }).click()
+  await toast(page, '已修改对应的制度')
+  await expect(pr).toContainText('产品放行')
+  await dt.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(row('产品放行')).toContainText('已建立')
+})
+
 test('变更控制：评估生成行动项、QSO 批准、负责人完成、QSO 关闭', async ({ page }) => {
   test.setTimeout(240_000)
   const open = async () => {
