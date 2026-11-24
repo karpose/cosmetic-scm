@@ -1973,6 +1973,81 @@ test('受控文件纸质副本：发放现行版本，收回和登记遗失', as
   await expect(dt.getByText('在用 0 份')).toBeVisible()
 })
 
+test('GMP 自查（委托生产版）：逐项登记、瑕疵转 CAPA、另一位 QSO 签批、打印报告', async ({ page }) => {
+  test.setTimeout(180_000)
+  await login(page, 'qa1')
+  await page.goto('/self-checks')
+  await page.getByRole('button', { name: '发起自查' }).click()
+  const cr = dialog(page, '发起 GMP 自查')
+  await cr.getByRole('button', { name: '发起自查' }).click()
+  await toast(page, '已发起')
+  const dt = page.getByRole('dialog', { name: /^GMP 自查 ZC/ })
+  await expect(dt.getByText('第 13 项 产品上市放行')).toBeVisible()
+  // 系统核对：示例数据里有一件不良反应还没上报
+  await expect(dt.locator('.item-card').filter({ hasText: '第 23 项' }).locator('.evidence')).toContainText('还没上报')
+  // 先用接口把其余 22 项登记为符合
+  const id = await page.evaluate(async () => {
+    const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
+    const list = await (await fetch('/api/qms/self-checks', { headers: h })).json()
+    const open = list.find((x) => x.status === 'DRAFT')
+    for (let n = 1; n <= 24; n++) {
+      if (n === 12 || n === 19) continue
+      const r = await fetch(`/api/qms/self-checks/${open.id}/items/${n}`, { method: 'POST', headers: h, body: JSON.stringify({ result: 'COMPLIANT' }) })
+      if (!r.ok) throw new Error(await r.text())
+    }
+    return open.id
+  })
+  await dt.getByRole('button', { name: '关闭', exact: true }).click()
+  await page.getByRole('link', { name: /^ZC/ }).first().click()
+  await expect(dt.getByText('未检查 2')).toBeVisible()
+  await expect(dt.getByRole('button', { name: '提交签批' })).toBeDisabled()
+
+  // 第 12 项：不提供物料，判不适用
+  const it12 = dt.locator('.item-card').filter({ hasText: '第 12 项' })
+  await it12.getByText('不适用', { exact: true }).click()
+  await it12.getByRole('button', { name: '保存第 12 项' }).click()
+  await toast(page, '为什么不适用')
+  await it12.locator('#sc-finding-12').fill('E2E 不向受托方提供物料')
+  await it12.getByRole('button', { name: '保存第 12 项' }).click()
+  await toast(page, '第 12 项已保存')
+  // 第 19 项：存在瑕疵，转 CAPA
+  const it19 = dt.locator('.item-card').filter({ hasText: '第 19 项' })
+  await it19.getByText('存在瑕疵', { exact: true }).click()
+  await it19.locator('#sc-finding-19').fill('E2E 两个产品没有维护净含量')
+  await it19.getByRole('button', { name: '保存第 19 项' }).click()
+  await toast(page, '第 19 项已保存')
+  await expect(dt.locator('.verdict')).toContainText('存在缺陷')
+  await it19.getByRole('button', { name: '转 CAPA' }).click()
+  const cp = page.getByRole('dialog', { name: '第 19 项转 CAPA' })
+  await cp.locator('#sc-capa-desc').fill('E2E 补齐净含量并复核销售记录')
+  await cp.getByRole('button', { name: '生成 CAPA' }).click()
+  await toast(page, '已生成 CAPA')
+  await expect(it19.getByRole('link', { name: /CAPA CA/ })).toBeVisible()
+
+  await dt.getByRole('button', { name: '提交签批' }).click()
+  const sb = page.getByRole('dialog', { name: '提交签批' })
+  await sb.locator('#sc-summary').fill('E2E 年度自查，发现 1 处瑕疵已转 CAPA')
+  await sb.getByRole('button', { name: '提交签批' }).click()
+  await toast(page, '等待质量安全负责人签批')
+
+  // 另一位 QSO 签批
+  await login(page, 'qso1')
+  await page.goto('/self-checks')
+  await page.locator('.el-table__row').filter({ hasText: '待签批' }).getByRole('link', { name: /^ZC/ }).click()
+  await dt.getByRole('button', { name: '签批', exact: true }).click()
+  const ap = page.getByRole('dialog', { name: '签批 GMP 自查' })
+  await ap.locator('#sc-password').fill(DEMO)
+  await ap.getByRole('button', { name: '签批' }).click()
+  await toast(page, '已签批')
+  await expect(dt.locator('.summary-line')).toContainText('已签批')
+  await dt.getByRole('button', { name: '打印报告' }).click()
+  await expect(page).toHaveURL(new RegExp(`/self-check-report\\?id=${id}`))
+  const doc = page.locator('article.doc')
+  await expect(doc.getByRole('heading', { name: '化妆品生产质量管理规范自查报告' })).toBeVisible()
+  await expect(doc.locator('table.items tbody tr')).toHaveCount(24)
+  await expect(doc.getByText('E2E 两个产品没有维护净含量')).toBeVisible()
+})
+
 test('受控文件培训考核：确认已读后由质量人员登记考核，没通过可以补考', async ({ page }) => {
   await login(page, 'qa1')
   await page.goto('/docs')
@@ -2380,7 +2455,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页

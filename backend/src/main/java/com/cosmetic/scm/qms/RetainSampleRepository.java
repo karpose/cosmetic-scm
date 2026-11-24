@@ -23,4 +23,8 @@ public interface RetainSampleRepository extends JpaRepository<RetainSample, Long
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from RetainSample x where x.id = :id")
     Optional<RetainSample> lockById(@Param("id") Long id);
+
+    List<RetainSample> findByBatchIdIn(java.util.Collection<Long> batchIds);
+
+    List<RetainSample> findByCreatedAtGreaterThanEqualAndCreatedAtLessThan(java.time.LocalDateTime from, java.time.LocalDateTime to);
 }

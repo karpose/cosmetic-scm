@@ -28,4 +28,6 @@ public interface RecallRepository extends JpaRepository<Recall, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from Recall x where x.id = :id")
     Optional<Recall> lockById(@Param("id") Long id);
+
+    long countByOpenedAtGreaterThanEqualAndOpenedAtLessThan(java.time.LocalDateTime from, java.time.LocalDateTime to);
 }

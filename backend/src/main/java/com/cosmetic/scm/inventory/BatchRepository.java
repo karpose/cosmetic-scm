@@ -82,4 +82,7 @@ public interface BatchRepository extends JpaRepository<Batch, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from Batch x where x.batchNo = :batchNo")
     Optional<Batch> lockByBatchNo(@Param("batchNo") String batchNo);
+
+    List<Batch> findBySourceTypeAndStatusAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(com.cosmetic.scm.domain.SourceType sourceType, BatchStatus status,
+            java.time.LocalDateTime from, java.time.LocalDateTime to);
 }

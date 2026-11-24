@@ -32,4 +32,12 @@ public interface MfgOrderRepository extends JpaRepository<MfgOrder, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from MfgOrder x where x.id = :id")
     Optional<MfgOrder> lockById(@Param("id") Long id);
+
+    List<MfgOrder> findByMoTypeAndStatusIn(MoType moType, Collection<MoStatus> statuses);
+
+    List<MfgOrder> findByMoTypeAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(MoType moType, java.time.LocalDateTime from, java.time.LocalDateTime to);
+
+    List<MfgOrder> findByMoTypeAndCompletedAtGreaterThanEqualAndCompletedAtLessThan(MoType moType, java.time.LocalDateTime from, java.time.LocalDateTime to);
+
+    List<MfgOrder> findByMoNoIn(Collection<String> moNos);
 }
