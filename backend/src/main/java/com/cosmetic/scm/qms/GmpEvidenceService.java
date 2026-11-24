@@ -80,6 +80,9 @@ public class GmpEvidenceService {
     private final UserRepository users;
     private final ControlledDocRepository docs;
     private final com.cosmetic.scm.plm.DocRevisionRepository revisions;
+    private final QsoAppointmentRepository qsoAppointments;
+    private final QsoDelegationRepository qsoDelegations;
+    private final QsoDelegationReviewRepository qsoReviews;
     private final QualityDecisionRepository decisions;
     private final BatchRepository batches;
     private final RetainSampleRepository retains;
@@ -123,6 +126,7 @@ public class GmpEvidenceService {
         List<Evidence> out = new ArrayList<>();
         out.add(qualification(c));
         out.add(qso());
+        out.add(qsoDelegation());
         out.add(oemAudit(c));
         out.add(oemList(c));
         out.add(oemSupervision(c));
@@ -223,13 +227,61 @@ public class GmpEvidenceService {
         return new Evidence(2, "WARN", problems.size() + " 处要注意。许可范围（眼部、儿童护肤类）请人工核对。", limit(problems));
     }
 
+    /** 第 4 项：现任质量安全负责人的任职档案；有质量安全负责人角色的账号要么是现任、要么有生效授权（第 5 项另列授权）。 */
     private Evidence qso() {
-        List<AppUser> qsos = users.findAll().stream().filter(u -> u.isEnabled() && !u.isPortal() && u.hasRole(Role.QSO)).toList();
-        if (qsos.isEmpty()) {
-            return new Evidence(4, "WARN", "系统里没有启用的质量安全负责人账号。", List.of());
+        var cur = qsoAppointments.findFirstByStatus(com.cosmetic.scm.domain.AppointmentStatus.ACTIVE).orElse(null);
+        List<String> details = new ArrayList<>();
+        List<String> problems = unauthorizedQso(cur);
+        if (cur == null) {
+            details.addAll(problems);
+            return new Evidence(4, "WARN", "还没有登记生效的质量安全负责人任职档案（专业、经验年限、任命文件）。", limit(details));
         }
-        return new Evidence(4, "INFO", "启用的质量安全负责人账号 " + qsos.size() + " 个；任职资质（专业、5 年经验、任命文件）请人工核对。",
-                limit(qsos.stream().map(u -> u.getDisplayName() == null ? u.getUsername() : u.getDisplayName() + "（" + u.getUsername() + "）").toList()));
+        details.add(cur.getPersonName() + "（" + cur.getUsername() + "）：" + cur.getMajorField().getLabel()
+                + (cur.getMajorDetail() == null ? "" : " " + cur.getMajorDetail()) + "，经验 " + cur.getYearsExperience() + " 年，" + cur.getAppointedOn() + " 任职");
+        details.addAll(problems);
+        return new Evidence(4, problems.isEmpty() ? "OK" : "WARN", problems.isEmpty() ? "现任质量安全负责人有任职档案，有质量安全负责人角色的账号都是现任或有生效授权。履职情况请人工核对。"
+                : problems.size() + " 个账号有质量安全负责人角色，却不是现任也没有生效授权。", limit(details));
+    }
+
+    /** 第 5 项：协助履职授权和监督记录。 */
+    private Evidence qsoDelegation() {
+        LocalDate today = time.today();
+        var cur = qsoAppointments.findFirstByStatus(com.cosmetic.scm.domain.AppointmentStatus.ACTIVE).orElse(null);
+        List<QsoDelegation> active = qsoDelegations.findByStatus(com.cosmetic.scm.domain.DelegationStatus.ACTIVE).stream()
+                .filter(d -> !today.isBefore(d.getValidFrom()) && !today.isAfter(d.getValidTo())).toList();
+        if (active.isEmpty()) {
+            return new Evidence(5, cur == null ? "WARN" : "OK", cur == null ? "还没有现任质量安全负责人。" : "没有生效中的协助履职授权，质量安全负责人独立履职。", unauthorizedQso(cur));
+        }
+        Map<Long, LocalDate> last = new HashMap<>();
+        reviewsOf(active).forEach(r -> last.merge(r.getDelegationId(), r.getReviewDate(), (a, b) -> a.isAfter(b) ? a : b));
+        List<String> details = new ArrayList<>();
+        int due = 0;
+        for (QsoDelegation d : active) {
+            LocalDate since = last.getOrDefault(d.getId(), d.getValidFrom());
+            boolean late = since.plusMonths(QsoService.REVIEW_MONTHS).isBefore(today);
+            due += late ? 1 : 0;
+            details.add(d.getDelegationNo() + " " + d.getDelegateUsername() + "，" + d.getValidFrom() + " 至 " + d.getValidTo()
+                    + (last.containsKey(d.getId()) ? "，最近监督 " + last.get(d.getId()) : "，还没有监督记录") + (late ? "（超过 " + QsoService.REVIEW_MONTHS + " 个月没有监督）" : ""));
+        }
+        details.addAll(unauthorizedQso(cur));
+        boolean warn = due > 0 || !unauthorizedQso(cur).isEmpty();
+        return new Evidence(5, warn ? "WARN" : "OK", "生效中的协助履职授权 " + active.size() + " 份" + (due > 0 ? "，" + due + " 份超过 " + QsoService.REVIEW_MONTHS + " 个月没有监督记录" : "，都有近期监督记录")
+                + "。", limit(details));
+    }
+
+    private List<QsoDelegationReview> reviewsOf(List<QsoDelegation> list) {
+        return qsoReviews.findByDelegationIdInOrderByReviewDateAscIdAsc(list.stream().map(QsoDelegation::getId).toList());
+    }
+
+    /** 有质量安全负责人角色、却不是现任也没有生效授权的账号。 */
+    private List<String> unauthorizedQso(QsoAppointment cur) {
+        LocalDate today = time.today();
+        java.util.Set<String> delegated = qsoDelegations.findByStatus(com.cosmetic.scm.domain.DelegationStatus.ACTIVE).stream()
+                .filter(d -> !today.isBefore(d.getValidFrom()) && !today.isAfter(d.getValidTo())).map(QsoDelegation::getDelegateUsername).collect(Collectors.toSet());
+        return users.findAll().stream().filter(u -> u.isEnabled() && !u.isPortal() && u.hasRole(Role.QSO))
+                .filter(u -> (cur == null || !cur.getUsername().equals(u.getUsername())) && !delegated.contains(u.getUsername()))
+                .map(u -> (u.getDisplayName() == null ? u.getUsername() : u.getDisplayName() + "（" + u.getUsername() + "）") + "：有质量安全负责人角色，但不是现任，也没有生效授权")
+                .sorted().toList();
     }
 
     private Evidence oemAudit(Ctx c) {
