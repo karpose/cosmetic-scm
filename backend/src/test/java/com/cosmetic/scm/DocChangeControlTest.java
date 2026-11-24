@@ -219,6 +219,131 @@ class DocChangeControlTest {
                 .contains("受控文件纸质副本遗失").contains("车间搬迁时丢失").contains("收回受控文件纸质副本");
     }
 
+    private Map<String, Object> assess(LocalDate on, String method, Object... lines) {
+        List<Map<String, Object>> rs = new java.util.ArrayList<>();
+        for (Object l : lines) {
+            @SuppressWarnings("unchecked") Map<String, Object> m = (Map<String, Object>) l;
+            rs.add(m);
+        }
+        return Map.of("assessedOn", on.toString(), "method", method, "results", rs);
+    }
+
+    private static Map<String, Object> line(String user, boolean passed, Integer score, String note) {
+        Map<String, Object> m = new HashMap<>(Map.of("username", user, "passed", passed));
+        if (score != null) {
+            m.put("score", score);
+        }
+        if (note != null) {
+            m.put("note", note);
+        }
+        return m;
+    }
+
+    private JsonNode person(JsonNode d, String user) {
+        for (JsonNode p : d.get("ack").get("people")) {
+            if (p.get("username").asText().equals(user)) {
+                return p;
+            }
+        }
+        throw new AssertionError(user);
+    }
+
+    @Test
+    void trainingAssessmentsFollowTheReadAcknowledgementAndAreRecordedByAnotherQualityPerson() throws Exception {
+        String qa = login("qa1");
+        String qso = login("qso1");
+        String prod = login("prod1");
+        LocalDate today = time.today();
+        // 没设岗位不能要求考核
+        JsonNode bare = ok(call(qa, "/api/docs", doc("SOP-AS-0", null)));
+        call(qa, "/api/docs/" + bare.get("doc").get("id").asLong() + "/train-roles", Map.of("trainRoles", List.of(), "assessRequired", true))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("先设需要确认的岗位")));
+
+        Map<String, Object> m = doc("SOP-AS-1", null);
+        m.put("trainRoles", List.of("PRODUCTION", "QA"));
+        JsonNode d = ok(call(qa, "/api/docs", m));
+        String base = "/api/docs/" + d.get("doc").get("id").asLong();
+        long rev1 = d.get("revisions").get(0).get("id").asLong();
+        upload(qa, rev1);
+        ok(call(qso, base + "/revisions/" + rev1 + "/approve", Map.of("password", PWD)));
+        String url = base + "/revisions/" + rev1 + "/assessments";
+        // 没要求考核时不能登记
+        call(qa, url, assess(today, "WRITTEN", line("prod1", true, null, null))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("没有要求考核")));
+        d = ok(call(qa, base + "/train-roles", Map.of("trainRoles", List.of("PRODUCTION", "QA"), "assessRequired", true)));
+        assertThat(d.get("ack").get("assessRequired").asBoolean()).isTrue();
+        assertThat(d.get("doc").get("assessRequired").asBoolean()).isTrue();
+
+        // 要先确认已读
+        call(qa, url, assess(today, "WRITTEN", line("prod1", true, null, null))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("先阅读再考核")));
+        ok(call(prod, base + "/revisions/" + rev1 + "/ack", Map.of()));
+        d = ok(call(qa, base + "/revisions/" + rev1 + "/ack", Map.of()));
+        assertThat(d.get("doc").get("assessPending").asInt()).isEqualTo(2);
+        assertThat(read(qa, "/api/dashboard").get("todos").toString()).contains("受控文件待考核").contains("SOP-AS-1");
+
+        // 各种不能登记的情况
+        call(prod, url, assess(today, "WRITTEN", line("qa1", true, null, null))).andExpect(status().isForbidden());
+        call(qa, url, assess(today, "WRITTEN", line("qa1", true, null, null))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("不能给自己")));
+        call(qa, url, assess(today, "WRITTEN", line("sales1", true, null, null))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("不在需要确认")));
+        call(qa, url, assess(today.plusDays(1), "WRITTEN", line("prod1", true, null, null))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("不能晚于今天")));
+        call(qa, url, assess(today.minusDays(1), "WRITTEN", line("prod1", true, null, null))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("签批日期")));
+        call(qa, url, assess(today, "WRITTEN", line("prod1", true, null, null), line("prod1", false, null, "x"))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("填了两次")));
+        call(qa, url, assess(today, "WRITTEN", line("prod1", false, 55, null))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("写明原因")));
+        call(qa, url, assess(today, "WRITTEN", line("prod1", true, 101, null))).andExpect(status().isBadRequest());
+
+        // 一次登记两人：一个没通过、一个还没确认的不能夹带（整批不成功）
+        call(qa, url, assess(today, "WRITTEN", line("prod1", false, 55, "称量步骤答错"), line("qso1", true, null, null))).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("先阅读再考核")));
+        assertThat(read(qa, base).get("ack").get("people").toString()).doesNotContain("称量步骤答错");
+        d = ok(call(qso, url, assess(today, "WRITTEN", line("prod1", false, 55, "称量步骤答错，下周补考"), line("qa1", true, 92, null))));
+        assertThat(person(d, "prod1").get("passed").asBoolean()).isFalse();
+        assertThat(person(d, "prod1").get("assessMethodLabel").asText()).isEqualTo("笔试");
+        assertThat(person(d, "qa1").get("score").asInt()).isEqualTo(92);
+        assertThat(d.get("ack").get("passed").asInt()).isEqualTo(1);
+        assertThat(d.get("doc").get("assessPending").asInt()).isEqualTo(1);
+        call(qso, url, assess(today, "ORAL", line("qa1", true, null, null))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("已考核通过")));
+        // 补考通过
+        d = ok(call(qa, url, assess(today, "PRACTICAL", line("prod1", true, null, "现场操作复核"))));
+        assertThat(person(d, "prod1").get("passed").asBoolean()).isTrue();
+        assertThat(d.get("doc").get("assessPending").asInt()).isZero();
+        // qso1 还没确认已读，待确认的提醒还在；待考核的提醒没了
+        assertThat(read(qa, "/api/dashboard").get("todos").toString()).doesNotContain("受控文件待考核").contains("受控文件待确认");
+
+        // 出新版：要重新确认、重新考核；生效超过 30 天没考完算超期
+        d = ok(call(qa, base + "/revisions", Map.of("changeSummary", "改称量步骤")));
+        long rev2 = d.get("revisions").get(0).get("id").asLong();
+        upload(qa, rev2);
+        d = ok(call(qso, base + "/revisions/" + rev2 + "/approve", Map.of("password", PWD)));
+        assertThat(d.get("ack").get("passed").asInt()).isZero();
+        call(qa, url, assess(today, "WRITTEN", line("prod1", true, null, null))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("不是现行")));
+        ok(call(prod, base + "/revisions/" + rev2 + "/ack", Map.of()));
+        var r2 = revisionRepo.findById(rev2).orElseThrow();
+        r2.setEffectiveDate(today.minusDays(31));
+        revisionRepo.save(r2);
+        d = read(qa, base);
+        assertThat(d.get("doc").get("assessOverdue").asBoolean()).isTrue();
+        assertThat(read(qa, "/api/dashboard").get("todos").toString()).contains("受控文件考核已超期");
+        assertThat(read(qa, "/api/docs/compliance-board").toString()).contains("ASSESS_PENDING");
+
+        // 导出培训考核记录：每次考核一行，没通过的原因、补考都在
+        String sheet = sheetOf(mvc.perform(get("/api/reports/training-records").header("Authorization", "Bearer " + login("viewer1"))).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray());
+        assertThat(sheet).contains("SOP-AS-1").contains("称量步骤答错，下周补考").contains("未通过").contains("现场操作复核").contains("92").contains("待考核");
+        assertThat(read(qa, "/api/audit?q=SOP-AS-1").toString()).contains("登记受控文件考核").contains("未通过");
+    }
+
+    private static String sheetOf(byte[] xlsx) throws Exception {
+        StringBuilder sb = new StringBuilder();
+        try (var z = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(xlsx), StandardCharsets.UTF_8)) {
+            java.util.zip.ZipEntry e;
+            while ((e = z.getNextEntry()) != null) {
+                if (e.getName().startsWith("xl/")) {
+                    sb.append(new String(z.readAllBytes(), StandardCharsets.UTF_8));
+                }
+            }
+        }
+        return sb.toString();
+    }
+
     @Test
     void peopleInTheChosenRolesAcknowledgeEachNewRevisionOnce() throws Exception {
         String qa = login("qa1");

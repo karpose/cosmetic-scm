@@ -7,6 +7,7 @@
       </div>
       <div class="toolbar">
         <ExportButton :report="activeTab === 'compliance' ? 'doc-compliance' : 'controlled-docs'" :label="activeTab === 'compliance' ? '导出合规清单' : '导出台账'" />
+        <ExportButton v-if="activeTab !== 'compliance'" report="training-records" label="导出培训考核记录" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <el-button v-if="canEdit" type="primary" @click="openCreate">新建文件</el-button>
       </div>
@@ -112,6 +113,7 @@
             <div v-if="row.upcomingRev" class="small">第 {{ row.upcomingRev }} 版 {{ row.upcomingEffective }} 生效</div>
             <div v-if="row.pendingRevisionId" class="small warn">有一版待签批</div>
             <div v-if="row.ackPending" class="small" :class="row.ackOverdue ? 'late' : 'muted'">{{ row.ackPending }} 人待确认</div>
+            <div v-if="row.assessPending" class="small" :class="row.assessOverdue ? 'late' : 'muted'">{{ row.assessPending }} 人待考核</div>
             <div v-if="row.copiesToRetrieve" class="small" :class="row.retrieveOverdue ? 'late' : 'warn'">{{ row.copiesToRetrieve }} 份纸质副本待收回</div>
           </template>
         </el-table-column>
@@ -158,21 +160,23 @@
         <p class="summary-line"><StatusTag :status="d.status" :label="d.statusLabel" /> <b>{{ d.title }}</b> · {{ d.categoryLabel }}<template v-if="d.ownerDept"> · {{ d.ownerDept }}</template> · 每 {{ d.reviewMonths }} 个月复审</p>
         <el-alert v-if="d.obsoleteReason" type="info" :closable="false" show-icon :title="`已作废：${d.obsoleteReason}`" />
         <div class="roles-row small">
-          <span>需要确认的岗位：{{ d.trainRoles.length ? d.trainRoles.map(roleLabel).join('、') : '不需要确认' }}</span>
-          <el-button v-if="isQuality && d.status === 'ACTIVE' && !tr.editing" size="small" text @click="tr.editing = true; tr.roles = [...d.trainRoles]">修改</el-button>
+          <span>需要确认的岗位：{{ d.trainRoles.length ? d.trainRoles.map(roleLabel).join('、') : '不需要确认' }}<template v-if="d.assessRequired">，确认后还要考核</template></span>
+          <el-button v-if="isQuality && d.status === 'ACTIVE' && !tr.editing" size="small" text @click="tr.editing = true; tr.roles = [...d.trainRoles]; tr.assess = d.assessRequired">修改</el-button>
           <template v-if="tr.editing">
             <el-select v-model="tr.roles" multiple size="small" placeholder="不选表示不需要确认" aria-label="需要确认的岗位" style="min-width:240px">
               <el-option v-for="r in roles" :key="r.code" :value="r.code" :label="r.label" />
             </el-select>
+            <el-checkbox id="dc-assess-required" v-model="tr.assess" :disabled="!tr.roles.length">确认后还要考核</el-checkbox>
             <el-button size="small" type="primary" :loading="tr.saving" @click="saveRoles">保存</el-button>
             <el-button size="small" text @click="tr.editing = false">取消</el-button>
           </template>
         </div>
         <div v-if="dt.data.ack" class="ack-box">
-          <b>第 {{ dt.data.ack.revNo }} 版已读确认 {{ dt.data.ack.done }} / {{ dt.data.ack.total }}</b>
+          <b>第 {{ dt.data.ack.revNo }} 版已读确认 {{ dt.data.ack.done }} / {{ dt.data.ack.total }}<template v-if="dt.data.ack.assessRequired"> · 考核通过 {{ dt.data.ack.passed }} / {{ dt.data.ack.total }}</template></b>
           <el-button v-if="needMyAck" size="small" type="primary" :loading="dt.saving" @click="ackMine">我已阅读并理解第 {{ dt.data.ack.revNo }} 版</el-button>
+          <el-button v-if="isQuality && d.status === 'ACTIVE' && dt.data.ack.assessRequired && assessable.length" size="small" @click="openAssess">登记考核</el-button>
           <div class="small">
-            <span v-for="p in dt.data.ack.people" :key="p.username" class="person" :class="p.ackedAt ? 'muted' : 'late'">{{ p.displayName || p.username }}{{ p.ackedAt ? ' ✓' : '' }}</span>
+            <span v-for="p in dt.data.ack.people" :key="p.username" class="person" :class="personClass(p)" :title="assessTitle(p)">{{ p.displayName || p.username }} {{ personState(p) }}</span>
           </div>
         </div>
         <el-table :data="dt.data.revisions" size="small" style="margin-top:8px" highlight-current-row scrollbar-tabindex="0" @current-change="(r) => (dt.rev = r)">
@@ -231,6 +235,33 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="as.visible" :title="`登记考核：第 ${dt.data?.ack?.revNo || ''} 版`" width="640px" :close-on-click-modal="false" append-to-body>
+      <el-form label-position="top" @submit.prevent>
+        <div class="assess-head">
+          <el-form-item label="考核日期"><el-date-picker id="dc-assess-date" v-model="as.assessedOn" type="date" value-format="YYYY-MM-DD" :disabled-date="(x) => x > endOfToday" /></el-form-item>
+          <el-form-item label="考核方式">
+            <el-select id="dc-assess-method" v-model="as.method" style="width:160px">
+              <el-option v-for="(v, k) in METHODS" :key="k" :value="k" :label="v" />
+            </el-select>
+          </el-form-item>
+        </div>
+        <p class="muted small" style="margin-top:0">只列出已确认已读、还没考核通过的人（不包括您自己）。不选结果的这次不登记。没通过要写原因，可以以后补考。</p>
+        <div v-for="l in as.lines" :key="l.username" class="assess-line">
+          <b class="assess-name">{{ l.name }}</b>
+          <el-radio-group v-model="l.passed" size="small" :aria-label="`${l.name}的考核结果`">
+            <el-radio-button :value="true">通过</el-radio-button>
+            <el-radio-button :value="false">未通过</el-radio-button>
+          </el-radio-group>
+          <el-input-number v-model="l.score" :min="0" :max="100" :precision="0" :controls="false" placeholder="分数" size="small" :aria-label="`${l.name}的分数`" class="assess-score" />
+          <el-input v-model="l.note" maxlength="300" size="small" :placeholder="l.passed === false ? '没通过的原因和补考安排（必填）' : '备注（选填）'" :aria-label="`${l.name}的备注`" class="assess-note" />
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button @click="as.visible = false">取消</el-button>
+        <el-button type="primary" :loading="as.saving" @click="submitAssess">保存考核结果</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="is.visible" :title="`发放纸质副本：第 ${d?.currentRev || ''} 版`" width="460px" :close-on-click-modal="false" append-to-body>
       <el-form label-position="top" @submit.prevent>
         <el-form-item label="持有人、部门或存放地点"><el-input id="dc-holder" v-model="is.holder" maxlength="100" placeholder="如：灌装车间 2 号线" /></el-form-item>
@@ -268,7 +299,7 @@ import ListPager from '../components/ListPager.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
-import { fmtTime, startOfBusinessDay } from '../utils/format'
+import { fmtTime, startOfBusinessDay, today } from '../utils/format'
 import { latestOnly } from '../utils/latest'
 import { useLoader } from '../utils/loader'
 import { textMatch, usePaged } from '../utils/table'
@@ -343,18 +374,62 @@ const dt = reactive({ visible: false, saving: false, data: null, rev: null, pass
 const d = computed(() => dt.data?.doc)
 const pending = computed(() => dt.data?.revisions.find((r) => r.status === 'PENDING'))
 const req = latestOnly()
-const tr = reactive({ editing: false, saving: false, roles: [] })
+const tr = reactive({ editing: false, saving: false, roles: [], assess: false })
 const needMyAck = computed(() => dt.data?.ack?.people.some((p) => p.username === auth.user?.username && !p.ackedAt))
 async function saveRoles() {
   tr.saving = true
   try {
-    apply(await http.post(`/docs/${d.value.id}/train-roles`, { trainRoles: tr.roles }))
+    apply(await http.post(`/docs/${d.value.id}/train-roles`, { trainRoles: tr.roles, assessRequired: tr.roles.length ? tr.assess : false }))
     tr.editing = false
     ElMessage.success('已修改确认岗位')
   } finally {
     tr.saving = false
   }
 }
+// 培训考核
+const METHODS = { WRITTEN: '笔试', ORAL: '口头提问', PRACTICAL: '现场操作' }
+const endOfToday = new Date(`${today()}T23:59:59`)
+function personState(p) {
+  if (!p.ackedAt) return '未确认'
+  if (!dt.data.ack.assessRequired) return '✓'
+  if (p.passed === true) return '✓ 考核通过'
+  return p.passed === false ? '考核未通过' : '待考核'
+}
+function personClass(p) {
+  if (!p.ackedAt || p.passed === false) return 'late'
+  return dt.data.ack.assessRequired && p.passed !== true ? 'warn' : 'muted'
+}
+function assessTitle(p) {
+  if (p.passed == null) return undefined
+  return `${p.assessedOn} ${p.assessMethodLabel}${p.score != null ? ` ${p.score} 分` : ''}，${p.assessedBy} 登记${p.assessNote ? `：${p.assessNote}` : ''}`
+}
+const assessable = computed(() => (dt.data?.ack?.people || []).filter((p) => p.ackedAt && p.passed !== true && p.username !== auth.user?.username))
+const as = reactive({ visible: false, saving: false, assessedOn: '', method: 'WRITTEN', lines: [] })
+function openAssess() {
+  Object.assign(as, {
+    visible: true, saving: false, assessedOn: today(), method: 'WRITTEN',
+    lines: assessable.value.map((p) => ({ username: p.username, name: p.displayName || p.username, passed: null, score: undefined, note: '' }))
+  })
+}
+async function submitAssess() {
+  const lines = as.lines.filter((l) => l.passed !== null)
+  if (!as.assessedOn) return ElMessage.warning('请选择考核日期')
+  if (!lines.length) return ElMessage.warning('请至少给一个人选考核结果')
+  const missing = lines.find((l) => l.passed === false && !l.note.trim())
+  if (missing) return ElMessage.warning(`${missing.name} 没通过，请写明原因和补考安排`)
+  as.saving = true
+  try {
+    apply(await http.post(`/docs/${d.value.id}/revisions/${dt.data.ack.revisionId}/assessments`, {
+      assessedOn: as.assessedOn, method: as.method,
+      results: lines.map((l) => ({ username: l.username, passed: l.passed, score: l.score ?? null, note: l.note }))
+    }))
+    ElMessage.success(`已登记 ${lines.length} 人的考核结果`)
+    as.visible = false
+  } finally {
+    as.saving = false
+  }
+}
+
 async function ackMine() {
   dt.saving = true
   try {
@@ -479,5 +554,10 @@ async function submitRevise() {
 .ack-box { margin: 8px 0; padding: 10px 12px; border-radius: 12px; background: var(--lg-tint); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .ack-box > .small { flex: 1 1 100%; }
 .person { margin-right: 12px; }
+.assess-head { display: flex; flex-wrap: wrap; gap: 0 16px; }
+.assess-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 0; border-top: 1px solid var(--el-border-color-lighter); }
+.assess-name { flex: 0 0 140px; }
+.assess-score { width: 80px; }
+.assess-note { flex: 1 1 180px; }
 .copies-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 14px 0 6px; }
 </style>

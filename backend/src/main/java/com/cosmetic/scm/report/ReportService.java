@@ -135,6 +135,7 @@ public class ReportService {
         m.put("npd-risk", this::npdRiskReport);
         m.put("pqr", () -> pqrReport(from, to));
         m.put("controlled-docs", this::controlledDocsReport);
+        m.put("training-records", this::trainingRecords);
         m.put("doc-compliance", this::docComplianceReport);
         m.put("qms-summary", this::qmsSummaryReport);
         m.put("qms-closure", this::qmsClosureReport);
@@ -411,9 +412,17 @@ public class ReportService {
                 d.docCode(), d.title(), d.categoryLabel(), d.ownerDept(), d.statusLabel(),
                 d.currentRev() == null ? null : "V" + d.currentRev(), d.currentEffective(),
                 d.reviewDue(), d.reviewOverdue() ? "已超期" : "正常",
-                d.ackPending(), d.copiesOut(), d.copiesToRetrieve())));
+                d.ackPending(), d.assessRequired() ? d.assessPending() : null, d.copiesOut(), d.copiesToRetrieve())));
         return new Table("受控文件台账", List.of("文件编号", "名称", "类别", "归口部门", "状态",
-                "现行版本", "生效日期", "下次复审", "复审状态", "待确认人数", "在用纸质副本", "待收回副本"), rows);
+                "现行版本", "生效日期", "下次复审", "复审状态", "待确认人数", "待考核人数", "在用纸质副本", "待收回副本"), rows);
+    }
+
+    private Table trainingRecords() {
+        List<List<Object>> rows = new ArrayList<>();
+        docControl.trainingRecords().forEach(r -> rows.add(row(r.docCode(), r.title(), "第 " + r.revNo() + " 版", r.effectiveDate(), r.username(), r.displayName(),
+                r.ackedAt(), r.assessedOn(), r.method(), r.score(), r.result(), r.assessedBy(), r.note())));
+        return new Table("培训考核记录", List.of("文件编号", "文件名称", "版本", "生效日期", "账号", "姓名", "确认已读时间", "考核日期", "考核方式", "分数", "结果",
+                "考核人", "备注"), rows);
     }
 
     private Table docComplianceReport() {

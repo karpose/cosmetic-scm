@@ -54,6 +54,9 @@ public class ControlledDoc {
     /** 需要确认已读的岗位，逗号分隔的 Role 名称。为空表示不需要确认。 */
     private String trainRoles;
 
+    /** 已读确认之后还要考核。 */
+    private boolean assessRequired;
+
     private String createdBy;
 
     private LocalDateTime createdAt;
