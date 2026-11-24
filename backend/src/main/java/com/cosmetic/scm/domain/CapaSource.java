@@ -6,6 +6,7 @@ public enum CapaSource {
     COMPLAINT("投诉"),
     RECALL("召回"),
     AUDIT("供应商审核"),
+    SELF_CHECK("GMP 自查"),
     OTHER("其他");
 
     private final String label;

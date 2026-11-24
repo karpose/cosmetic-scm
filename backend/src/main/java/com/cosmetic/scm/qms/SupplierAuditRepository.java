@@ -11,4 +11,6 @@ public interface SupplierAuditRepository extends JpaRepository<SupplierAudit, Lo
     List<SupplierAudit> findAllByOrderByIdDesc();
 
     List<SupplierAudit> findByPartnerIdOrderByAuditDateDescIdDesc(Long partnerId);
+
+    List<SupplierAudit> findByPartnerIdIn(java.util.Collection<Long> partnerIds);
 }

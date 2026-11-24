@@ -59,6 +59,7 @@ public class GoLiveService {
     private final ComplianceService complianceDocs;
     private final com.cosmetic.scm.plm.StabilityService stability;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
+    private final com.cosmetic.scm.qms.GmpSelfCheckRepository selfChecks;
 
     @Value("${scm.demo-data:false}")
     private boolean demoData;
@@ -181,6 +182,13 @@ public class GoLiveService {
         long noBasis = coverage.stream().filter(p -> !"OK".equals(p.state())).count();
         c.add(noBasis == 0 ? new Check(g, "稳定性依据", "OK", coverage.isEmpty() ? "还没有配方，导入后再检查" : "保质期都有已签批的结论", "/stability?tab=products")
                 : new Check(g, "稳定性依据", "WARN", noBasis + " 个成品的保质期没有足够的稳定性结论（已有报告的可以按实际开始日期补录）", "/stability?tab=products"));
+        // 每年要按检查要点（委托生产版）自查一次；上线前不拦，只提示
+        var lastCheck = selfChecks.findFirstByStatusOrderByApprovedAtDesc(com.cosmetic.scm.domain.SelfCheckStatus.APPROVED);
+        boolean recent = lastCheck.isPresent() && lastCheck.get().getApprovedAt().toLocalDate().plusMonths(12).isAfter(time.today());
+        c.add(recent ? new Check(g, "年度 GMP 自查", "OK", "最近一次 " + lastCheck.get().getCheckNo() + " 于 " + lastCheck.get().getApprovedAt().toLocalDate() + " 签批，结论："
+                        + lastCheck.get().getConclusion().getLabel(), "/self-checks")
+                : new Check(g, "年度 GMP 自查", "WARN", lastCheck.isEmpty() ? "还没有按检查要点（委托生产版）做过自查，上线后一年内要做一次"
+                        : "最近一次自查已超过 12 个月", "/self-checks"));
     }
 
     private void production(List<Check> c) {

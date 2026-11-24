@@ -14,4 +14,6 @@ public interface QualityDecisionRepository extends JpaRepository<QualityDecision
     List<QualityDecision> findByBatchIdOrderByIdDesc(Long batchId);
 
     List<QualityDecision> findBySignedAtGreaterThanEqual(LocalDateTime from);
+
+    List<QualityDecision> findByBatchIdIn(java.util.Collection<Long> batchIds);
 }

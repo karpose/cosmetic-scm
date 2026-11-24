@@ -34,4 +34,6 @@ public interface AuditRepository extends JpaRepository<AuditLog, Long> {
             order by a.id desc
             """)
     List<AuditLog> search(@Param("q") String q, @Param("canSeeMoney") boolean canSeeMoney, Pageable pageable);
+
+    long countByCreatedAtBetween(java.time.LocalDateTime from, java.time.LocalDateTime to);
 }

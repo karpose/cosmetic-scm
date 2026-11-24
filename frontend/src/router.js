@@ -7,6 +7,7 @@ const routes = [
   { path: '/login', name: 'login', component: () => import('./views/Login.vue'), meta: { public: true, title: '登录' } },
   // 批次标签打印页：不套主布局，白底便于打印；需要登录
   { path: '/batch-record', name: 'batch-record', component: () => import('./views/BatchRecordPrint.vue'), meta: { title: '批生产记录' } },
+  { path: '/self-check-report', name: 'self-check-report', component: () => import('./views/SelfCheckReportPrint.vue'), meta: { title: 'GMP 自查报告' } },
   { path: '/stability-report', name: 'stability-report', component: () => import('./views/StabilityReportPrint.vue'), meta: { title: '稳定性试验报告' } },
   { path: '/statement-print', name: 'statement-print', component: () => import('./views/StatementPrint.vue'), meta: { title: '对账单打印' } },
   { path: '/pif-report', name: 'pif-report', component: () => import('./views/PifReportPrint.vue'), meta: { title: '产品信息档案 (PIF)' } },
@@ -24,6 +25,7 @@ const routes = [
       { path: 'planning', name: 'planning', component: () => import('./views/Planning.vue'), meta: { title: '补货建议' } },
       { path: 'artworks', name: 'artworks', component: () => import('./views/Artworks.vue'), meta: { title: '标签设计稿' } },
       { path: 'docs', name: 'docs', component: () => import('./views/Docs.vue'), meta: { title: '受控文件' } },
+      { path: 'self-checks', name: 'self-checks', component: () => import('./views/SelfChecks.vue'), meta: { title: 'GMP 自查' } },
       { path: 'changes', name: 'changes', component: () => import('./views/Changes.vue'), meta: { title: '变更控制' } },
       { path: 'npd', name: 'npd', component: () => import('./views/Npd.vue'), meta: { title: '新品立项' } },
       { path: 'specs', name: 'specs', component: () => import('./views/Specs.vue'), meta: { title: '质量标准' } },

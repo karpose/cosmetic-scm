@@ -100,6 +100,7 @@ public class DashboardService {
     private final FilingService filings;
     private final EquipmentService equipment;
     private final AuditService audit;
+    private final com.cosmetic.scm.qms.GmpSelfCheckService selfChecks;
     private final TimeProvider time;
 
     public record Counts(long openPurchaseOrders, long quarantine, long availableMaterialBatches,
@@ -251,6 +252,18 @@ public class DashboardService {
             todos.add(new Todo("DOC_ASSESS", d.assessOverdue() ? "受控文件考核已超期" : "受控文件待考核", d.assessOverdue() ? "bad" : "info", d.title(), d.docCode(),
                     "第 " + d.currentRev() + " 版还有 " + d.assessPending() + " 人确认了还没考核通过", "/docs"));
         }
+        for (com.cosmetic.scm.qms.GmpSelfCheckService.CheckRow r : selfChecks.waitingApproval()) {
+            todos.add(new Todo("SELF_CHECK_APPROVE", "GMP 自查待签批", "warn", r.editionLabel(), r.checkNo(), "结论：" + r.conclusionLabel() + "，" + r.submittedBy() + " 提交", "/self-checks"));
+        }
+        // 年度自查：做过的才按 12 个月提醒（到期前 30 天开始）；从没做过的只在上线检查提示，不刷屏
+        selfChecks.lastApproved().ifPresent(last -> {
+            java.time.LocalDate due = last.getApprovedAt().toLocalDate().plusMonths(12);
+            if (!selfChecks.anyOpen() && !due.minusDays(30).isAfter(today)) {
+                boolean late = due.isBefore(today);
+                todos.add(new Todo("SELF_CHECK_DUE", late ? "年度 GMP 自查已超期" : "年度 GMP 自查快到期", late ? "bad" : "warn", "上次 " + last.getCheckNo(),
+                        last.getCheckNo(), "应在 " + due + " 前完成新一年的自查", "/self-checks"));
+            }
+        });
         for (com.cosmetic.scm.plm.DocControlService.DocRow d : docControl.reviewDue()) {
             todos.add(new Todo("DOC_REVIEW", d.reviewOverdue() ? "受控文件复审已超期" : "受控文件复审快到期", d.reviewOverdue() ? "bad" : "warn", d.title(), d.docCode(), "复审期限 " + d.reviewDue(), "/docs"));
         }

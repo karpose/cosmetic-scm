@@ -80,7 +80,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   ArrowDown, Bell, Box, Coin, Connection, Finished, DataAnalysis, DataBoard, Document, Expand, Fold, Goods, Guide, Iphone, Memo, Notebook, OfficeBuilding,
-  Operation, Postcard, RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, Files, MagicStick, Picture, Switch, Timer, TrendCharts, User, Van, WarningFilled
+  Operation, Postcard, RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, Files, MagicStick, Picture, Switch, Timer, TrendCharts, User, Van, WarningFilled, Checked
 } from '@element-plus/icons-vue'
 import { useAuth, PASSWORD_RULE, ROLE_LABELS } from '../stores/auth'
 
@@ -135,6 +135,7 @@ const groups = computed(() => {
         { path: '/trace', title: '批次追溯', icon: Guide },
         { path: '/quality-events', title: '投诉与召回', icon: WarningFilled },
         { path: '/qms', title: '质量体系', icon: Memo },
+        { path: '/self-checks', title: 'GMP 自查', icon: Checked },
         { path: '/compliance', title: '合规资料', icon: Stamp },
         { path: '/stability', title: '稳定性试验', icon: Timer },
         { path: '/npd', title: '新品立项', icon: MagicStick },
