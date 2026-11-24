@@ -321,7 +321,7 @@ public class DemoDataLoader implements ApplicationRunner {
                 null, "2 kg", com.cosmetic.scm.domain.TrialResult.PASS, "肤感和稳定性初步观察正常（示例）")));
         // 受控文件：一份 SOP 待签批（签批前要上传文件）；变更：换甘油供应商，待质量评估
         as("qa1", () -> docControlService.create(new com.cosmetic.scm.plm.DocControlService.CreateReq("SOP-QA-001", "物料检验放行操作规程（示例）",
-                com.cosmetic.scm.domain.DocCategory.SOP, "质量部", 24, "首版（示例）", null)));
+                com.cosmetic.scm.domain.DocCategory.SOP, "质量部", 24, "首版（示例）", null, null, java.util.Set.of("MATERIAL_RELEASE", "INCOMING_CHECK"))));
         as("purchase1", () -> changeService.create(new com.cosmetic.scm.plm.ChangeService.CreateReq("甘油增加第二供应商（示例）", com.cosmetic.scm.domain.ChangeType.MATERIAL,
                 "降低单一来源风险（示例）", "引入第二家甘油供应商，规格不变（示例）", "精华液、面霜")));
         // 标签设计稿：面霜瓶的第一版待评审（批准前要上传设计稿文件）

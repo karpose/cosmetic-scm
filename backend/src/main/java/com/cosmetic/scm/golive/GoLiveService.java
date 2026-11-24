@@ -60,6 +60,7 @@ public class GoLiveService {
     private final com.cosmetic.scm.plm.StabilityService stability;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
     private final com.cosmetic.scm.qms.GmpSelfCheckRepository selfChecks;
+    private final com.cosmetic.scm.plm.DocControlService docControl;
 
     @Value("${scm.demo-data:false}")
     private boolean demoData;
@@ -182,6 +183,12 @@ public class GoLiveService {
         long noBasis = coverage.stream().filter(p -> !"OK".equals(p.state())).count();
         c.add(noBasis == 0 ? new Check(g, "稳定性依据", "OK", coverage.isEmpty() ? "还没有配方，导入后再检查" : "保质期都有已签批的结论", "/stability?tab=products")
                 : new Check(g, "稳定性依据", "WARN", noBasis + " 个成品的保质期没有足够的稳定性结论（已有报告的可以按实际开始日期补录）", "/stability?tab=products"));
+        // 检查要点要求建立的制度：可选的（提供物料时才要）不算缺
+        List<com.cosmetic.scm.plm.ProcedureCoverage.Row> procs = docControl.procedureCoverage();
+        List<String> missing = procs.stream().filter(r -> !r.optional() && r.state() != com.cosmetic.scm.plm.ProcedureCoverage.State.ESTABLISHED).map(r -> r.label()).toList();
+        c.add(missing.isEmpty() ? new Check(g, "必备制度", "OK", "检查要点要求的制度都有生效的受控文件", "/docs?tab=procedures")
+                : new Check(g, "必备制度", "WARN", missing.size() + " 项制度还没有生效的受控文件：" + String.join("、", missing.subList(0, Math.min(6, missing.size())))
+                        + (missing.size() > 6 ? " 等" : ""), "/docs?tab=procedures"));
         // 每年要按检查要点（委托生产版）自查一次；上线前不拦，只提示
         var lastCheck = selfChecks.findFirstByStatusOrderByApprovedAtDesc(com.cosmetic.scm.domain.SelfCheckStatus.APPROVED);
         boolean recent = lastCheck.isPresent() && lastCheck.get().getApprovedAt().toLocalDate().plusMonths(12).isAfter(time.today());

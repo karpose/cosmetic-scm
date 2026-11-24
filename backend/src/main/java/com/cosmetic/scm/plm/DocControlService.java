@@ -78,9 +78,15 @@ public class DocControlService {
     public record CreateReq(@NotBlank(message = "请填写文件编号") @Size(max = 40) @Pattern(regexp = "[A-Za-z0-9._-]+", message = "文件编号只能用字母、数字和 . _ -") String docCode,
                             @NotBlank(message = "请填写文件名称") @Size(max = 120) String title, @NotNull(message = "请选择类别") DocCategory category,
                             @Size(max = 60) String ownerDept, @Min(value = 1, message = "复审周期至少 1 个月") @Max(value = 60, message = "复审周期最多 60 个月") Integer reviewMonths,
-                            @NotBlank(message = "请写明制定或修订内容") @Size(max = 300) String changeSummary, LocalDate effectiveDate, java.util.Set<Role> trainRoles) {
+                            @NotBlank(message = "请写明制定或修订内容") @Size(max = 300) String changeSummary, LocalDate effectiveDate, java.util.Set<Role> trainRoles,
+                            java.util.Set<String> procedures) {
         public CreateReq(String docCode, String title, DocCategory category, String ownerDept, Integer reviewMonths, String changeSummary, LocalDate effectiveDate) {
-            this(docCode, title, category, ownerDept, reviewMonths, changeSummary, effectiveDate, null);
+            this(docCode, title, category, ownerDept, reviewMonths, changeSummary, effectiveDate, null, null);
+        }
+
+        public CreateReq(String docCode, String title, DocCategory category, String ownerDept, Integer reviewMonths, String changeSummary, LocalDate effectiveDate,
+                         java.util.Set<Role> trainRoles) {
+            this(docCode, title, category, ownerDept, reviewMonths, changeSummary, effectiveDate, trainRoles, null);
         }
     }
 
@@ -91,6 +97,9 @@ public class DocControlService {
     }
 
     public record NoteReq(@NotBlank(message = "请写明原因") @Size(max = 300) String note) {
+    }
+
+    public record ProceduresReq(java.util.Set<String> procedures) {
     }
 
     /** assessRequired 为空表示不改。 */
@@ -135,7 +144,7 @@ public class DocControlService {
                          Integer currentRev, LocalDate currentEffective, Long pendingRevisionId, Integer upcomingRev, LocalDate upcomingEffective,
                          LocalDate lastReviewedOn, LocalDate reviewDue, boolean reviewOverdue, String obsoleteReason,
                          List<Role> trainRoles, int ackPending, boolean ackOverdue, int copiesOut, int copiesToRetrieve, LocalDate retrieveDue, boolean retrieveOverdue,
-                         boolean assessRequired, int assessPending, boolean assessOverdue) {
+                         boolean assessRequired, int assessPending, boolean assessOverdue, List<com.cosmetic.scm.domain.QualityProcedure> procedures) {
     }
 
     /** mustRetrieve：在用但已不是现行版本（或文件已作废），要收回；retrieveDue：收回期限。 */
@@ -305,12 +314,14 @@ public class DocControlService {
         d.setOwnerDept(blankToNull(req.ownerDept()));
         d.setReviewMonths(req.reviewMonths() == null ? 24 : req.reviewMonths());
         d.setTrainRoles(joinRoles(req.trainRoles()));
+        d.setProcedures(ProcedureCoverage.join(ProcedureCoverage.of(req.procedures())));
         d.setStatus(DocStatus.ACTIVE);
         d.setCreatedBy(currentUser.usernameOrSystem());
         d.setCreatedAt(time.now());
         docs.save(d);
         newRevision(d, req.changeSummary(), req.effectiveDate());
-        audit.log("新建受控文件", d.getDocCode(), d.getTitle() + "，" + d.getCategory().getLabel() + "，复审周期 " + d.getReviewMonths() + " 个月");
+        audit.log("新建受控文件", d.getDocCode(), d.getTitle() + "，" + d.getCategory().getLabel() + "，复审周期 " + d.getReviewMonths() + " 个月"
+                + (d.getProcedures() == null ? "" : "，对应制度：" + ProcedureCoverage.labels(ProcedureCoverage.parse(d.getProcedures()))));
         return detailOf(d);
     }
 
@@ -414,6 +425,27 @@ public class DocControlService {
         docs.save(d);
         audit.log("修改文件确认岗位", d.getDocCode(), roleLabels(old) + (oldAssess ? "（要考核）" : "") + " 改为 " + roleLabels(d.getTrainRoles()) + (assess ? "（要考核）" : ""));
         return detailOf(d);
+    }
+
+    /** 改文件对应的制度。作废的文件不能改。 */
+    @Transactional
+    public DocDetail setProcedures(Long docId, ProceduresReq req) {
+        ControlledDoc d = lockActive(docId, "改对应的制度");
+        java.util.Set<com.cosmetic.scm.domain.QualityProcedure> old = ProcedureCoverage.parse(d.getProcedures());
+        java.util.Set<com.cosmetic.scm.domain.QualityProcedure> now = ProcedureCoverage.of(req.procedures());
+        d.setProcedures(ProcedureCoverage.join(now));
+        docs.save(d);
+        audit.log("修改文件对应的制度", d.getDocCode(), ProcedureCoverage.labels(old) + " 改为 " + ProcedureCoverage.labels(now));
+        return detailOf(d);
+    }
+
+    /** 每项制度有没有对应的在用受控文件。 */
+    @Transactional(readOnly = true)
+    public List<ProcedureCoverage.Row> procedureCoverage() {
+        List<ControlledDoc> active = docs.findByStatus(DocStatus.ACTIVE).stream().filter(d -> d.getProcedures() != null).toList();
+        Map<Long, List<DocRevision>> byDoc = active.isEmpty() ? Map.of()
+                : revisions.findByDocIdIn(active.stream().map(ControlledDoc::getId).toList()).stream().collect(Collectors.groupingBy(DocRevision::getDocId));
+        return ProcedureCoverage.compute(active, byDoc, time.today());
     }
 
     /** 发放纸质副本：只发现行版本，按版本连续编号。先锁文件，同时发放不会重号。 */
@@ -798,7 +830,8 @@ public class DocControlService {
             return new DocRow(d.getId(), d.getDocCode(), d.getTitle(), d.getCategory(), d.getCategory().getLabel(), d.getOwnerDept(), d.getReviewMonths(), d.getStatus(), d.getStatus().getLabel(),
                     cur.map(DocRevision::getRevNo).orElse(null), cur.map(DocRevision::getEffectiveDate).orElse(null), pending, up.map(DocRevision::getRevNo).orElse(null),
                     up.map(DocRevision::getEffectiveDate).orElse(null), d.getLastReviewedOn(), due, due != null && due.isBefore(today), d.getObsoleteReason(), roles, ackPending, ackOverdue,
-                    out.size(), dues.size(), retrieveDue, retrieveDue != null && retrieveDue.isBefore(today), d.isAssessRequired(), assessPending, assessOverdue);
+                    out.size(), dues.size(), retrieveDue, retrieveDue != null && retrieveDue.isBefore(today), d.isAssessRequired(), assessPending, assessOverdue,
+                    List.copyOf(ProcedureCoverage.parse(d.getProcedures())));
         }).toList();
     }
 
