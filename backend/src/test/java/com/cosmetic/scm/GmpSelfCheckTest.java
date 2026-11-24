@@ -119,7 +119,7 @@ class GmpSelfCheckTest {
         assertThat(byNo.get(12).get("details").toString()).contains("提供物料时才要");
         assertThat(byNo.get(23).get("level").asText()).isEqualTo("WARN");
         assertThat(byNo.get(23).get("summary").asText()).contains("还没上报");
-        assertThat(byNo.get(4).get("summary").asText()).contains("质量安全负责人账号");
+        assertThat(byNo.get(4).get("summary").asText()).contains("还没有登记生效的质量安全负责人任职档案");
 
         // 登记规则
         call(qa, url + "/items/1", item("FLAWED", "x")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.message", containsString("一般项目")));

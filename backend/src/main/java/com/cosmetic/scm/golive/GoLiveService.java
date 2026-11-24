@@ -60,6 +60,7 @@ public class GoLiveService {
     private final com.cosmetic.scm.plm.StabilityService stability;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
     private final com.cosmetic.scm.qms.GmpSelfCheckRepository selfChecks;
+    private final com.cosmetic.scm.qms.QsoAppointmentRepository qsoAppointments;
     private final com.cosmetic.scm.plm.DocControlService docControl;
 
     @Value("${scm.demo-data:false}")
@@ -183,6 +184,10 @@ public class GoLiveService {
         long noBasis = coverage.stream().filter(p -> !"OK".equals(p.state())).count();
         c.add(noBasis == 0 ? new Check(g, "稳定性依据", "OK", coverage.isEmpty() ? "还没有配方，导入后再检查" : "保质期都有已签批的结论", "/stability?tab=products")
                 : new Check(g, "稳定性依据", "WARN", noBasis + " 个成品的保质期没有足够的稳定性结论（已有报告的可以按实际开始日期补录）", "/stability?tab=products"));
+        // 质量安全负责人任职档案（检查要点委托生产版第 4 项）
+        var qsoNow = qsoAppointments.findFirstByStatus(com.cosmetic.scm.domain.AppointmentStatus.ACTIVE);
+        c.add(qsoNow.isPresent() ? new Check(g, "质量安全负责人任职", "OK", qsoNow.get().getPersonName() + "，" + qsoNow.get().getAppointedOn() + " 任职", "/qso")
+                : new Check(g, "质量安全负责人任职", "WARN", "还没有登记生效的质量安全负责人任职档案（专业、经验、任命文件）", "/qso"));
         // 检查要点要求建立的制度：可选的（提供物料时才要）不算缺
         List<com.cosmetic.scm.plm.ProcedureCoverage.Row> procs = docControl.procedureCoverage();
         List<String> missing = procs.stream().filter(r -> !r.optional() && r.state() != com.cosmetic.scm.plm.ProcedureCoverage.State.ESTABLISHED).map(r -> r.label()).toList();

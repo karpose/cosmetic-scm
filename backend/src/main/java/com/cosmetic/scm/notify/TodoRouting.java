@@ -36,6 +36,8 @@ final class TodoRouting {
             Map.entry("DOC_ACK", QUALITY),
             Map.entry("SELF_CHECK_APPROVE", Set.of(Role.QSO)),
             Map.entry("SELF_CHECK_DUE", QUALITY),
+            Map.entry("QSO_DELEGATION_EXPIRING", Set.of(Role.QSO)),
+            Map.entry("QSO_UNAUTHORIZED", Set.of(Role.ADMIN, Role.QSO)),
             Map.entry("DOC_ASSESS", QUALITY),
             Map.entry("DOC_COPY_RETRIEVE", QUALITY),
             Map.entry("ARTWORK_REVIEW", Set.of(Role.QSO)),
