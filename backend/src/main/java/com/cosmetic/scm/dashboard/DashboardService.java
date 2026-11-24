@@ -101,6 +101,7 @@ public class DashboardService {
     private final EquipmentService equipment;
     private final AuditService audit;
     private final com.cosmetic.scm.qms.GmpSelfCheckService selfChecks;
+    private final com.cosmetic.scm.qms.QsoService qso;
     private final TimeProvider time;
 
     public record Counts(long openPurchaseOrders, long quarantine, long availableMaterialBatches,
@@ -251,6 +252,13 @@ public class DashboardService {
         for (com.cosmetic.scm.plm.DocControlService.DocRow d : docControl.assessPending()) {
             todos.add(new Todo("DOC_ASSESS", d.assessOverdue() ? "受控文件考核已超期" : "受控文件待考核", d.assessOverdue() ? "bad" : "info", d.title(), d.docCode(),
                     "第 " + d.currentRev() + " 版还有 " + d.assessPending() + " 人确认了还没考核通过", "/docs"));
+        }
+        for (com.cosmetic.scm.qms.QsoService.DelegationView d : qso.expiringSoon()) {
+            todos.add(new Todo("QSO_DELEGATION_EXPIRING", "协助履职授权快到期", "warn", d.delegateName(), d.delegationNo(), d.dutyLabels() + "，" + d.validTo() + " 到期", "/qso"));
+        }
+        for (com.cosmetic.scm.qms.QsoService.UserCheck u : qso.unauthorized()) {
+            todos.add(new Todo("QSO_UNAUTHORIZED", "质量安全负责人角色没有任职或授权", "bad", u.displayName() == null ? u.username() : u.displayName(), u.username(),
+                    "不是现任，也没有生效的协助履职授权，却能签批放行", "/qso"));
         }
         for (com.cosmetic.scm.qms.GmpSelfCheckService.CheckRow r : selfChecks.waitingApproval()) {
             todos.add(new Todo("SELF_CHECK_APPROVE", "GMP 自查待签批", "warn", r.editionLabel(), r.checkNo(), "结论：" + r.conclusionLabel() + "，" + r.submittedBy() + " 提交", "/self-checks"));
