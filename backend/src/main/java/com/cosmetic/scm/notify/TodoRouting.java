@@ -34,6 +34,7 @@ final class TodoRouting {
             Map.entry("DOC_APPROVE", Set.of(Role.QSO)),
             Map.entry("DOC_REVIEW", QUALITY),
             Map.entry("DOC_ACK", QUALITY),
+            Map.entry("DOC_ASSESS", QUALITY),
             Map.entry("DOC_COPY_RETRIEVE", QUALITY),
             Map.entry("ARTWORK_REVIEW", Set.of(Role.QSO)),
             Map.entry("ARTWORK_STALE", QUALITY),

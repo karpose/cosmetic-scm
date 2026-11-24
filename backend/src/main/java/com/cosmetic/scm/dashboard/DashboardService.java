@@ -247,6 +247,10 @@ public class DashboardService {
             todos.add(new Todo("DOC_ACK", d.ackOverdue() ? "受控文件确认已超期" : "受控文件待确认", d.ackOverdue() ? "bad" : "info", d.title(), d.docCode(),
                     "第 " + d.currentRev() + " 版还有 " + d.ackPending() + " 人没确认已读", "/docs"));
         }
+        for (com.cosmetic.scm.plm.DocControlService.DocRow d : docControl.assessPending()) {
+            todos.add(new Todo("DOC_ASSESS", d.assessOverdue() ? "受控文件考核已超期" : "受控文件待考核", d.assessOverdue() ? "bad" : "info", d.title(), d.docCode(),
+                    "第 " + d.currentRev() + " 版还有 " + d.assessPending() + " 人确认了还没考核通过", "/docs"));
+        }
         for (com.cosmetic.scm.plm.DocControlService.DocRow d : docControl.reviewDue()) {
             todos.add(new Todo("DOC_REVIEW", d.reviewOverdue() ? "受控文件复审已超期" : "受控文件复审快到期", d.reviewOverdue() ? "bad" : "warn", d.title(), d.docCode(), "复审期限 " + d.reviewDue(), "/docs"));
         }

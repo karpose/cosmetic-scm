@@ -13,6 +13,7 @@ import com.cosmetic.scm.attachment.AttachmentRepository;
 import com.cosmetic.scm.audit.AuditService;
 import com.cosmetic.scm.common.BizException;
 import com.cosmetic.scm.common.TimeProvider;
+import com.cosmetic.scm.domain.AssessMethod;
 import com.cosmetic.scm.domain.DocCategory;
 import com.cosmetic.scm.domain.DocCopyStatus;
 import com.cosmetic.scm.domain.DocStatus;
@@ -56,11 +57,18 @@ public class DocControlService {
     /** 一次最多发几份。 */
     public static final int MAX_COPIES_PER_ISSUE = 20;
 
+    /** 现行版本生效后多少天内要考核完，超过算超期。 */
+    public static final int ASSESS_DAYS = 30;
+
+    /** 一次最多登记几个人的考核。 */
+    public static final int MAX_ASSESS_PER_ENTRY = 50;
+
     private final ControlledDocRepository docs;
     private final DocRevisionRepository revisions;
     private final AttachmentRepository attachments;
     private final DocAckRepository acks;
     private final DocCopyRepository copies;
+    private final DocAssessmentRepository assessments;
     private final UserRepository users;
     private final SignatureService signature;
     private final AuditService audit;
@@ -85,14 +93,34 @@ public class DocControlService {
     public record NoteReq(@NotBlank(message = "请写明原因") @Size(max = 300) String note) {
     }
 
-    public record RolesReq(java.util.Set<Role> trainRoles) {
+    /** assessRequired 为空表示不改。 */
+    public record RolesReq(java.util.Set<Role> trainRoles, Boolean assessRequired) {
+        public RolesReq(java.util.Set<Role> trainRoles) {
+            this(trainRoles, null);
+        }
     }
 
-    public record AckView(String username, String displayName, LocalDateTime ackedAt) {
+    /** passed：这一版最近一次考核的结果，没考过为空。 */
+    public record AckView(String username, String displayName, LocalDateTime ackedAt, Boolean passed, LocalDate assessedOn, String assessMethodLabel,
+                          Integer score, String assessedBy, String assessNote) {
     }
 
-    /** 要确认的那一版（现行版，没有就是待生效版）和每个应确认的人。 */
-    public record AckStatus(Long revisionId, int revNo, List<AckView> people, int done, int total) {
+    /** 要确认的那一版（现行版，没有就是待生效版）和每个应确认的人；assessRequired 时还有考核通过人数。 */
+    public record AckStatus(Long revisionId, int revNo, List<AckView> people, int done, int total, boolean assessRequired, int passed) {
+    }
+
+    public record AssessLine(@NotBlank(message = "请选择被考核的人") String username, @NotNull(message = "请选择是否通过") Boolean passed,
+                             @jakarta.validation.constraints.Min(value = 0, message = "分数在 0 到 100 之间") @jakarta.validation.constraints.Max(value = 100, message = "分数在 0 到 100 之间") Integer score,
+                             @Size(max = 300) String note) {
+    }
+
+    public record AssessReq(@NotNull(message = "请选择考核日期") LocalDate assessedOn, @NotNull(message = "请选择考核方式") AssessMethod method,
+                            @jakarta.validation.constraints.NotEmpty(message = "请至少登记一个人") @Size(max = MAX_ASSESS_PER_ENTRY, message = "一次最多登记 50 人") List<@jakarta.validation.Valid AssessLine> results) {
+    }
+
+    /** 培训考核记录导出：每次考核一行，确认了还没考核的也一行。 */
+    public record TrainingRow(String docCode, String title, int revNo, LocalDate effectiveDate, String username, String displayName, LocalDateTime ackedAt,
+                              LocalDate assessedOn, String method, Integer score, String result, String assessedBy, String note) {
     }
 
     public record MyAck(Long docId, String docCode, String title, Long revisionId, int revNo, LocalDate effectiveDate) {
@@ -106,7 +134,8 @@ public class DocControlService {
     public record DocRow(Long id, String docCode, String title, DocCategory category, String categoryLabel, String ownerDept, int reviewMonths, DocStatus status, String statusLabel,
                          Integer currentRev, LocalDate currentEffective, Long pendingRevisionId, Integer upcomingRev, LocalDate upcomingEffective,
                          LocalDate lastReviewedOn, LocalDate reviewDue, boolean reviewOverdue, String obsoleteReason,
-                         List<Role> trainRoles, int ackPending, boolean ackOverdue, int copiesOut, int copiesToRetrieve, LocalDate retrieveDue, boolean retrieveOverdue) {
+                         List<Role> trainRoles, int ackPending, boolean ackOverdue, int copiesOut, int copiesToRetrieve, LocalDate retrieveDue, boolean retrieveOverdue,
+                         boolean assessRequired, int assessPending, boolean assessOverdue) {
     }
 
     /** mustRetrieve：在用但已不是现行版本（或文件已作废），要收回；retrieveDue：收回期限。 */
@@ -126,7 +155,7 @@ public class DocControlService {
 
     public record DocComplianceBoard(int totalCount, int overdueCount, int reviewDueCount,
                                      int ackPendingCount, int copyRetrieveCount, int pendingApproveCount,
-                                     List<DocComplianceItem> rows) {
+                                     List<DocComplianceItem> rows, int assessPendingCount) {
     }
 
     public record IssueReq(@NotBlank(message = "请填写持有人或存放地点") @Size(max = 100) String holder,
@@ -171,6 +200,7 @@ public class DocControlService {
         int ackPendingCnt = 0;
         int copyRetrieveCnt = 0;
         int pendingApproveCnt = 0;
+        int assessPendingCnt = 0;
 
         for (DocRow d : all) {
             if (d.copiesToRetrieve() > 0) {
@@ -219,6 +249,22 @@ public class DocControlService {
                         overdue ? "新版文件生效超 " + ACK_DAYS + " 天仍有岗位未签收，请立即催办培训确认"
                                 : "请提醒相关岗位人员于 " + ackDue + " 前完成已读确认"));
             }
+            if (d.status() == DocStatus.ACTIVE && d.assessPending() > 0 && d.currentRev() != null) {
+                LocalDate assessDue = d.currentEffective() == null ? null : d.currentEffective().plusDays(ASSESS_DAYS);
+                Long daysLeft = assessDue == null ? null : java.time.temporal.ChronoUnit.DAYS.between(today, assessDue);
+                boolean overdue = d.assessOverdue() || (daysLeft != null && daysLeft < 0);
+                if (overdue) {
+                    overdueCnt++;
+                }
+                assessPendingCnt++;
+                items.add(new DocComplianceItem(
+                        d.id(), d.docCode(), d.title(), d.categoryLabel(), d.ownerDept(), d.currentRev(),
+                        "ASSESS_PENDING", "培训考核", assessDue, daysLeft,
+                        "第 " + d.currentRev() + " 版还有 " + d.assessPending() + " 人确认了还没考核通过",
+                        overdue ? "OVERDUE" : "PENDING", overdue ? "考核已超期" : "待考核",
+                        overdue ? "新版文件生效超 " + ASSESS_DAYS + " 天仍有人没考核通过，请尽快安排考核或补考"
+                                : "请于 " + assessDue + " 前完成考核"));
+            }
             if (d.status() == DocStatus.ACTIVE && d.pendingRevisionId() != null) {
                 pendingApproveCnt++;
                 items.add(new DocComplianceItem(
@@ -235,7 +281,7 @@ public class DocControlService {
                 .thenComparing(DocComplianceItem::docCode));
 
         return new DocComplianceBoard(items.size(), overdueCnt, reviewDueCnt, ackPendingCnt,
-                copyRetrieveCnt, pendingApproveCnt, items);
+                copyRetrieveCnt, pendingApproveCnt, items, assessPendingCnt);
     }
 
     private static int complianceRiskRank(String level) {
@@ -354,9 +400,19 @@ public class DocControlService {
     public DocDetail setTrainRoles(Long docId, RolesReq req) {
         ControlledDoc d = lockActive(docId, "改确认岗位");
         String old = d.getTrainRoles();
+        boolean oldAssess = d.isAssessRequired();
         d.setTrainRoles(joinRoles(req.trainRoles()));
+        boolean assess = req.assessRequired() == null ? d.isAssessRequired() : req.assessRequired();
+        if (d.getTrainRoles() == null && assess) {
+            if (Boolean.TRUE.equals(req.assessRequired())) {
+                throw new BizException("先设需要确认的岗位，才能要求考核");
+            }
+            // 岗位清空了，考核也就没有对象
+            assess = false;
+        }
+        d.setAssessRequired(assess);
         docs.save(d);
-        audit.log("修改文件确认岗位", d.getDocCode(), roleLabels(old) + " 改为 " + roleLabels(d.getTrainRoles()));
+        audit.log("修改文件确认岗位", d.getDocCode(), roleLabels(old) + (oldAssess ? "（要考核）" : "") + " 改为 " + roleLabels(d.getTrainRoles()) + (assess ? "（要考核）" : ""));
         return detailOf(d);
     }
 
@@ -435,6 +491,133 @@ public class DocControlService {
     @Transactional(readOnly = true)
     public List<DocRow> copiesToRetrieve() {
         return rows(docs.findAllById(copies.findDocIdsByStatus(DocCopyStatus.ISSUED))).stream().filter(d -> d.copiesToRetrieve() > 0).toList();
+    }
+
+    /**
+     * 登记考核：要先确认已读，不能给自己登记，已考核通过的不再登记，没通过要写原因、可以再考。
+     * 先锁文件（事务第一句），和确认、改岗位串行，同一个人不会被同时登记两次通过。
+     */
+    @Transactional
+    public DocDetail recordAssessments(Long docId, Long revId, AssessReq req) {
+        ControlledDoc d = lockActive(docId, "登记考核");
+        DocRevision r = revisions.findById(revId).filter(x -> x.getDocId().equals(d.getId())).orElseThrow(() -> BizException.notFound("修订版本"));
+        DocRevision target = ackTarget(revisions.findByDocIdOrderByRevNoDesc(d.getId())).orElse(null);
+        if (target == null || !target.getId().equals(r.getId())) {
+            throw new BizException("第 " + r.getRevNo() + " 版不是现行或待生效的版本，不用考核");
+        }
+        if (!d.isAssessRequired()) {
+            throw new BizException(d.getDocCode() + " 没有要求考核，先在“需要确认的岗位”里打开考核");
+        }
+        if (req.assessedOn().isAfter(time.today())) {
+            throw new BizException("考核日期不能晚于今天");
+        }
+        if (r.getApprovedAt() != null && req.assessedOn().isBefore(r.getApprovedAt().toLocalDate())) {
+            throw new BizException("考核日期不能早于第 " + r.getRevNo() + " 版的签批日期 " + r.getApprovedAt().toLocalDate());
+        }
+        String me = currentUser.usernameOrSystem();
+        Map<String, com.cosmetic.scm.security.AppUser> required = requiredUsers(d).stream()
+                .collect(Collectors.toMap(com.cosmetic.scm.security.AppUser::getUsername, u -> u, (x, y) -> x));
+        java.util.Set<String> acked = acks.findByRevisionIdIn(List.of(r.getId())).stream().map(DocAck::getUsername).collect(Collectors.toSet());
+        Map<String, DocAssessment> latest = latestAssessments(List.of(r.getId())).getOrDefault(r.getId(), Map.of());
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        List<String> passedNames = new java.util.ArrayList<>();
+        List<String> failedNames = new java.util.ArrayList<>();
+        for (AssessLine l : req.results()) {
+            String u = l.username().trim();
+            String name = required.containsKey(u) ? nameOf(required.get(u)) : u;
+            if (!seen.add(u)) {
+                throw new BizException(name + " 填了两次");
+            }
+            if (!required.containsKey(u)) {
+                throw new BizException(u + " 不在需要确认这份文件的岗位里");
+            }
+            if (u.equals(me)) {
+                throw new BizException("不能给自己登记考核");
+            }
+            if (!acked.contains(u)) {
+                throw new BizException(name + " 还没确认已读第 " + r.getRevNo() + " 版，先阅读再考核");
+            }
+            DocAssessment last = latest.get(u);
+            if (last != null && last.isPassed()) {
+                throw new BizException(name + " 第 " + r.getRevNo() + " 版已考核通过");
+            }
+            if (!l.passed() && (l.note() == null || l.note().isBlank())) {
+                throw new BizException(name + " 没通过，请写明原因和补考安排");
+            }
+        }
+        for (AssessLine l : req.results()) {
+            String u = l.username().trim();
+            DocAssessment a = new DocAssessment();
+            a.setRevisionId(r.getId());
+            a.setUsername(u);
+            a.setMethod(req.method());
+            a.setScore(l.score());
+            a.setPassed(l.passed());
+            a.setNote(blankToNull(l.note()));
+            a.setAssessedOn(req.assessedOn());
+            a.setAssessedBy(me);
+            a.setCreatedAt(time.now());
+            assessments.save(a);
+            (l.passed() ? passedNames : failedNames).add(nameOf(required.get(u)) + (l.score() == null ? "" : " " + l.score() + " 分"));
+        }
+        audit.log("登记受控文件考核", d.getDocCode(), "第 " + r.getRevNo() + " 版，" + req.assessedOn() + " " + req.method().getLabel()
+                + (passedNames.isEmpty() ? "" : "，通过：" + String.join("、", passedNames)) + (failedNames.isEmpty() ? "" : "，未通过：" + String.join("、", failedNames)));
+        return detailOf(d);
+    }
+
+    /** 现行版本已生效、还有人确认了没考核通过的文件。 */
+    @Transactional(readOnly = true)
+    public List<DocRow> assessPending() {
+        return rows(docs.findByStatus(DocStatus.ACTIVE)).stream().filter(d -> d.assessPending() > 0 && d.currentRev() != null).toList();
+    }
+
+    /** 全部培训考核记录，导出用：每次考核一行，确认了还没考核的也一行。 */
+    @Transactional(readOnly = true)
+    public List<TrainingRow> trainingRecords() {
+        List<ControlledDoc> all = docs.findAll().stream().sorted(Comparator.comparing(ControlledDoc::getDocCode)).toList();
+        if (all.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, ControlledDoc> docMap = all.stream().collect(Collectors.toMap(ControlledDoc::getId, x -> x));
+        List<DocRevision> revs = revisions.findByDocIdIn(docMap.keySet());
+        Map<Long, DocRevision> revMap = revs.stream().collect(Collectors.toMap(DocRevision::getId, x -> x));
+        Map<String, String> names = users.findAll().stream().collect(Collectors.toMap(com.cosmetic.scm.security.AppUser::getUsername, this::nameOf, (x, y) -> x));
+        Map<String, List<DocAssessment>> byKey = assessments.findByRevisionIdInOrderByIdAsc(revMap.keySet()).stream()
+                .collect(Collectors.groupingBy(a -> a.getRevisionId() + "/" + a.getUsername(), java.util.LinkedHashMap::new, Collectors.toList()));
+        List<DocAck> ackList = acks.findByRevisionIdIn(revMap.keySet()).stream()
+                .sorted(Comparator.comparing((DocAck a) -> docMap.get(revMap.get(a.getRevisionId()).getDocId()).getDocCode())
+                        .thenComparing(a -> revMap.get(a.getRevisionId()).getRevNo()).thenComparing(DocAck::getUsername)).toList();
+        List<TrainingRow> out = new java.util.ArrayList<>();
+        for (DocAck a : ackList) {
+            DocRevision r = revMap.get(a.getRevisionId());
+            ControlledDoc d = docMap.get(r.getDocId());
+            List<DocAssessment> list = byKey.getOrDefault(r.getId() + "/" + a.getUsername(), List.of());
+            if (list.isEmpty()) {
+                out.add(new TrainingRow(d.getDocCode(), d.getTitle(), r.getRevNo(), r.getEffectiveDate(), a.getUsername(), names.get(a.getUsername()), a.getAckedAt(),
+                        null, null, null, d.isAssessRequired() ? "待考核" : "只需确认", null, null));
+            }
+            for (DocAssessment x : list) {
+                out.add(new TrainingRow(d.getDocCode(), d.getTitle(), r.getRevNo(), r.getEffectiveDate(), a.getUsername(), names.get(a.getUsername()), a.getAckedAt(),
+                        x.getAssessedOn(), x.getMethod().getLabel(), x.getScore(), x.isPassed() ? "通过" : "未通过", x.getAssessedBy(), x.getNote()));
+            }
+        }
+        return out;
+    }
+
+    /** 每一版每个人最近一次考核。 */
+    private Map<Long, Map<String, DocAssessment>> latestAssessments(java.util.Collection<Long> revisionIds) {
+        if (revisionIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Map<String, DocAssessment>> out = new java.util.HashMap<>();
+        for (DocAssessment a : assessments.findByRevisionIdInOrderByIdAsc(revisionIds)) {
+            out.computeIfAbsent(a.getRevisionId(), k -> new java.util.HashMap<>()).put(a.getUsername(), a);
+        }
+        return out;
+    }
+
+    private String nameOf(com.cosmetic.scm.security.AppUser u) {
+        return u.getDisplayName() == null || u.getDisplayName().isBlank() ? u.getUsername() : u.getDisplayName();
     }
 
     /** 本人确认已阅读。只有应确认的人能确认，每人每版一次。先锁文件，避免重复确认撞唯一约束。 */
@@ -583,6 +766,8 @@ public class DocControlService {
         List<Long> targetIds = list.stream().map(d -> ackTarget(byDoc.getOrDefault(d.getId(), List.of())).map(DocRevision::getId).orElse(null)).filter(java.util.Objects::nonNull).toList();
         Map<Long, java.util.Set<String>> ackedBy = acks.findByRevisionIdIn(targetIds).stream()
                 .collect(Collectors.groupingBy(DocAck::getRevisionId, Collectors.mapping(DocAck::getUsername, Collectors.toSet())));
+        Map<Long, Map<String, DocAssessment>> latestBy = latestAssessments(list.stream().filter(ControlledDoc::isAssessRequired)
+                .map(d -> ackTarget(byDoc.getOrDefault(d.getId(), List.of())).map(DocRevision::getId).orElse(null)).filter(java.util.Objects::nonNull).toList());
         Map<Long, List<DocCopy>> outBy = copies.findByDocIdInAndStatus(list.stream().map(ControlledDoc::getId).toList(), DocCopyStatus.ISSUED).stream()
                 .collect(Collectors.groupingBy(DocCopy::getDocId));
         return list.stream().map(d -> {
@@ -594,18 +779,26 @@ public class DocControlService {
             List<Role> roles = parseRoles(d.getTrainRoles());
             Optional<DocRevision> target = ackTarget(revs);
             int ackPending = 0;
+            int assessPending = 0;
             if (d.getStatus() == DocStatus.ACTIVE && target.isPresent() && !roles.isEmpty()) {
                 java.util.Set<String> done = ackedBy.getOrDefault(target.get().getId(), java.util.Set.of());
                 ackPending = (int) internal.stream().filter(u -> roles.stream().anyMatch(u::hasRole) && !done.contains(u.getUsername())).count();
+                if (d.isAssessRequired()) {
+                    Map<String, DocAssessment> last = latestBy.getOrDefault(target.get().getId(), Map.of());
+                    // 确认了、还没考核通过的；没确认的算在 ackPending 里
+                    assessPending = (int) internal.stream().filter(u -> roles.stream().anyMatch(u::hasRole) && done.contains(u.getUsername())
+                            && !(last.containsKey(u.getUsername()) && last.get(u.getUsername()).isPassed())).count();
+                }
             }
             boolean ackOverdue = ackPending > 0 && cur.isPresent() && cur.get().getEffectiveDate().plusDays(ACK_DAYS).isBefore(today);
+            boolean assessOverdue = assessPending > 0 && cur.isPresent() && cur.get().getEffectiveDate().plusDays(ASSESS_DAYS).isBefore(today);
             List<DocCopy> out = outBy.getOrDefault(d.getId(), List.of());
             List<LocalDate> dues = out.stream().map(c -> retrieveDue(d, c, cur)).filter(java.util.Objects::nonNull).sorted().toList();
             LocalDate retrieveDue = dues.isEmpty() ? null : dues.get(0);
             return new DocRow(d.getId(), d.getDocCode(), d.getTitle(), d.getCategory(), d.getCategory().getLabel(), d.getOwnerDept(), d.getReviewMonths(), d.getStatus(), d.getStatus().getLabel(),
                     cur.map(DocRevision::getRevNo).orElse(null), cur.map(DocRevision::getEffectiveDate).orElse(null), pending, up.map(DocRevision::getRevNo).orElse(null),
                     up.map(DocRevision::getEffectiveDate).orElse(null), d.getLastReviewedOn(), due, due != null && due.isBefore(today), d.getObsoleteReason(), roles, ackPending, ackOverdue,
-                    out.size(), dues.size(), retrieveDue, retrieveDue != null && retrieveDue.isBefore(today));
+                    out.size(), dues.size(), retrieveDue, retrieveDue != null && retrieveDue.isBefore(today), d.isAssessRequired(), assessPending, assessOverdue);
         }).toList();
     }
 
@@ -629,8 +822,14 @@ public class DocControlService {
         List<com.cosmetic.scm.security.AppUser> people = d.getStatus() == DocStatus.ACTIVE ? requiredUsers(d) : List.of();
         if (target.isPresent() && !people.isEmpty()) {
             Map<String, LocalDateTime> done = acks.findByRevisionIdIn(List.of(target.get().getId())).stream().collect(Collectors.toMap(DocAck::getUsername, DocAck::getAckedAt, (x, y) -> x));
-            List<AckView> views = people.stream().map(u -> new AckView(u.getUsername(), u.getDisplayName(), done.get(u.getUsername()))).toList();
-            ack = new AckStatus(target.get().getId(), target.get().getRevNo(), views, (int) views.stream().filter(v -> v.ackedAt() != null).count(), views.size());
+            Map<String, DocAssessment> last = latestAssessments(List.of(target.get().getId())).getOrDefault(target.get().getId(), Map.of());
+            List<AckView> views = people.stream().map(u -> {
+                DocAssessment a = last.get(u.getUsername());
+                return new AckView(u.getUsername(), u.getDisplayName(), done.get(u.getUsername()), a == null ? null : a.isPassed(), a == null ? null : a.getAssessedOn(),
+                        a == null ? null : a.getMethod().getLabel(), a == null ? null : a.getScore(), a == null ? null : a.getAssessedBy(), a == null ? null : a.getNote());
+            }).toList();
+            ack = new AckStatus(target.get().getId(), target.get().getRevNo(), views, (int) views.stream().filter(v -> v.ackedAt() != null).count(), views.size(),
+                    d.isAssessRequired(), (int) views.stream().filter(v -> Boolean.TRUE.equals(v.passed())).count());
         }
         return new DocDetail(rows(List.of(d)).get(0), revs.stream().map(r -> new RevisionView(r.getId(), r.getRevNo(), r.getChangeSummary(), r.getEffectiveDate(), r.getStatus(), r.getStatus().getLabel(),
                 r.getId().equals(cur), r.getId().equals(up), r.getRejectNote(), r.getDraftedBy(), r.getDraftedAt(), r.getApprovedBy(), r.getApprovedAt())).toList(), ack, copyViews(d, revs));

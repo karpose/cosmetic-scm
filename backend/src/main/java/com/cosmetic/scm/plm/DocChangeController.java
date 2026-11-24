@@ -91,6 +91,12 @@ public class DocChangeController {
         return docs.reject(id, revId, req);
     }
 
+    @PostMapping("/docs/{id}/revisions/{revId}/assessments")
+    @PreAuthorize("hasAnyRole('QA','QSO')")
+    public DocControlService.DocDetail recordAssessments(@PathVariable Long id, @PathVariable Long revId, @Valid @RequestBody DocControlService.AssessReq req) {
+        return docs.recordAssessments(id, revId, req);
+    }
+
     @PostMapping("/docs/{id}/copies")
     @PreAuthorize("hasAnyRole('QA','QSO')")
     public DocControlService.DocDetail issueCopies(@PathVariable Long id, @Valid @RequestBody DocControlService.IssueReq req) {

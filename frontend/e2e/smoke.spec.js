@@ -1973,6 +1973,51 @@ test('受控文件纸质副本：发放现行版本，收回和登记遗失', as
   await expect(dt.getByText('在用 0 份')).toBeVisible()
 })
 
+test('受控文件培训考核：确认已读后由质量人员登记考核，没通过可以补考', async ({ page }) => {
+  await login(page, 'qa1')
+  await page.goto('/docs')
+  const open = async () => {
+    await page.locator('.el-table__row').filter({ hasText: 'SOP-QA-001' }).getByRole('button', { name: '详情' }).click()
+    return page.getByRole('dialog', { name: /^受控文件 SOP-QA-001/ })
+  }
+  let dt = await open()
+  // 前面的用例已设生产计划岗位、prod1 已确认；打开考核
+  await dt.locator('.roles-row').getByRole('button', { name: '修改' }).click()
+  await dt.locator('.roles-row').getByText('确认后还要考核').click()
+  await dt.locator('.roles-row').getByRole('button', { name: '保存' }).click()
+  await toast(page, '已修改确认岗位')
+  await expect(dt.getByText('考核通过 0 / 1')).toBeVisible()
+  await expect(dt.locator('.ack-box')).toContainText('待考核')
+
+  await dt.getByRole('button', { name: '登记考核' }).click()
+  const as = page.getByRole('dialog', { name: /登记考核/ })
+  const line = as.locator('.assess-line').first()
+  await line.getByText('未通过', { exact: true }).click()
+  await line.getByRole('spinbutton').fill('55')
+  await as.getByRole('button', { name: '保存考核结果' }).click()
+  await toast(page, '请写明原因和补考安排')
+  await line.getByRole('textbox').fill('E2E 称量步骤答错')
+  await as.getByRole('button', { name: '保存考核结果' }).click()
+  await toast(page, '已登记 1 人的考核结果')
+  await expect(dt.locator('.ack-box')).toContainText('考核未通过')
+
+  // 补考通过
+  await dt.getByRole('button', { name: '登记考核' }).click()
+  await as.locator('.el-form-item').filter({ hasText: '考核方式' }).locator('.el-select').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: '现场操作' }).click()
+  await as.locator('.assess-line').first().getByText('通过', { exact: true }).click()
+  await as.getByRole('button', { name: '保存考核结果' }).click()
+  await toast(page, '已登记 1 人的考核结果')
+  await expect(dt.getByText('考核通过 1 / 1')).toBeVisible()
+  await expect(dt.getByRole('button', { name: '登记考核' })).toHaveCount(0)
+  await dt.getByRole('button', { name: '关闭', exact: true }).click()
+
+  // 导出培训考核记录
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: '导出培训考核记录' }).click()
+  expect((await download).suggestedFilename()).toMatch(/^培训考核记录-.*\.xlsx$/)
+})
+
 test('变更控制：评估生成行动项、QSO 批准、负责人完成、QSO 关闭', async ({ page }) => {
   test.setTimeout(240_000)
   const open = async () => {
