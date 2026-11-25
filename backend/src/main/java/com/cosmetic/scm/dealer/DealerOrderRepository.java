@@ -25,4 +25,6 @@ public interface DealerOrderRepository extends JpaRepository<DealerOrder, Long> 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from DealerOrder x where x.id = :id")
     Optional<DealerOrder> lockById(@Param("id") Long id);
+
+    long countByStatus(DealerOrderStatus status);
 }

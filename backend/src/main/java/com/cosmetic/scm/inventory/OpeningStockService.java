@@ -113,7 +113,11 @@ public class OpeningStockService {
         Map<String, Warehouse> wm = warehouses.findAll().stream().collect(Collectors.toMap(Warehouse::getCode, w -> w));
         Map<String, Partner> pm = partners.findAll().stream().collect(Collectors.toMap(Partner::getCode, p -> p));
         Set<String> existing = new HashSet<>();
-        batches.findAll().forEach(b -> existing.add(b.getBatchNo()));
+        List<String> nos = req.rows().stream().map(OpeningRow::batchNo).filter(java.util.Objects::nonNull)
+                .map(String::trim).filter(n -> !n.isEmpty()).distinct().toList();
+        for (int i = 0; i < nos.size(); i += 1000) {
+            existing.addAll(batches.findExistingBatchNos(nos.subList(i, Math.min(nos.size(), i + 1000))));
+        }
 
         List<RowError> errors = new ArrayList<>();
         Map<String, Plan> plans = new LinkedHashMap<>();

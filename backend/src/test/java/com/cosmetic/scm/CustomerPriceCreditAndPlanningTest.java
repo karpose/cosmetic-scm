@@ -108,5 +108,65 @@ class CustomerPriceCreditAndPlanningTest {
                                 "warehouseId", whId,
                                 "lines", List.of(Map.of("itemId", fg.getId(), "qty", 3))))))
                 .andExpect(status().isBadRequest());
+
+        // 已出库还没对账的 ¥400 也占额度：再出 1 件（¥200）合计 ¥600 > ¥500，拦截
+        mvc.perform(post("/api/sales-orders").header("Authorization", "Bearer " + sales)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of(
+                                "customerId", customer.getId(),
+                                "warehouseId", whId,
+                                "lines", List.of(Map.of("itemId", fg.getId(), "qty", 1))))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", org.hamcrest.Matchers.containsString("已出库未对账 ¥400.00")));
+        String fin = login("finance1");
+        JsonNode credit = json.readTree(mvc.perform(get("/api/ar-statements/credit-summary").header("Authorization", "Bearer " + fin))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        JsonNode row = null;
+        for (JsonNode r : credit) {
+            if (r.get("customerId").asLong() == customer.getId()) {
+                row = r;
+            }
+        }
+        assertThat(row).isNotNull();
+        assertThat(row.get("openAr").decimalValue()).isEqualByComparingTo("0");
+        assertThat(row.get("unbilledShipped").decimalValue()).isEqualByComparingTo("400.00");
+        assertThat(row.get("availableCredit").decimalValue()).isEqualByComparingTo("100.00");
+
+        // 生成对账单后不重复计算（对账单待收 ¥400、未对账 0），回款核销后额度释放
+        JsonNode ar = json.readTree(mvc.perform(post("/api/ar-statements").header("Authorization", "Bearer " + sales)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of("customerId", customer.getId(),
+                                "periodTo", java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")).toString()))))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        long arId = ar.get("id").asLong();
+        assertThat(ar.get("totalAmount").decimalValue()).isEqualByComparingTo("400.00");
+        mvc.perform(post("/api/sales-orders").header("Authorization", "Bearer " + sales)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of(
+                                "customerId", customer.getId(),
+                                "warehouseId", whId,
+                                "lines", List.of(Map.of("itemId", fg.getId(), "qty", 1))))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", org.hamcrest.Matchers.containsString("当前未结应收 ¥400.00（其中已出库未对账 ¥0）")));
+        mvc.perform(post("/api/ar-statements/" + arId + "/invoice").header("Authorization", "Bearer " + fin)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of("invoiceNo", "OUT-INV-CR-43",
+                                "invoiceDate", ar.get("periodTo").asText()))))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/ar-statements/" + arId + "/approve").header("Authorization", "Bearer " + fin)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of("password", PWD))))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/ar-statements/" + arId + "/receive").header("Authorization", "Bearer " + fin)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of("receiptDate", ar.get("periodTo").asText(), "amount", new BigDecimal("400.00")))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("PAID"));
+        mvc.perform(post("/api/sales-orders").header("Authorization", "Bearer " + sales)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of(
+                                "customerId", customer.getId(),
+                                "warehouseId", whId,
+                                "lines", List.of(Map.of("itemId", fg.getId(), "qty", 2))))))
+                .andExpect(status().isOk());
     }
 }

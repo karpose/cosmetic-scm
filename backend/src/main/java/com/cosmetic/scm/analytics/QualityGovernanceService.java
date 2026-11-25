@@ -113,11 +113,8 @@ public class QualityGovernanceService {
         LocalDateTime endBefore = end.plusDays(1).atStartOfDay();
 
         Map<Long, Partner> partners = lookup.partnerMap();
-        List<MfgOrder> mos = mfgOrders.findAllByOrderByIdDesc().stream()
-                .filter(m -> fgItemId.equals(m.getFgItemId()) && m.getStatus() == MoStatus.COMPLETED
-                        && m.getCompletedAt() != null
-                        && !m.getCompletedAt().isBefore(startAt) && m.getCompletedAt().isBefore(endBefore))
-                .toList();
+        List<MfgOrder> mos = mfgOrders.findByFgItemIdAndStatusAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByIdDesc(
+                fgItemId, MoStatus.COMPLETED, startAt, endBefore);
         List<Long> outIds = mos.stream().map(MfgOrder::getOutBatchId).filter(java.util.Objects::nonNull).distinct().toList();
         Map<Long, String> outBatchNos = outIds.isEmpty() ? Map.of()
                 : batches.findAllById(outIds).stream().collect(Collectors.toMap(Batch::getId, Batch::getBatchNo));
@@ -144,9 +141,7 @@ public class QualityGovernanceService {
                 ? actualSum.multiply(BigDecimal.valueOf(100)).divide(plannedSum, 1, RoundingMode.HALF_UP) : null;
 
         int fgTotal = 0, fgRel = 0, fgRej = 0;
-        for (Batch b : batches.findAll()) {
-            if (!fgItemId.equals(b.getItemId()) || b.getCreatedAt() == null) continue;
-            if (b.getCreatedAt().isBefore(startAt) || !b.getCreatedAt().isBefore(endBefore)) continue;
+        for (Batch b : batches.findByItemIdAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(fgItemId, startAt, endBefore)) {
             fgTotal++;
             batchNoSet.add(b.getBatchNo());
             if (b.getStatus() == BatchStatus.RELEASED) fgRel++;
@@ -180,9 +175,7 @@ public class QualityGovernanceService {
             if (fg.getName().equals(r.itemName())) recCount++;
         }
 
-        List<SalesReturn> rets = salesReturns.findAll().stream()
-                .filter(r -> r.getReturnDate() != null && !r.getReturnDate().isBefore(start) && !r.getReturnDate().isAfter(end))
-                .toList();
+        List<SalesReturn> rets = salesReturns.findByReturnDateBetween(start, end);
         int retLines = 0;
         BigDecimal retQty = BigDecimal.ZERO;
         if (!rets.isEmpty()) {

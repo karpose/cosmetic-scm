@@ -162,6 +162,16 @@ public class QualityService {
                 .findByBatchIdInOrderByIdDesc(batchIds).stream()
                 .filter(r -> r.getStatus() != com.cosmetic.scm.domain.SupplierReturnStatus.CANCELLED)
                 .collect(Collectors.groupingBy(com.cosmetic.scm.supplierreturn.SupplierReturn::getBatchId));
+        // 没写冻结原因的，取最近一次判不合格的说明；一次查完，不逐批查库
+        Map<Long, String> rejectNotes = new java.util.HashMap<>();
+        decisions.findByBatchIdIn(batchIds).stream()
+                .filter(d -> d.getDecision() == Decision.REJECTED)
+                .sorted(java.util.Comparator.comparing(QualityDecision::getId).reversed())
+                .forEach(d -> {
+                    if (!rejectNotes.containsKey(d.getBatchId())) {
+                        rejectNotes.put(d.getBatchId(), d.getNote());
+                    }
+                });
         List<NcrDispositionRow> rows = new ArrayList<>();
         for (BatchView v : views) {
             List<Deviation> devs = devByBatch.getOrDefault(v.id(), List.of());
@@ -173,9 +183,7 @@ public class QualityService {
             List<String> retNos = rets.stream().map(com.cosmetic.scm.supplierreturn.SupplierReturn::getReturnNo).toList();
             String reason = v.freezeReason();
             if (reason == null || reason.isBlank()) {
-                reason = decisions.findByBatchIdOrderByIdDesc(v.id()).stream()
-                        .filter(d -> d.getDecision() == Decision.REJECTED)
-                        .map(QualityDecision::getNote).findFirst().orElse(null);
+                reason = rejectNotes.get(v.id());
             }
             boolean hasStock = v.onHand() != null && v.onHand().signum() > 0;
             String state;

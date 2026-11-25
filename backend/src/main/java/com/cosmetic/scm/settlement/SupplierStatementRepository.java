@@ -27,6 +27,8 @@ public interface SupplierStatementRepository extends JpaRepository<SupplierState
 
     List<SupplierStatement> findByStatusInOrderById(Collection<StatementStatus> statuses);
 
+    long countByStatusAndFinanceSyncStatusNot(StatementStatus status, FinanceSyncStatus syncStatus);
+
     List<SupplierStatement> findBySupplierIdAndStatusIn(Long supplierId, Collection<StatementStatus> statuses);
 
     List<SupplierStatement> findBySupplierIdAndStatusAndInvoiceReviewVersionGreaterThanOrderByIdDesc(Long supplierId, StatementStatus status, int version);

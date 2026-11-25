@@ -57,6 +57,7 @@ public class SalesService {
     private final BatchRepository batches;
     private final InventoryService inventory;
     private final MasterLookup lookup;
+    private final com.cosmetic.scm.master.PartnerRepository partners;
     private final CustomerPriceService customerPrices;
     private final com.cosmetic.scm.settlement.CustomerStatementRepository customerStatements;
     private final DocNoService docNo;
@@ -222,8 +223,19 @@ public class SalesService {
         return toPreview(plan(req, false));
     }
 
+    /**
+     * 出库前锁客户行：信用额度按“未结对账单 + 已出库未对账 + 本次出库”算，没有单据可锁，所以锁客户，
+     * 同一客户的出库排队，几张单同时出库不会一起超额。必须在事务里任何普通查询之前调用
+     * （MySQL 可重复读下，之前有过普通查询就读不到别人刚提交的出库）；经销商订单审核、电商订单出库在锁住自己的订单后先调它。
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public void lockCustomer(Long customerId) {
+        partners.lockById(customerId).orElseThrow(() -> BizException.notFound("客户"));
+    }
+
     @Transactional
     public SoView create(SoReq req) {
+        lockCustomer(req.customerId());
         Plan plan = plan(req, true);
         if (!plan.fulfilled()) {
             List<String> shortages = new ArrayList<>();
@@ -314,14 +326,17 @@ public class SalesService {
         if (customer.getCreditLimit() == null || orderTotal.signum() <= 0) {
             return;
         }
-        BigDecimal openAr = customerStatements.findByCustomerIdOrderByIdDesc(customer.getId()).stream()
+        BigDecimal billed = customerStatements.findByCustomerIdOrderByIdDesc(customer.getId()).stream()
                 .filter(s -> !"PAID".equals(s.getStatus()) && !"CANCELLED".equals(s.getStatus()))
                 .map(com.cosmetic.scm.settlement.CustomerStatement::outstandingAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal unbilled = lines.unbilledShippedAmount(customer.getId());
+        unbilled = unbilled == null ? BigDecimal.ZERO : unbilled;
+        BigDecimal openAr = billed.add(unbilled);
         if (openAr.add(orderTotal).compareTo(customer.getCreditLimit()) > 0) {
             throw new BizException("客户 " + customer.getName() + " 信用额度不足：授信 ¥" + customer.getCreditLimit().toPlainString()
-                    + "，当前未结应收 ¥" + openAr.toPlainString() + "，本次出库 ¥" + orderTotal.toPlainString()
-                    + "，请先回款核销或调整授信额度");
+                    + "，当前未结应收 ¥" + openAr.toPlainString() + "（其中已出库未对账 ¥" + unbilled.toPlainString() + "）"
+                    + "，本次出库 ¥" + orderTotal.toPlainString() + "，请先回款核销或调整授信额度");
         }
     }
 

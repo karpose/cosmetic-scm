@@ -118,9 +118,7 @@ public class FinanceInsightsService {
         LocalDate start = from != null ? from : today.minusDays(180);
         LocalDate end = to != null ? to : today;
 
-        List<SalesOrder> sos = salesOrders.findAllByOrderByIdDesc().stream()
-                .filter(o -> o.getOrderDate() != null && !o.getOrderDate().isBefore(start) && !o.getOrderDate().isAfter(end))
-                .toList();
+        List<SalesOrder> sos = salesOrders.findByOrderDateBetweenOrderByOrderDateAscIdAsc(start, end);
         if (sos.isEmpty()) {
             return new MarginReport(start, end, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, List.of(), List.of());
         }
@@ -235,9 +233,8 @@ public class FinanceInsightsService {
         LocalDateTime startAt = start.atStartOfDay();
         LocalDateTime endBefore = end.plusDays(1).atStartOfDay();
 
-        List<InvDoc> docs = invDocs.findAll().stream()
-                .filter(d -> d.getDocType() == InvDocType.ADJUST || d.getDocType() == InvDocType.SCRAP)
-                .filter(d -> d.getCreatedAt() != null && !d.getCreatedAt().isBefore(startAt) && d.getCreatedAt().isBefore(endBefore))
+        List<InvDoc> docs = invDocs.findByDocTypeInAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(
+                        List.of(InvDocType.ADJUST, InvDocType.SCRAP), startAt, endBefore).stream()
                 .sorted(Comparator.comparing(InvDoc::getCreatedAt).reversed())
                 .toList();
         if (docs.isEmpty()) {

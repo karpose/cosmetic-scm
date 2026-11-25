@@ -237,24 +237,25 @@ public class DealerService {
 
     @Transactional(readOnly = true)
     public DealerSummary summary() {
-        List<DealerOrder> all = orders.findAllByOrderByIdDesc();
-        long submitted = all.stream().filter(o -> o.getStatus() == DealerOrderStatus.SUBMITTED).count();
-        long approved = all.stream().filter(o -> o.getStatus() == DealerOrderStatus.APPROVED).count();
-        long rejected = all.stream().filter(o -> o.getStatus() == DealerOrderStatus.REJECTED).count();
-        long cancelled = all.stream().filter(o -> o.getStatus() == DealerOrderStatus.CANCELLED).count();
+        long submitted = orders.countByStatus(DealerOrderStatus.SUBMITTED);
+        long approved = orders.countByStatus(DealerOrderStatus.APPROVED);
+        long rejected = orders.countByStatus(DealerOrderStatus.REJECTED);
+        long cancelled = orders.countByStatus(DealerOrderStatus.CANCELLED);
         long reviewed = approved + rejected;
         Double rate = reviewed == 0 ? null : Math.round(approved * 1000.0 / reviewed) / 10.0;
-        return new DealerSummary(all.size(), submitted, approved, rejected, cancelled, rate);
+        return new DealerSummary(orders.count(), submitted, approved, rejected, cancelled, rate);
     }
 
     @Transactional(readOnly = true)
     public long pendingCount() {
-        return orders.findByStatus(DealerOrderStatus.SUBMITTED).size();
+        return orders.countByStatus(DealerOrderStatus.SUBMITTED);
     }
 
     @Transactional
     public OrderView approve(Long id, ApproveReq req) {
         DealerOrder o = pending(id);
+        // 信用额度要锁客户，而且要在下面的普通查询之前（见 SalesService.lockCustomer）
+        sales.lockCustomer(o.getCustomerId());
         List<SoLineReq> soLines = lines.findByOrderIdIn(List.of(o.getId())).stream()
                 .map(l -> new SoLineReq(l.getItemId(), l.getQty())).toList();
         // 库存不够、效期不达标时 SalesService 会抛错，整笔审核回滚，订单保持待审核

@@ -9,4 +9,6 @@ public interface SupplierPriceRepository extends JpaRepository<SupplierPrice, Lo
     List<SupplierPrice> findAllByOrderByIdDesc();
 
     List<SupplierPrice> findBySupplierIdAndItemIdAndActiveTrueOrderByValidFromDescIdDesc(Long supplierId, Long itemId);
+
+    List<SupplierPrice> findByActiveTrue();
 }

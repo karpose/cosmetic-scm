@@ -333,9 +333,7 @@ public class ProductionService {
     /** 生产与委外物料超耗与平衡台账：对比每张已发料/已完工工单的品牌供料理论标耗与净发料量（差异金额按 PriceAccess 权限控制）。 */
     @Transactional(readOnly = true)
     public List<MaterialVarianceRow> materialVariance() {
-        List<MfgOrder> mos = orders.findAllByOrderByIdDesc().stream()
-                .filter(m -> m.getStatus() == MoStatus.ISSUED || m.getStatus() == MoStatus.COMPLETED)
-                .toList();
+        List<MfgOrder> mos = orders.findByStatusInOrderByIdDesc(List.of(MoStatus.ISSUED, MoStatus.COMPLETED));
         return computeMaterialVariance(mos, com.cosmetic.scm.security.PriceAccess.allowed(), false);
     }
 
@@ -360,14 +358,18 @@ public class ProductionService {
         for (MfgIssue i : issues.findByMoIdIn(moIds)) {
             netByMoItem.merge(i.getMoId() + ":" + i.getItemId(), i.getQty(), BigDecimal::add);
         }
+        // 用量按配方版本读，同一版本只查一次（几千张单一般只有几个版本，逐单查库在总览里要好几秒）
+        Map<Long, List<BomLine>> versionLines = new java.util.HashMap<>();
+        Map<Long, List<BomLine>> currentLines = new java.util.HashMap<>();
         List<MaterialVarianceRow> rows = new ArrayList<>();
         for (MfgOrder mo : mos) {
             Item fg = im.get(mo.getFgItemId());
             Partner f = pm.get(mo.getFactoryId());
             BigDecimal baseQty = (mo.getStatus() == MoStatus.COMPLETED && mo.getActualQty() != null && mo.getActualQty().signum() > 0)
                     ? mo.getActualQty() : mo.getPlannedQty();
-            List<BomLine> lines = mo.getFormulaVersionId() == null ? master.bomLines(mo.getFgItemId())
-                    : master.versionLines(mo.getFormulaVersionId());
+            List<BomLine> lines = mo.getFormulaVersionId() == null
+                    ? currentLines.computeIfAbsent(mo.getFgItemId(), master::bomLines)
+                    : versionLines.computeIfAbsent(mo.getFormulaVersionId(), master::versionLines);
             for (BomLine l : lines) {
                 SupplyMode mode = mo.getMoType() == MoType.OWN ? SupplyMode.BRAND : l.getSupplyMode();
                 if (mode != SupplyMode.BRAND) {

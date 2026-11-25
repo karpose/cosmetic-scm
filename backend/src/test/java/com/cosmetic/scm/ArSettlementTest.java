@@ -15,6 +15,7 @@ import com.cosmetic.scm.common.TimeProvider;
 import com.cosmetic.scm.demo.DemoDataLoader;
 import com.cosmetic.scm.domain.ItemType;
 import com.cosmetic.scm.domain.PartnerKind;
+import com.cosmetic.scm.integration.IntegrationLogRepository;
 import com.cosmetic.scm.master.Item;
 import com.cosmetic.scm.master.ItemRepository;
 import com.cosmetic.scm.master.Partner;
@@ -55,6 +56,7 @@ class ArSettlementTest {
     @Autowired SalesOrderRepository salesOrders;
     @Autowired SoLineRepository soLines;
     @Autowired TimeProvider time;
+    @Autowired IntegrationLogRepository integrationLogs;
 
     private LocalDate d(int n) {
         return time.today().plusDays(n);
@@ -73,6 +75,11 @@ class ArSettlementTest {
 
     private ResultActions read(String token, String url) throws Exception {
         return mvc.perform(get(url).header("Authorization", "Bearer " + token));
+    }
+
+    private ResultActions ackAr(String statementNo, Map<String, Object> body) throws Exception {
+        return mvc.perform(post("/api/integration/finance/ar-vouchers/" + statementNo + "/ack")
+                .header("X-Api-Key", API_KEY).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body)));
     }
 
     private JsonNode body(ResultActions r) throws Exception {
@@ -166,6 +173,47 @@ class ArSettlementTest {
                         .content(json.writeValueAsString(cb)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.duplicate").value(true));
+
+        // 同一外部回款单号、内容不同：409，不重复核销
+        Map<String, Object> changed = new java.util.HashMap<>(cb);
+        changed.put("amount", new BigDecimal("1000.00"));
+        mvc.perform(post("/api/integration/finance/receipts")
+                        .header("X-Api-Key", API_KEY).contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(changed)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", org.hamcrest.Matchers.containsString("与已登记的回款信息不一致")));
+        Map<String, Object> otherDate = new java.util.HashMap<>(cb);
+        otherDate.put("receiptDate", d(-1).toString());
+        mvc.perform(post("/api/integration/finance/receipts")
+                        .header("X-Api-Key", API_KEY).contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(otherDate)))
+                .andExpect(status().isConflict());
+
+        // 凭证回执：已同步后换凭证号 409，原号重试照常返回，迟到的失败回执不改状态
+        ackAr(arNo, Map.of("success", true, "extVoucherNo", "AR-VOUCH-OTHER"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", org.hamcrest.Matchers.containsString("AR-VOUCH-042")));
+        ackAr(arNo, Map.of("success", true, "extVoucherNo", "AR-VOUCH-042"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.extVoucherNo").value("AR-VOUCH-042"));
+        ackAr(arNo, Map.of("success", false, "note", "迟到的失败"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.financeSyncStatus").value("SYNCED"))
+                .andExpect(jsonPath("$.extVoucherNo").value("AR-VOUCH-042"));
+
+        // 失败的回调也写接口日志（业务事务回滚了，日志另开事务）
+        mvc.perform(post("/api/integration/finance/receipts")
+                        .header("X-Api-Key", API_KEY).contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of("statementNo", "AR-NOT-EXIST", "extReceiptNo", "REC-NONE",
+                                "receiptDate", d(0).toString(), "amount", new BigDecimal("1.00")))))
+                .andExpect(status().isNotFound());
+        var logs = integrationLogs.findTop200ByOrderByIdDesc();
+        assertThat(logs).anyMatch(l -> "回款回调核销".equals(l.getAction()) && "AR-NOT-EXIST".equals(l.getRef()) && !l.isSuccess());
+        assertThat(logs).anyMatch(l -> "回款回调核销".equals(l.getAction()) && arNo.equals(l.getRef()) && !l.isSuccess()
+                && l.getMessage().contains("不一致"));
+        assertThat(logs).anyMatch(l -> "应收凭证回执".equals(l.getAction()) && arNo.equals(l.getRef()) && !l.isSuccess()
+                && l.getMessage().contains("已绑定外部凭证号"));
+        assertThat(logs).anyMatch(l -> "应收凭证回执".equals(l.getAction()) && arNo.equals(l.getRef()) && l.isSuccess()
+                && "已同步，忽略迟到的失败回执".equals(l.getMessage()));
 
         read(fin, "/api/reports/ar-statements").andExpect(status().isOk());
         read(login("qa1"), "/api/reports/ar-statements").andExpect(status().isForbidden());

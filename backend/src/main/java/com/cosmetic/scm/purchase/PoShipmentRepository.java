@@ -19,6 +19,10 @@ public interface PoShipmentRepository extends JpaRepository<PoShipment, Long> {
 
     List<PoShipment> findByStatusOrderById(ShipmentStatus status);
 
+    long countByStatus(ShipmentStatus status);
+
+    long countByReceiptResolvedAtIsNullAndReceiptDisputedAtIsNotNull();
+
     List<PoShipment> findByReceiptResolvedAtIsNullAndReceiptDisputedAtIsNotNullOrderByReceiptDisputedAtAscIdAsc();
 
     @Query("""
@@ -34,4 +38,12 @@ public interface PoShipmentRepository extends JpaRepository<PoShipment, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from PoShipment x where x.id = :id")
     Optional<PoShipment> lockById(@Param("id") Long id);
+
+    /** 期间内提出收货异议的送货通知，按供应商计数：[supplierId, count]。供应商绩效用。 */
+    @Query("""
+            select o.supplierId, count(s) from PoShipment s, PurchaseOrder o
+            where o.id = s.poId and s.receiptDisputedAt >= :from and s.receiptDisputedAt < :before
+            group by o.supplierId
+            """)
+    List<Object[]> countDisputesBySupplier(@Param("from") java.time.LocalDateTime from, @Param("before") java.time.LocalDateTime before);
 }

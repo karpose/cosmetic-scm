@@ -239,7 +239,9 @@ public class SettlementService {
         LocalDate today = time.today();
         int pendingApprove = 0, disputed = 0, apOverdueCount = 0, apPendingSync = 0;
         BigDecimal apOpen = BigDecimal.ZERO, apOverdue = BigDecimal.ZERO;
-        for (SupplierStatement s : statements.findAll()) {
+        // 只读还没结清的几种状态；已付清的只数没同步凭证的张数，不整表读取
+        for (SupplierStatement s : statements.findByStatusInOrderById(
+                List.of(StatementStatus.INVOICED, StatementStatus.DISPUTED, StatementStatus.APPROVED))) {
             if (s.getStatus() == StatementStatus.INVOICED) {
                 pendingApprove++;
             } else if (s.getStatus() == StatementStatus.DISPUTED) {
@@ -252,11 +254,13 @@ public class SettlementService {
                     apOverdue = apOverdue.add(s.outstandingAmount());
                 }
             }
-            if ((s.getStatus() == StatementStatus.APPROVED || s.getStatus() == StatementStatus.PAID)
+            if (s.getStatus() == StatementStatus.APPROVED
                     && s.effectiveFinanceSyncStatus() != com.cosmetic.scm.domain.FinanceSyncStatus.SYNCED) {
                 apPendingSync++;
             }
         }
+        apPendingSync += (int) statements.countByStatusAndFinanceSyncStatusNot(StatementStatus.PAID,
+                com.cosmetic.scm.domain.FinanceSyncStatus.SYNCED);
         var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
         boolean arAllowed = auth != null && auth.getAuthorities().stream().anyMatch(a ->
                 "ROLE_ADMIN".equals(a.getAuthority()) || "ROLE_SALES".equals(a.getAuthority()) || "ROLE_FINANCE".equals(a.getAuthority()));
@@ -265,8 +269,8 @@ public class SettlementService {
         if (arAllowed) {
             int openC = 0, overdueC = 0;
             BigDecimal openA = BigDecimal.ZERO, overdueA = BigDecimal.ZERO;
-            for (CustomerStatement cs : customerStatements.findAll()) {
-                if ("APPROVED".equals(cs.getStatus()) && cs.outstandingAmount().signum() > 0) {
+            for (CustomerStatement cs : customerStatements.findByStatusInOrderById(List.of("APPROVED"))) {
+                if (cs.outstandingAmount().signum() > 0) {
                     openC++;
                     openA = openA.add(cs.outstandingAmount());
                     if (cs.getDueDate() != null && cs.getDueDate().isBefore(today)) {
