@@ -75,6 +75,7 @@ public class ReportService {
     private final com.cosmetic.scm.plm.NpdService npdService;
     private final com.cosmetic.scm.plm.FilingService filingService;
     private final SupplierAuditService audits;
+    private final com.cosmetic.scm.oemcontract.OemContractService oemContracts;
     private final RetainService retains;
     private final PurchaseService purchases;
     private final com.cosmetic.scm.settlement.SettlementService settlement;
@@ -109,6 +110,7 @@ public class ReportService {
         m.put("deviations", this::deviations);
         m.put("capas", this::capas);
         m.put("supplier-audits", this::supplierAudits);
+        m.put("oem-contracts", this::oemContractsReport);
         m.put("partner-compliance", this::partnerComplianceReport);
         m.put("retains", this::retainSamples);
         m.put("equipment", this::equipmentList);
@@ -599,6 +601,17 @@ public class ReportService {
         audits.listAll().forEach(a -> rows.add(row(a.auditNo(), a.partnerName(), a.auditDate(), a.auditTypeLabel(), a.score(), a.resultLabel(), a.findings(),
                 a.auditor(), a.nextAuditDate(), a.signedBy())));
         return new Table("供应商审核", List.of("编号", "单位", "审核日期", "类型", "得分", "结论", "发现的问题", "审核员", "下次审核", "签批人"), rows);
+    }
+
+    private Table oemContractsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        var clauses = com.cosmetic.scm.oemcontract.OemContractService.CLAUSES;
+        oemContracts.listAll().forEach(c -> rows.add(row(c.contractNo(), c.extNo(), c.factoryName(), c.title(), c.signedOn(), c.validFrom(), c.validTo(),
+                c.stateLabel(), c.products().stream().map(p -> p.code() + " " + p.name()).collect(java.util.stream.Collectors.joining("、")),
+                c.rmSupplyLabel(), c.pkSupplyLabel(), c.checked().stream().map(k -> clauses.getOrDefault(k, k)).collect(java.util.stream.Collectors.joining("、")),
+                c.otherTerms(), String.join("；", c.mismatches()), c.createdBy(), c.approvedBy(), c.approvedAt(), c.terminatedAt(), c.endReason())));
+        return new Table("委托生产合同", List.of("系统编号", "合同编号", "受托生产企业", "合同名称", "签订日期", "开始日期", "结束日期", "状态", "覆盖的成品",
+                "原料", "包材", "签批时确认的约定事项", "其他约定", "和 BOM 不一致", "登记人", "签批人", "签批时间", "终止时间", "终止或作废原因"), rows);
     }
 
     private Table partnerComplianceReport() {

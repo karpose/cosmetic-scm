@@ -102,6 +102,7 @@ public class DashboardService {
     private final AuditService audit;
     private final com.cosmetic.scm.qms.GmpSelfCheckService selfChecks;
     private final com.cosmetic.scm.qms.QsoService qso;
+    private final com.cosmetic.scm.oemcontract.OemContractService oemContracts;
     private final com.cosmetic.scm.sales.SalesRecordService salesRecords;
     private final TimeProvider time;
 
@@ -266,6 +267,19 @@ public class DashboardService {
         for (com.cosmetic.scm.qms.QsoService.UserCheck u : qso.unauthorized()) {
             todos.add(new Todo("QSO_UNAUTHORIZED", "质量安全负责人角色没有任职或授权", "bad", u.displayName() == null ? u.username() : u.displayName(), u.username(),
                     "不是现任，也没有生效的协助履职授权，却能签批放行", "/qso"));
+        }
+        // 委托生产合同（检查要点第 8 项）
+        for (com.cosmetic.scm.oemcontract.OemContractService.ContractView c : oemContracts.pendingApproval()) {
+            todos.add(new Todo("OEM_CONTRACT_APPROVE", "委托生产合同待签批", "warn", c.factoryName(), c.contractNo(),
+                    c.products().size() + " 个成品，" + c.validFrom() + " 至 " + c.validTo() + "，" + c.submittedBy() + " 提交", "/oem-contracts"));
+        }
+        for (com.cosmetic.scm.oemcontract.OemContractService.ContractView c : oemContracts.expiringSoon()) {
+            todos.add(new Todo("OEM_CONTRACT_EXPIRING", "委托生产合同快到期", "warn", c.factoryName(), c.contractNo(),
+                    c.validTo() + " 到期，覆盖 " + c.productNames() + "，请续签", "/oem-contracts"));
+        }
+        for (com.cosmetic.scm.oemcontract.OemContractService.OrderCheck o : oemContracts.uncoveredOpenOrders()) {
+            todos.add(new Todo("OEM_CONTRACT_MISSING", "委托单没有委托生产合同", "warn", o.fgName(), o.moNo(),
+                    "受托厂 " + o.factoryName() + "，下单时没有覆盖这个成品的有效合同", "/oem-contracts?tab=orders"));
         }
         for (com.cosmetic.scm.qms.GmpSelfCheckService.CheckRow r : selfChecks.waitingApproval()) {
             todos.add(new Todo("SELF_CHECK_APPROVE", "GMP 自查待签批", "warn", r.editionLabel(), r.checkNo(), "结论：" + r.conclusionLabel() + "，" + r.submittedBy() + " 提交", "/self-checks"));
