@@ -104,6 +104,9 @@
           <template #default="{ row }"><span class="mono" :style="{ color: Number(row.varianceCost) > 0 ? 'var(--el-color-danger)' : '' }">{{ row.varianceCost != null ? `¥${fmtQty(row.varianceCost)}` : '—' }}</span></template>
         </el-table-column>
       </el-table>
+      <p v-if="varianceCapped" class="cap-hint muted small">
+        共 {{ varianceMeta.orderCount }} 张已发料或已完工的单子，这里显示最近 {{ varianceMeta.recentOrderCount }} 张的明细和全部超耗项；节余、平衡的旧明细请用“导出超耗台账”查看。
+      </p>
       <ListPager v-model:page="vt.page.value" v-model:size="vt.size.value" :total="vt.total.value" />
     </el-card>
 
@@ -444,6 +447,8 @@ const tab = ref(VALID_TABS.has(route.query.tab) ? route.query.tab : 'orders')
 const orders = ref([])
 const consignment = ref([])
 const variances = ref([])
+// 单子多时后端只带最近 300 张单的明细和全部超耗；单数、超耗项数按全部算
+const varianceMeta = ref({ orderCount: 0, recentOrderCount: 0, overuseCount: 0 })
 const varState = ref('')
 const eff = ref(null)
 const loading = ref(false)
@@ -464,7 +469,8 @@ const vt = usePaged(variances, {
 })
 const consignmentHasPrice = computed(() => consignment.value.some((r) => r.value != null))
 const varianceHasPrice = computed(() => variances.value.some((r) => r.varianceCost != null))
-const overuseCount = computed(() => variances.value.filter((r) => r.state === 'OVERUSE').length)
+const overuseCount = computed(() => varianceMeta.value.overuseCount)
+const varianceCapped = computed(() => varianceMeta.value.orderCount > varianceMeta.value.recentOrderCount)
 const canCreate = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
 const canOperate = computed(() => auth.hasAny('ADMIN', 'PRODUCTION', 'WAREHOUSE'))
 const canCancel = computed(() => auth.hasAny('ADMIN', 'PRODUCTION'))
@@ -516,7 +522,8 @@ async function load() {
     orders.value = os
     eff.value = ef
     consignment.value = cs
-    variances.value = vs
+    variances.value = vs.rows
+    varianceMeta.value = { orderCount: vs.orderCount, recentOrderCount: vs.recentOrderCount, overuseCount: vs.overuseCount }
   } catch (e) {
     loadError.value = e.message
   } finally {
@@ -753,6 +760,7 @@ onMounted(() => Promise.all([load(), rd.load()]))
 </script>
 
 <style scoped>
+.cap-hint { margin: 8px 16px 0; }
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
 .kpi-card { padding: 14px 16px; border-radius: 14px; background: var(--lg-fill); border: 1px solid var(--lg-stroke); display: grid; gap: 4px; }
 .kpi-card.warn { border-color: var(--el-color-danger-light-5); }

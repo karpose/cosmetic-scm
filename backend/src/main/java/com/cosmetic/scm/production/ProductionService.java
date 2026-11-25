@@ -156,6 +156,16 @@ public class ProductionService {
                                     BigDecimal unitCost, BigDecimal value) {
     }
 
+    /**
+     * 超耗台账页面：最近 {@link #VARIANCE_RECENT_ORDERS} 张单的全部明细，加上所有超耗的明细（超耗要处理，不因为单子旧就藏起来）。
+     * orderCount、overuseCount 按全部单子算；全部明细走导出。
+     */
+    public record MaterialVarianceView(List<MaterialVarianceRow> rows, int orderCount, int recentOrderCount,
+                                       long overuseCount) {
+    }
+
+    public static final int VARIANCE_RECENT_ORDERS = 300;
+
     public record MaterialVarianceRow(Long moId, String moNo, MoType moType, String moTypeLabel,
                                       Long factoryId, String factoryName, Long fgItemId, String fgCode, String fgName,
                                       MoStatus moStatus, String moStatusLabel, BigDecimal plannedQty, BigDecimal actualQty,
@@ -335,6 +345,20 @@ public class ProductionService {
     public List<MaterialVarianceRow> materialVariance() {
         List<MfgOrder> mos = orders.findByStatusInOrderByIdDesc(List.of(MoStatus.ISSUED, MoStatus.COMPLETED));
         return computeMaterialVariance(mos, com.cosmetic.scm.security.PriceAccess.allowed(), false);
+    }
+
+    /** 页面用：数据多时只带最近的单子和全部超耗，见 {@link MaterialVarianceView}。 */
+    @Transactional(readOnly = true)
+    public MaterialVarianceView materialVarianceView() {
+        List<MfgOrder> mos = orders.findByStatusInOrderByIdDesc(List.of(MoStatus.ISSUED, MoStatus.COMPLETED));
+        List<MaterialVarianceRow> all = computeMaterialVariance(mos, com.cosmetic.scm.security.PriceAccess.allowed(), false);
+        java.util.Set<Long> recent = mos.stream().limit(VARIANCE_RECENT_ORDERS).map(MfgOrder::getId)
+                .collect(java.util.stream.Collectors.toSet());
+        List<MaterialVarianceRow> rows = all.stream()
+                .filter(r -> recent.contains(r.moId()) || "OVERUSE".equals(r.state()))
+                .toList();
+        long overuse = all.stream().filter(r -> "OVERUSE".equals(r.state())).count();
+        return new MaterialVarianceView(rows, mos.size(), recent.size(), overuse);
     }
 
     /** 供委外对账单预览调用：返回指定已完工委外工单中存在品牌供料超耗（netIssued > standard）的明细及超耗金额。 */

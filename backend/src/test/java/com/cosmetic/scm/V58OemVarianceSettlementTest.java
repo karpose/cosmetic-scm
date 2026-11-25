@@ -59,6 +59,7 @@ class V58OemVarianceSettlementTest {
     @Autowired OpeningStockService opening;
     @Autowired QualityService quality;
     @Autowired BatchRepository batches;
+    @Autowired com.cosmetic.scm.production.MfgOrderRepository mfgOrders;
     @Autowired UserRepository users;
 
     private <T> T as(String user, Supplier<T> s) {
@@ -155,7 +156,8 @@ class V58OemVarianceSettlementTest {
         JsonNode prodVars = json.readTree(mvc.perform(get("/api/mfg-orders/material-variance")
                         .header("Authorization", "Bearer " + prodToken))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
-        JsonNode prodRow = findByMoNo(prodVars, moNo);
+        assertThat(prodVars.get("overuseCount").asLong()).isGreaterThanOrEqualTo(1);
+        JsonNode prodRow = findByMoNo(prodVars.get("rows"), moNo);
         assertThat(prodRow).isNotNull();
         assertThat(prodRow.get("state").asText()).isEqualTo("OVERUSE");
         assertThat(prodRow.get("varianceQty").decimalValue()).isEqualByComparingTo("1.5");
@@ -165,7 +167,7 @@ class V58OemVarianceSettlementTest {
         JsonNode finVars = json.readTree(mvc.perform(get("/api/mfg-orders/material-variance")
                         .header("Authorization", "Bearer " + finToken))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
-        JsonNode finRow = findByMoNo(finVars, moNo);
+        JsonNode finRow = findByMoNo(finVars.get("rows"), moNo);
         assertThat(finRow).isNotNull();
         assertThat(finRow.get("varianceCost").decimalValue()).isEqualByComparingTo("300.00");
 
@@ -186,6 +188,35 @@ class V58OemVarianceSettlementTest {
         byte[] xlsx = mvc.perform(get("/api/reports/material-variance").header("Authorization", "Bearer " + finToken))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
         assertThat(xlsx.length).isGreaterThan(100);
+
+        // 6. 单子多了以后页面只带最近 300 张单的明细，超耗的照样带上；单数和超耗项数按全部算
+        long overuseBefore = prodVars.get("overuseCount").asLong();
+        int ordersBefore = prodVars.get("orderCount").asInt();
+        com.cosmetic.scm.production.MfgOrder src = mfgOrders.findByMoNoIn(List.of(moNo)).get(0);
+        for (int i = 0; i < com.cosmetic.scm.production.ProductionService.VARIANCE_RECENT_ORDERS; i++) {
+            com.cosmetic.scm.production.MfgOrder m = new com.cosmetic.scm.production.MfgOrder();
+            m.setMoNo("MO-V58-CAP-" + i);
+            m.setMoType(src.getMoType());
+            m.setFactoryId(src.getFactoryId());
+            m.setFgItemId(src.getFgItemId());
+            m.setPlannedQty(src.getPlannedQty());
+            m.setPlannedDate(src.getPlannedDate());
+            m.setStatus(com.cosmetic.scm.domain.MoStatus.ISSUED);
+            m.setFormulaVersionId(src.getFormulaVersionId());
+            m.setCreatedBy("prod1");
+            m.setCreatedAt(time.now());
+            mfgOrders.save(m);
+        }
+        JsonNode capped = json.readTree(mvc.perform(get("/api/mfg-orders/material-variance")
+                        .header("Authorization", "Bearer " + finToken))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(capped.get("orderCount").asInt()).isEqualTo(ordersBefore + 300);
+        assertThat(capped.get("recentOrderCount").asInt()).isEqualTo(300);
+        assertThat(capped.get("overuseCount").asLong()).isEqualTo(overuseBefore);
+        assertThat(findByMoNo(capped.get("rows"), moNo)).isNotNull();
+        for (JsonNode r : capped.get("rows")) {
+            assertThat(r.get("moNo").asText().startsWith("MO-V58-CAP-") || "OVERUSE".equals(r.get("state").asText())).isTrue();
+        }
     }
 
     private static JsonNode findByMoNo(JsonNode array, String moNo) {
