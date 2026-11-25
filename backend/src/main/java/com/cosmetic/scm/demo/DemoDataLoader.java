@@ -113,6 +113,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final com.cosmetic.scm.plm.DocControlService docControlService;
     private final com.cosmetic.scm.plm.ChangeService changeService;
     private final com.cosmetic.scm.plm.ArtworkService artworkService;
+    private final com.cosmetic.scm.oemcontract.OemContractService oemContractService;
     private final QualityService quality;
     private final ProductionService production;
     private final SalesService sales;
@@ -324,6 +325,12 @@ public class DemoDataLoader implements ApplicationRunner {
                 com.cosmetic.scm.domain.DocCategory.SOP, "质量部", 24, "首版（示例）", null, null, java.util.Set.of("MATERIAL_RELEASE", "INCOMING_CHECK"))));
         as("purchase1", () -> changeService.create(new com.cosmetic.scm.plm.ChangeService.CreateReq("甘油增加第二供应商（示例）", com.cosmetic.scm.domain.ChangeType.MATERIAL,
                 "降低单一来源风险（示例）", "引入第二家甘油供应商，规格不变（示例）", "精华液、面霜")));
+        // 委托生产合同：禾川的合同已登记待签批（签批前要上传扫描件），所以在做的委托单暂时没有合同依据
+        var contract = as("purchase1", () -> oemContractService.create(new com.cosmetic.scm.oemcontract.OemContractService.SaveReq(a3.id(),
+                "委托加工合同及质量协议（示例）", "示例合同编号 HC-2026-01", t.minusDays(3), t.minusDays(3), t.plusYears(1).minusDays(4),
+                com.cosmetic.scm.domain.ContractSupply.MIXED, com.cosmetic.scm.domain.ContractSupply.BRAND, List.of(serum.getId(), cream.getId()),
+                "受托方代采的原料须提供每批检验报告（示例）")));
+        as("purchase1", () -> oemContractService.submit(contract.id()));
         // 标签设计稿：面霜瓶的第一版待评审（批准前要上传设计稿文件）
         as("qa1", () -> artworkService.create(new com.cosmetic.scm.plm.ArtworkService.CreateReq(jar.getId(), cream.getId(), "首版设计稿（示例）")));
         // 询价：邀请两家，华澄已报价。截止前内部看不到价格

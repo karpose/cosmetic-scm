@@ -14,7 +14,7 @@
 | --- | --- |
 | 批次主线 | 主数据（物料、往来单位、仓库、BOM，CSV 批量导入）；采购收货；物料检验放行；自产和委托生产（发料、补料、余料退库、完工、物料平衡）；成品上市放行（只有质量安全负责人能放行）；按先到期先出和客户效期标准出库；批次正反向追溯，可打印存档 |
 | 库存 | 调拨、盘点、报废；期初库存导入；退货隔离区；受托厂寄存仓料账；批次标签打印和扫码核对 |
-| 质量体系 | 质量标准和批次检验（可采用供方报告）；偏差与 CAPA；供应商审核；留样台账；设备校准；投诉、不良反应上报时限和召回；销售退货质量处置；GMP 自查（检查要点委托生产版 24 项）；质量安全负责人任职和协助履职授权 |
+| 质量体系 | 质量标准和批次检验（可采用供方报告）；偏差与 CAPA；供应商审核；留样台账；设备校准；投诉、不良反应上报时限和召回；销售退货质量处置；GMP 自查（检查要点委托生产版 24 项）；质量安全负责人任职和协助履职授权；委托生产合同（质量协议）签批，委托单的合同依据 |
 | 研发和合规 | 配方版本和备案（签批生效、版本对比、原料反查）；原料法规目录（只能导入，不内置）；产品合规资料；稳定性试验；新品立项和上市检查；受控文件（已读确认、培训考核、纸质副本、制度覆盖）；变更控制；标签设计稿和印刷打样签样；PIF 产品信息档案 |
 | 自产执行 | 工艺路线；电子批生产记录（清场、按序执行工序、关键工序复核、过程检验超限自动生成偏差） |
 | 供应链协同 | 代工厂门户（进度、完工和出厂放行申报、委外对账）；供应商门户（确认订单、交期、送货通知带 COA）；经销商订货门户；询价比价（封标、多轮议价）；退货给供应商；补货建议（需求预测、BOM 展开、齐套预检）；一物一码和消费者扫码验真 |
@@ -125,7 +125,7 @@ flowchart TB
 | 质量放行 | `quality` | 质量放行（检验录入、不合格品处置）、质量标准 |
 | 销售 | `sales`、`salesreturn`、`dealer` | 销售出库（含客户协议价）、产品销售记录、销售退货、经销商订单 |
 | 投诉召回 | `complaint`、`recall` | 投诉与召回 |
-| 质量体系 | `qms` | 质量体系（偏差、CAPA、供应商审核、留样、设备校准）、GMP 自查、质量安全负责人 |
+| 质量体系 | `qms`、`oemcontract` | 质量体系（偏差、CAPA、供应商审核、留样、设备校准）、GMP 自查、质量安全负责人、委托合同 |
 | 研发合规 | `plm` | 配方与备案、合规资料（法规目录）、稳定性试验、新品立项、受控文件、变更控制、标签设计稿 |
 | 外部门户 | `oemportal`、`supplierportal`、`dealer` | 代工厂门户、供应商门户、经销商门户 |
 | 结算 | `settlement` | 对账结算（应付、委外、客户应收、账龄、进项台账） |
@@ -304,6 +304,7 @@ docker compose start backend
 | 物料平衡超限需查明原因 | GMP 第 41 条 | 实际产量超出计划的 95%–102% 时必须填写说明 |
 | 电子记录：用户唯一、权限控制、操作留痕 | GMP 附 1 | 账号 + 角色；关键签批要求再次输入密码（`SignatureService`）；`audit_log` 只增不改；连续输错锁定、密码复杂度与有效期（`LoginService`、`PasswordPolicy`）；外部门户账号按所属单位隔离数据 |
 | 委托生产：受托方出厂放行记录可追溯 | GMP 第 45、55 条 | 代工厂门户的完工申报记录出厂检验报告编号、放行人和代采原料批号；品牌方入库时采纳并写入批次谱系 |
+| 与受托方签订委托生产合同，约定质量安全责任和物料采购、检验、放行分工 | GMP 第 52 条；检查要点附 2 第 8 项 | `OemContractService`：合同登记成品范围、期限和原料 / 包材供料约定，上传扫描件、QSO 逐项确认约定事项后签批（不能是登记人或提交人）；`ContractCoverage` 判断委托单下单时有没有覆盖该成品的有效合同（`ProductionService.create` 写进审计，开关 `scm.oem.require-contract-for-order` 打开后拦截），供料约定和 BOM 不一致、合同快到期、委托单没有合同都在总览提醒；GMP 自查第 7、8 项自动核对 |
 | 委托方提供物料的管理 | GMP 第 54 条第二款；检查要点附 2 第 12 项 | 发料、超耗补料、余料退库都写进 `mfg_issue`（分类型、记原因）；受托厂有寄存仓时品牌供料同时转入寄存仓，`ProductionService.oemConsignment` 列出在厂余量，完工按净发料核销并写谱系；物料超耗台账对比标准用量 |
 | 检验报告、资质等原始记录完整保存，不被替换 | GMP 附 1 | `AttachmentService`：附件只增不删、存储不覆盖；核对文件头和扩展名；上传记录 SHA-256，下载时重新核对，不一致拒绝下载；上传写审计日志 |
 | 配方变更经批准；产品与备案一致 | 《化妆品注册备案管理办法》；GMP 放行要求 | `FormulaService`：生效配方只能走版本变更，质量安全负责人签批，发起人不能批自己的；原料变化（`FormulaDiff`）必须先有该版本已完成的备案；`QualityService` 拦截注册证过期的上市放行 |
@@ -343,6 +344,7 @@ backend/
     complaint/         投诉登记、不良反应上报、关闭
     recall/            召回、客户通知、回收进度
     oemportal/         代工厂门户：进度回传、完工与出厂放行申报
+    oemcontract/       委托生产合同（质量协议）：登记、签批、终止，委托单的合同依据
     supplierportal/    供应商门户：确认订单、回复交期、送货通知
     sourcing/          询价比价：封标、多轮议价、开标、定标生成采购单；供应商协议价
     settlement/        对账结算：采购和委外对账、发票、审批、付款登记；客户应收对账和回款；应付应收账龄
@@ -416,6 +418,7 @@ docs/csv/              计算机化系统验证文档包
 | 账号管理 | ADMIN |
 | 经销商订单审核、电商订单重试 / 取消 | ADMIN、SALES |
 | 退回受托厂申报 | ADMIN、PRODUCTION |
+| 登记、提交委托生产合同 | ADMIN、PURCHASE、PRODUCTION、QA、QSO；**签批、退回仅 QSO**（需签批，不能是登记人或提交人）；终止 ADMIN、QSO |
 | 生产补料、余料退库 | ADMIN、PRODUCTION、WAREHOUSE（要写原因） |
 | 委外加工费 | ADMIN、PURCHASE、FINANCE |
 | 供应商协议价 `/api/supplier-prices` | 查看 ADMIN、PURCHASE、FINANCE；维护 ADMIN、PURCHASE |
@@ -458,11 +461,11 @@ mvn test
 - 供应商协同和财务：`SupplierPortalTest`、`SupplierNotifyTest`、`SourcingSettlementTest`、`SupplierReturnTest`、`SupplierPriceTest`、`OutsourcingSettlementTest`、`ArSettlementTest`、`CustomerPriceCreditAndPlanningTest`、`AgingAndDealerPortalTest`、`FinanceIntegrationTest`、`SupplierPerformanceTest`。其中 `SourcingSettlementTest.pricesAndAmountsDoNotLeakToOtherInternalRoles` 扫一遍所有不带路径参数的 GET 接口，确认只读、质量、生产、销售账号看不到采购价格和金额。
 - 研发和质量体系：`ComplianceRegulatoryTest`、`ComplianceReleaseGateTest`、`StabilityStudyFlowTest`、`QualitySpecInspectionTest`、`NpdFlowTest`、`DocChangeControlTest`、`ChangeFormulaLinkTest`、`ChangeArtworkLinkTest`、`ArtworkFlowTest`、`GmpSelfCheckTest`、`PlmInsightsTest`；纯规则 `CasNumberTest`、`SpecLimitTest`、`SettlementRuleTest`、`SupplierScoreTest`、`GmpJudgementTest`。
 - `V44…Test` 到 `V77…Test` 以开发时的迭代编号命名（和迁移版本不一一对应），各覆盖一组看板、导出和闭环功能，比如 `V57OemConsignmentIssueOpsTest`（寄存仓补料和退库）、`V66BatchCostAnomalyTest`（成本异常和价格权限）、`V77IntegrationExceptionBoardTest`（电商异常重试）。
-- 一共 80 个测试类、284 个用例，共用一个内存库；断言示例数据初始状态、或会留下影响全局检查的数据的类，用 `@TestPropertySource` 换单独的库。改测试后按逆序和随机顺序各跑一遍：`mvn test -Dsurefire.runOrder=reversealphabetical`、`mvn test -Dsurefire.runOrder=random`。
+- 一共 82 个测试类、288 个用例，共用一个内存库；断言示例数据初始状态、或会留下影响全局检查的数据的类，用 `@TestPropertySource` 换单独的库。改测试后按逆序和随机顺序各跑一遍：`mvn test -Dsurefire.runOrder=reversealphabetical`、`mvn test -Dsurefire.runOrder=random`。
 
 ### 冒烟测试（Playwright）
 
-共 80 项（`smoke.spec.js` 78 项，`verify-camera.spec.js` 2 项检查验真页扫码后关闭摄像头）。其中一项用 axe 查全部页面的 WCAG A/AA（深色抽查常用页面）。axe 判断不了半透明和渐变背景上的对比度，改颜色时要另外算。
+共 81 项（`smoke.spec.js` 79 项，`verify-camera.spec.js` 2 项检查验真页扫码后关闭摄像头）。其中一项用 axe 查全部页面的 WCAG A/AA（深色抽查常用页面）。axe 判断不了半透明和渐变背景上的对比度，改颜色时要另外算。
 
 ```bash
 cd frontend

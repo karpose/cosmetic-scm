@@ -2107,6 +2107,66 @@ test('质量安全负责人：管理员登记任职、上传任命文件签批�
   await expect(row).toContainText('已撤销')
 })
 
+test('委托生产合同：登记、上传扫描件、QSO 逐项确认签批；委托单有了合同依据，下单时能看到', async ({ page }) => {
+  await login(page, 'purchase1')
+  await page.goto('/oem-contracts')
+  const demoRow = page.locator('main .el-table__row').filter({ hasText: '委托加工合同及质量协议（示例）' })
+  await expect(demoRow).toContainText('待签批')
+  await page.getByRole('tab', { name: /委托单核对/ }).click()
+  await expect(page.getByText('下单时没有合同').first()).toBeVisible()
+
+  // 登记一份：合同写原料由受托方采购，面霜 BOM 里的原料都是品牌供料，系统标出不一致；登记错了作废
+  await page.getByRole('button', { name: '登记合同' }).click()
+  const ed = dialog(page, '登记委托生产合同')
+  await ed.locator('.el-form-item').filter({ hasText: '委托生产的成品' }).locator('.el-select').click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: 'FG-CRM-002' }).click()
+  await ed.locator('#oc-title').click()
+  await ed.locator('.el-form-item').filter({ hasText: '原料由谁采购' }).locator('.el-select').click()
+  await page.getByRole('option', { name: '受托方采购' }).click()
+  await ed.getByRole('button', { name: '保存草稿' }).click()
+  await toast(page, '已登记')
+  const dt = page.getByRole('dialog', { name: /^委托生产合同 HT/ })
+  await expect(dt.getByText('合同约定的物料采购分工和成品现行 BOM 不一致')).toBeVisible()
+  await expect(dt).toContainText('角鲨烷 在 BOM 里是品牌供料，合同约定原料受托方采购')
+  await dt.getByRole('button', { name: '作废' }).click()
+  const box = page.locator('.el-message-box')
+  await box.locator('input').fill('E2E 采购分工写错')
+  await box.getByRole('button', { name: '作废' }).click()
+  await toast(page, '已作废')
+
+  // 示例合同上传扫描件
+  await page.getByRole('tab', { name: /^合同/ }).click()
+  await demoRow.getByRole('button', { name: '详情' }).click()
+  await dt.locator('input[type=file]').setInputFiles(pdfFile('委托合同-E2E.pdf'))
+  await expect(dt.getByText('委托合同-E2E.pdf')).toBeVisible()
+  await dt.getByRole('button', { name: '关闭', exact: true }).click()
+
+  // 质量安全负责人逐项确认后签批
+  await login(page, 'qso1')
+  await page.goto('/oem-contracts')
+  await demoRow.getByRole('button', { name: '签批' }).click()
+  await dt.locator('#oc-approve-pwd').fill(DEMO)
+  await dt.getByRole('button', { name: '签批生效' }).click()
+  await toast(page, '没有全部确认')
+  for (const cb of await dt.locator('.el-checkbox').all()) await cb.click()
+  await dt.getByRole('button', { name: '签批生效' }).click()
+  await toast(page, '已签批生效')
+  await expect(demoRow).toContainText('执行中')
+  await page.getByRole('tab', { name: /委托单核对/ }).click()
+  await expect(page.getByText('下单时没有合同')).toHaveCount(0)
+
+  // 下委托单时显示依据的合同
+  await login(page, 'prod1')
+  await page.goto('/production')
+  await page.getByRole('button', { name: '新建生产 / 委托单' }).click()
+  const mo = dialog(page, '新建生产 / 委托单')
+  await mo.locator('.el-form-item').filter({ hasText: '生产方' }).locator('.el-select').click()
+  await page.getByRole('option', { name: /禾川生物/ }).click()
+  await mo.locator('.el-form-item').filter({ has: page.locator('#mo-fg') }).locator('.el-select').click()
+  await page.getByRole('option', { name: /FG-SER-001/ }).click()
+  await expect(mo.getByText(/依据委托生产合同 HT-/)).toBeVisible()
+})
+
 test('产品销售记录：列出法规要求的内容，缺的标出来，价格只给销售看，能导出', async ({ page }) => {
   await login(page, 'sales1')
   await page.goto('/sales?tab=records')
@@ -2565,7 +2625,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页
@@ -2668,6 +2728,7 @@ test('无障碍：常用弹窗 axe 无违规', async ({ page }) => {
   await audit('/returns', '登记退货')
   await audit('/inventory-ops', '仓间调拨')
   await audit('/production', '新建生产 / 委托单')
+  await audit('/oem-contracts', '登记合同')
   await audit('/qms', '登记偏差')
 })
 

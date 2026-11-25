@@ -32,6 +32,8 @@ public interface BomLineRepository extends JpaRepository<BomLine, Long> {
 
     List<BomLine> findByBomIdOrderByLineNo(Long bomId);
 
+    List<BomLine> findByBomIdInOrderByBomIdAscLineNoAsc(java.util.Collection<Long> bomIds);
+
     @Modifying
     @Query("delete from BomLine l where l.bomId = :bomId")
     void deleteByBomId(@Param("bomId") Long bomId);

@@ -92,6 +92,12 @@ public class ProductionService {
     private final TimeProvider time;
     private final CurrentUser currentUser;
     private final com.cosmetic.scm.settlement.SupplierStatementLineRepository statementLines;
+    private final com.cosmetic.scm.oemcontract.OemContractRepository oemContracts;
+    private final com.cosmetic.scm.oemcontract.OemContractProductRepository oemContractProducts;
+
+    /** 打开后，委托单必须有覆盖这个成品的有效委托生产合同（默认只提醒）。 */
+    @org.springframework.beans.factory.annotation.Value("${scm.oem.require-contract-for-order:false}")
+    private boolean requireContract;
 
     public record CreateMoReq(@NotNull Long factoryId, @NotNull Long fgItemId,
                               @NotNull @Positive @Qty BigDecimal plannedQty, LocalDate plannedDate) {
@@ -417,6 +423,26 @@ public class ProductionService {
         if (master.bomLines(fg.getId()).isEmpty()) {
             throw new BizException(fg.getName() + " 还没有维护 BOM，不能下生产单");
         }
+        // 委托生产合同（检查要点第 8 项）：按下单这一刻核对，默认只在审计和总览里提醒。
+        // 先锁住候选合同（共享锁，和终止互斥），锁到以后再取下单时间，按整秒记，和事后读库的判断一致
+        String contractNote = "";
+        LocalDateTime now;
+        if (factory.getKind() == PartnerKind.OEM) {
+            List<com.cosmetic.scm.oemcontract.OemContract> candidates = com.cosmetic.scm.oemcontract.OemContractTerms.lockCandidates(oemContracts,
+                    factory.getId(), fg.getId(), today);
+            now = com.cosmetic.scm.oemcontract.OemContractTerms.stamp(time.now());
+            var cover = com.cosmetic.scm.domain.rules.ContractCoverage.covering(
+                    com.cosmetic.scm.oemcontract.OemContractTerms.terms(candidates, oemContractProducts), factory.getId(), fg.getId(), now);
+            if (cover.isPresent()) {
+                contractNote = "，依据合同 " + cover.get().contractNo();
+            } else if (requireContract) {
+                throw new BizException(factory.getName() + " 没有覆盖 " + fg.getName() + " 的有效委托生产合同，不能下委托单。请先在“委托合同”登记合同并签批");
+            } else {
+                contractNote = "，没有有效的委托生产合同";
+            }
+        } else {
+            now = time.now();
+        }
         MfgOrder mo = new MfgOrder();
         mo.setMoNo(docNo.next("MO", today));
         mo.setMoType(factory.getKind() == PartnerKind.OWN_FACTORY ? MoType.OWN : MoType.OEM);
@@ -427,10 +453,10 @@ public class ProductionService {
         mo.setFormulaVersionId(master.effectiveVersionId(fg.getId()));
         mo.setStatus(MoStatus.PLANNED);
         mo.setCreatedBy(currentUser.usernameOrSystem());
-        mo.setCreatedAt(time.now());
+        mo.setCreatedAt(now);
         orders.save(mo);
         audit.log(mo.getMoType() == MoType.OWN ? "新建自产工单" : "新建委托单", mo.getMoNo(),
-                fg.getName() + " × " + plain(req.plannedQty()) + "，" + factory.getName());
+                fg.getName() + " × " + plain(req.plannedQty()) + "，" + factory.getName() + contractNote);
         return toView(mo, lookup.itemMap(), lookup.partnerMap(), Map.of());
     }
 

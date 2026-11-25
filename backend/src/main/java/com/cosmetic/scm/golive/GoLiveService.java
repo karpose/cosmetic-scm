@@ -61,6 +61,8 @@ public class GoLiveService {
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecs;
     private final com.cosmetic.scm.qms.GmpSelfCheckRepository selfChecks;
     private final com.cosmetic.scm.qms.QsoAppointmentRepository qsoAppointments;
+    private final com.cosmetic.scm.oemcontract.OemContractRepository oemContracts;
+    private final com.cosmetic.scm.oemcontract.OemContractProductRepository oemContractProducts;
     private final com.cosmetic.scm.plm.DocControlService docControl;
 
     @Value("${scm.demo-data:false}")
@@ -208,7 +210,17 @@ public class GoLiveService {
 
     private void production(List<Check> c) {
         String g = "生产";
-        boolean ownFactory = partners.findAll().stream().anyMatch(p -> p.getKind() == PartnerKind.OWN_FACTORY);
+        List<Partner> allPartners = partners.findAll();
+        boolean ownFactory = allPartners.stream().anyMatch(p -> p.getKind() == PartnerKind.OWN_FACTORY);
+        // 委托生产合同（检查要点委托生产版第 8 项）：合格名录里的受托厂都要有执行中的合同
+        List<Partner> oems = allPartners.stream().filter(p -> p.getKind() == PartnerKind.OEM && p.isQualified()).toList();
+        if (!oems.isEmpty()) {
+            LocalDate today = time.today();
+            var terms = com.cosmetic.scm.oemcontract.OemContractTerms.ofFactories(oemContracts, oemContractProducts, oems.stream().map(Partner::getId).toList());
+            List<Partner> noContract = oems.stream().filter(p -> terms.stream().noneMatch(t -> t.factoryId().equals(p.getId()) && t.inForce(today))).toList();
+            c.add(noContract.isEmpty() ? new Check(g, "委托生产合同", "OK", oems.size() + " 家受托厂都有执行中的合同", "/oem-contracts")
+                    : new Check(g, "委托生产合同", "WARN", noContract.size() + " 家受托厂还没有执行中的委托生产合同（签批后下委托单才有依据）：" + names(noContract), "/oem-contracts"));
+        }
         if (ownFactory) {
             List<Item> noRouting = items.findAll().stream().filter(i -> i.isActive() && i.getItemType() == ItemType.FG)
                     .filter(i -> routing.findByFgItemIdOrderByStepNo(i.getId()).isEmpty()).toList();

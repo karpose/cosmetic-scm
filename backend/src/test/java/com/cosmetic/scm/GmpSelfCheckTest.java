@@ -111,7 +111,7 @@ class GmpSelfCheckTest {
         JsonNode ev = read(qa, url + "/evidence");
         Map<Integer, JsonNode> byNo = new HashMap<>();
         ev.forEach(e -> byNo.put(e.get("itemNo").asInt(), e));
-        assertThat(byNo.keySet()).contains(2, 3, 4, 5, 13, 16, 18, 19, 23, 24).doesNotContain(1, 8);
+        assertThat(byNo.keySet()).contains(2, 3, 4, 5, 8, 13, 16, 18, 19, 23, 24).doesNotContain(1);
         // 制度覆盖：还没有文件标注“质量安全责任制”
         assertThat(byNo.get(3).get("level").asText()).isEqualTo("WARN");
         assertThat(byNo.get(3).get("details").toString()).contains("质量安全责任制").contains("还没有对应的受控文件");

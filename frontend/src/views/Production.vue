@@ -203,10 +203,17 @@
           <el-form-item label="计划数量"><el-input-number id="mo-qty" v-model="create.plannedQty" :min="1" :precision="0" :controls="false" style="width:100%" /></el-form-item>
           <el-form-item label="计划日期"><el-date-picker id="mo-date" v-model="create.plannedDate" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
         </div>
+        <template v-if="contract?.applicable">
+          <el-alert v-if="!contract.covered" :type="contract.required ? 'error' : 'warning'" :closable="false" show-icon
+                    :title="contract.required ? '没有覆盖这个成品的有效委托生产合同，不能下委托单' : '没有覆盖这个成品的有效委托生产合同'"
+                    :description="contract.required ? '请先在“委托合同”页登记合同，由质量安全负责人签批。' : '可以保存，但会记入审计并在总览提醒。请在“委托合同”页登记合同，由质量安全负责人签批。'" />
+          <p v-else class="muted small">依据委托生产合同 {{ contract.contractNo }}（{{ contract.validTo }} 到期）</p>
+          <el-alert v-if="contract.mismatches.length" type="warning" :closable="false" show-icon title="合同约定的物料采购分工和 BOM 不一致" :description="contract.mismatches.join('；')" style="margin-top:8px" />
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="create.visible = false">取消</el-button>
-        <el-button type="primary" :loading="create.saving" @click="submitCreate">保存</el-button>
+        <el-button type="primary" :loading="create.saving" :disabled="contractBlocked" @click="submitCreate">保存</el-button>
       </template>
     </el-dialog>
 
@@ -411,7 +418,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
@@ -473,6 +480,21 @@ const done = reactive({
 })
 
 const factory = computed(() => rd.s.partners.find((p) => p.id === create.factoryId))
+// 委托生产合同：选了受托厂和成品就核对；默认只提醒，打开开关后没有合同不能保存
+const contract = ref(null)
+const contractReq = latestOnly()
+const contractBlocked = computed(() => !!contract.value?.applicable && !contract.value.covered && contract.value.required)
+watch(() => [create.visible, create.factoryId, create.fgItemId], async ([visible, factoryId, fgItemId]) => {
+  const current = contractReq()
+  contract.value = null
+  if (!visible || !factoryId || !fgItemId || factory.value?.kind !== 'OEM') return
+  try {
+    const r = await http.get('/oem-contracts/check', { params: { factoryId, fgItemId }, silent: true })
+    if (current()) contract.value = r
+  } catch {
+    // 核对失败不挡下单，后端保存时还会再核对
+  }
+})
 const shortage = computed(() => (detail.data?.requirements || []).some((r) => Number(r.shortQty) > 0))
 const doneWarehouses = computed(() => rd.s.warehouses.filter((w) => w.kind === 'OWN' || (w.kind === 'OEM' && w.partnerId === done.mo?.factoryId)))
 const outOfRange = computed(() => {

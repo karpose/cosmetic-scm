@@ -89,6 +89,10 @@ public class GmpEvidenceService {
     private final SalesReturnRepository returns;
     private final AuditRepository auditLogs;
     private final ProductFilingRepository filings;
+    private final com.cosmetic.scm.oemcontract.OemContractRepository oemContracts;
+    private final com.cosmetic.scm.oemcontract.OemContractProductRepository oemContractProducts;
+    private final com.cosmetic.scm.master.BomRepository boms;
+    private final com.cosmetic.scm.master.BomLineRepository bomLines;
     private final TimeProvider time;
 
     /** level：OK 没发现问题，WARN 要注意，INFO 仅供参考。 */
@@ -124,6 +128,7 @@ public class GmpEvidenceService {
         out.add(qsoDelegation());
         out.add(oemAudit(c));
         out.add(oemList(c));
+        out.add(contracts(c));
         out.add(oemSupervision(c));
         out.add(oemDisqualified(c));
         out.add(procedures());
@@ -303,11 +308,67 @@ public class GmpEvidenceService {
 
     private Evidence oemList(Ctx c) {
         List<Partner> all = oemFactories(c);
+        List<com.cosmetic.scm.domain.rules.ContractCoverage.Term> terms = com.cosmetic.scm.oemcontract.OemContractTerms.ofFactories(oemContracts, oemContractProducts,
+                all.stream().map(Partner::getId).toList());
         List<String> details = all.stream().map(p -> p.getName() + "（" + p.getCode() + "）许可证 " + (p.getLicenseNo() == null ? "未登记" : p.getLicenseNo())
-                + (p.getLicenseExpiry() == null ? "" : "，有效期至 " + p.getLicenseExpiry()) + (p.isQualified() ? "" : "，已停用")).toList();
+                + (p.getLicenseExpiry() == null ? "" : "，有效期至 " + p.getLicenseExpiry()) + (p.isQualified() ? "" : "，已停用") + contractsOf(terms, p.getId(), c.today())).toList();
         long missing = all.stream().filter(p -> p.getLicenseNo() == null || p.getLicenseNo().isBlank()).count();
         return new Evidence(7, missing > 0 ? "WARN" : "INFO", "主数据里有受托生产企业 " + all.size() + " 家" + (missing > 0 ? "，其中 " + missing + " 家没有登记许可证编号" : "")
-                + "；委托合同、评估资料请在往来单位的附件里核对。", limit(details));
+                + "；委托合同见第 8 项，审核评估见第 6 项，其他资料请在往来单位的附件里核对。", limit(details));
+    }
+
+    private static String contractsOf(List<com.cosmetic.scm.domain.rules.ContractCoverage.Term> terms, Long factoryId, LocalDate today) {
+        List<String> nos = terms.stream().filter(t -> t.factoryId().equals(factoryId) && t.inForce(today))
+                .map(t -> t.contractNo() + "（至 " + t.validTo() + "）").toList();
+        return nos.isEmpty() ? "，没有执行中的委托生产合同" : "，执行中的合同 " + String.join("、", nos);
+    }
+
+    /**
+     * 第 8 项：期间内下的和还没完成的委托单，下单时有没有覆盖这个成品的有效委托生产合同；执行中的合同约定的物料采购分工和现行 BOM 是否一致。
+     * 合同条款是否履行仍要人工核对。
+     */
+    private Evidence contracts(Ctx c) {
+        List<MfgOrder> list = c.orders().stream().filter(m -> m.getMoType() == MoType.OEM && m.getStatus() != MoStatus.CANCELLED
+                && (c.in(m.getCreatedAt()) || m.getStatus() == MoStatus.PLANNED || m.getStatus() == MoStatus.ISSUED)).toList();
+        Set<Long> factories = new java.util.HashSet<>(activeFactories(c));
+        list.stream().map(MfgOrder::getFactoryId).filter(Objects::nonNull).forEach(factories::add);
+        List<com.cosmetic.scm.oemcontract.OemContract> signed = factories.isEmpty() ? List.of()
+                : oemContracts.findByFactoryIdInAndStatusIn(factories, com.cosmetic.scm.oemcontract.OemContractTerms.APPROVED);
+        List<com.cosmetic.scm.domain.rules.ContractCoverage.Term> terms = com.cosmetic.scm.oemcontract.OemContractTerms.terms(signed, oemContractProducts);
+        List<String> problems = new ArrayList<>();
+        for (MfgOrder m : list) {
+            if (com.cosmetic.scm.domain.rules.ContractCoverage.covering(terms, m.getFactoryId(), m.getFgItemId(), m.getCreatedAt()).isEmpty()) {
+                Partner f = c.partners().get(m.getFactoryId());
+                problems.add(m.getMoNo() + "：" + name(c, m.getFgItemId()) + "（" + (f == null ? "" : f.getName()) + "）" + m.getCreatedAt().toLocalDate()
+                        + " 下单时没有覆盖这个成品的有效委托生产合同");
+            }
+        }
+        Map<Long, com.cosmetic.scm.domain.rules.ContractCoverage.Term> termById = terms.stream()
+                .collect(Collectors.toMap(com.cosmetic.scm.domain.rules.ContractCoverage.Term::id, t -> t));
+        List<com.cosmetic.scm.oemcontract.OemContract> inForce = signed.stream().filter(x -> termById.get(x.getId()).inForce(c.today()))
+                .sorted(Comparator.comparing(com.cosmetic.scm.oemcontract.OemContract::getContractNo)).toList();
+        Map<Long, List<com.cosmetic.scm.domain.rules.ContractCoverage.Line>> bom = com.cosmetic.scm.oemcontract.OemContractTerms.bomLines(boms, bomLines,
+                inForce.stream().flatMap(x -> termById.get(x.getId()).products().stream()).collect(Collectors.toSet()), c.items());
+        List<String> lines = new ArrayList<>();
+        for (com.cosmetic.scm.oemcontract.OemContract x : inForce) {
+            Set<Long> products = termById.get(x.getId()).products();
+            for (Long fg : products) {
+                com.cosmetic.scm.domain.rules.ContractCoverage.supplyMismatches(name(c, fg), x.getRmSupply(), x.getPkSupply(), bom.getOrDefault(fg, List.of()))
+                        .forEach(s -> problems.add(x.getContractNo() + " " + s));
+            }
+            Partner f = c.partners().get(x.getFactoryId());
+            lines.add("执行中：" + x.getContractNo() + " " + (f == null ? "" : f.getName()) + "，" + x.getValidFrom() + " 至 " + x.getValidTo() + "，" + products.size() + " 个成品");
+        }
+        List<String> details = new ArrayList<>(problems);
+        details.addAll(lines);
+        if (!problems.isEmpty()) {
+            return new Evidence(8, "WARN", problems.size() + " 处要注意。合同条款是否履行请人工核对。", limit(details));
+        }
+        if (list.isEmpty()) {
+            return new Evidence(8, "INFO", "期间内没有委托单。" + (inForce.isEmpty() ? "" : "执行中的委托生产合同 " + inForce.size() + " 份。"), limit(details));
+        }
+        return new Evidence(8, "OK", "期间内 " + list.size() + " 张委托单下单时都有覆盖该成品的有效委托生产合同"
+                + (inForce.isEmpty() ? "。" : "，执行中合同约定的物料采购分工和现行 BOM 一致。") + "合同条款是否履行请人工核对。", limit(details));
     }
 
     private Evidence oemSupervision(Ctx c) {
