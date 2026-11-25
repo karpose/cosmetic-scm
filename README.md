@@ -123,7 +123,7 @@ flowchart TB
 | 库存 | `inventory` | 库存、库存作业（调拨、盘点、报废、期初导入）、扫码作业、批次标签 |
 | 生产 | `production`、`mes` | 生产与委托（寄售料账、物料超耗）、配方与备案 → 工艺路线、批生产记录 |
 | 质量放行 | `quality` | 质量放行（检验录入、不合格品处置）、质量标准 |
-| 销售 | `sales`、`salesreturn`、`dealer` | 销售出库（含客户协议价）、销售退货、经销商订单 |
+| 销售 | `sales`、`salesreturn`、`dealer` | 销售出库（含客户协议价）、产品销售记录、销售退货、经销商订单 |
 | 投诉召回 | `complaint`、`recall` | 投诉与召回 |
 | 质量体系 | `qms` | 质量体系（偏差、CAPA、供应商审核、留样、设备校准）、GMP 自查、质量安全负责人 |
 | 研发合规 | `plm` | 配方与备案、合规资料（法规目录）、稳定性试验、新品立项、受控文件、变更控制、标签设计稿 |
@@ -236,7 +236,7 @@ docker compose up -d --build
 # 浏览器访问 http://服务器地址
 ```
 
-- 数据库表结构由 Flyway 在后端启动时自动创建和升级（`backend/src/main/resources/db/migration`）。现在到 V49（V29、V30 空缺），以后改表按顺序新增 `V{n}__xxx.sql`，**不要修改已执行过的脚本**。升级前先备份（见下文）。
+- 数据库表结构由 Flyway 在后端启动时自动创建和升级（`backend/src/main/resources/db/migration`）。现在到 V50（V29、V30 空缺），以后改表按顺序新增 `V{n}__xxx.sql`，**不要修改已执行过的脚本**。升级前先备份（见下文）。
 - 生产环境默认不写示例数据。测试环境想要示例数据，把 `.env` 里 `SCM_DEMO_DATA` 设为 `true`。示例账号同样会被创建，正式上线前务必关掉。
 - 账号安全：连续输错 5 次密码锁定 15 分钟；密码至少 8 位、四类字符至少三类；生产环境下管理员新建 / 重置的账号首次登录必须改密，密码 90 天过期（`application.yml` 的 `scm.security.*`，本地开发默认不强制改密）。
 - 电商和财务对接：在 `.env` 里设置 `SCM_INTEGRATION_API_KEY` 后，电商 ERP 和财务系统用请求头 `X-Api-Key` 调用 `/api/integration/**`（财务凭证和收付款回调在 `/api/integration/finance/**`）；不设置则对接接口关闭。
@@ -316,7 +316,7 @@ docker compose start backend
 | 留样保存到有效期满后 6 个月 | GMP 第 18 条 | `RetainService`：放行时自动入账，领用留痕，保存期满前不能销毁 |
 | 设备校准有效 | GMP 设备管理要求 | `EquipmentService`：校准过期或停用的设备不能写进批记录；校准不合格自动停用并生成偏差，列出受影响工单 |
 | 批生产记录、清场、关键工序复核 | GMP 生产管理要求 | `MesService`：发料时固化工序；开工前清场才能开始，按顺序执行，关键工序他人复核，完工后清场，记录不完整不能入库；记录提交后不能修改；过程检验超限自动生成偏差 |
-| 销售记录含批号、客户名称地址联系方式 | GMP 第 58 条 | 出库单记录批次，可以录含税单价（V42 迁移）；客户主数据有联系人和地址；GMP 自查第 19 项核对备案编号、净含量、价格和购买者地址联系方式是否齐全 |
+| 销售记录含批号、客户名称地址联系方式 | GMP 第 58 条 | 出库单记录批次，可以录含税单价（V42 迁移）；出库时记下购买者名称、地址、联系方式和备案编号、净含量快照（V50 迁移），以后改主数据不影响已出库的记录；`SalesRecordService` 按批号列出产品销售记录（页面和导出“产品销售记录”），缺的内容标出来；GMP 自查第 19 项按销售记录核对 |
 | 召回时找到受影响客户 | GMP 第 63 条；《化妆品监督管理条例》召回规定 | 追溯页列出发往客户并可一键冻结；`RecallService`：只有 QSO 可发起 / 关闭，发起时冻结批次、按出库记录逐客户生成通知，全部通知后才能关闭，回收数量按关联召回的退货单统计；召回中不能解冻，回收进度按在外量算；期初批次上线前的发货不在系统里，页面提示核对旧系统（SOP-10 召回演练） |
 | 每年自查质量管理体系运行情况 | GMP 第 54 条（自查制度）；检查要点附 2（委托生产版） | `GmpSelfCheckService`：24 项逐项自查，`GmpJudgement` 按判定原则出结论，`GmpEvidenceService` 自动核对有数据的项目，问题转 CAPA，QSO 签批；`/self-check-report` 打印报告 |
 | 投诉处理，不良反应按时限上报 | 《化妆品不良反应监测管理办法》 | `ComplaintService`：不良反应类投诉按严重 7 日 / 一般 30 日计算上报截止日，总览提醒；未登记上报不能关闭；关闭须签批并写调查结论和 CAPA |
@@ -364,7 +364,7 @@ backend/
     audit/             审计日志
     security/          登录、JWT、账号与角色、电子签名
     demo/              示例数据（通过真实业务服务写入）
-  src/main/resources/db/migration/   Flyway 建表脚本（V1 主线起按版本递增，现在到 V49）
+  src/main/resources/db/migration/   Flyway 建表脚本（V1 主线起按版本递增，现在到 V50）
   src/test/                          单元测试 + 集成测试（共用内存库；会改全局状态的类用单独的库）
 frontend/
   src/views/           各业务页面
@@ -458,11 +458,11 @@ mvn test
 - 供应商协同和财务：`SupplierPortalTest`、`SupplierNotifyTest`、`SourcingSettlementTest`、`SupplierReturnTest`、`SupplierPriceTest`、`OutsourcingSettlementTest`、`ArSettlementTest`、`CustomerPriceCreditAndPlanningTest`、`AgingAndDealerPortalTest`、`FinanceIntegrationTest`、`SupplierPerformanceTest`。其中 `SourcingSettlementTest.pricesAndAmountsDoNotLeakToOtherInternalRoles` 扫一遍所有不带路径参数的 GET 接口，确认只读、质量、生产、销售账号看不到采购价格和金额。
 - 研发和质量体系：`ComplianceRegulatoryTest`、`ComplianceReleaseGateTest`、`StabilityStudyFlowTest`、`QualitySpecInspectionTest`、`NpdFlowTest`、`DocChangeControlTest`、`ChangeFormulaLinkTest`、`ChangeArtworkLinkTest`、`ArtworkFlowTest`、`GmpSelfCheckTest`、`PlmInsightsTest`；纯规则 `CasNumberTest`、`SpecLimitTest`、`SettlementRuleTest`、`SupplierScoreTest`、`GmpJudgementTest`。
 - `V44…Test` 到 `V77…Test` 以开发时的迭代编号命名（和迁移版本不一一对应），各覆盖一组看板、导出和闭环功能，比如 `V57OemConsignmentIssueOpsTest`（寄存仓补料和退库）、`V66BatchCostAnomalyTest`（成本异常和价格权限）、`V77IntegrationExceptionBoardTest`（电商异常重试）。
-- 一共 79 个测试类、283 个用例，共用一个内存库；断言示例数据初始状态、或会留下影响全局检查的数据的类，用 `@TestPropertySource` 换单独的库。改测试后按逆序和随机顺序各跑一遍：`mvn test -Dsurefire.runOrder=reversealphabetical`、`mvn test -Dsurefire.runOrder=random`。
+- 一共 80 个测试类、284 个用例，共用一个内存库；断言示例数据初始状态、或会留下影响全局检查的数据的类，用 `@TestPropertySource` 换单独的库。改测试后按逆序和随机顺序各跑一遍：`mvn test -Dsurefire.runOrder=reversealphabetical`、`mvn test -Dsurefire.runOrder=random`。
 
 ### 冒烟测试（Playwright）
 
-共 79 项（`smoke.spec.js` 77 项，`verify-camera.spec.js` 2 项检查验真页扫码后关闭摄像头）。其中一项用 axe 查全部页面的 WCAG A/AA（深色抽查常用页面）。axe 判断不了半透明和渐变背景上的对比度，改颜色时要另外算。
+共 80 项（`smoke.spec.js` 78 项，`verify-camera.spec.js` 2 项检查验真页扫码后关闭摄像头）。其中一项用 axe 查全部页面的 WCAG A/AA（深色抽查常用页面）。axe 判断不了半透明和渐变背景上的对比度，改颜色时要另外算。
 
 ```bash
 cd frontend

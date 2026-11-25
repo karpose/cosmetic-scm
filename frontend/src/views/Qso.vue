@@ -44,12 +44,12 @@
         <el-tab-pane :label="`协助履职授权（${data.delegations.length}）`" name="delegations">
           <el-card shadow="never" body-style="padding:0 0 8px">
             <el-table :data="data.delegations" empty-text="还没有授权">
-              <el-table-column label="编号" width="150"><template #default="{ row }"><span class="mono">{{ row.delegationNo }}</span><div class="muted small">{{ row.grantedBy }} 授权</div></template></el-table-column>
-              <el-table-column label="被授权人" min-width="130"><template #default="{ row }">{{ row.delegateName }}<div class="muted small mono">{{ row.delegateUsername }}</div></template></el-table-column>
-              <el-table-column label="职责和事项" min-width="260"><template #default="{ row }">{{ row.dutyLabels }}<div class="muted small">{{ row.scope }}</div></template></el-table-column>
-              <el-table-column label="期限" width="190"><template #default="{ row }"><span class="mono small">{{ row.validFrom }} 至 {{ row.validTo }}</span><div v-if="row.expiringSoon" class="warn small">快到期</div></template></el-table-column>
-              <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="STATE_TAG[row.state]" size="small" disable-transitions>{{ row.stateLabel }}</el-tag></template></el-table-column>
-              <el-table-column label="监督" min-width="170">
+              <el-table-column label="编号" width="140"><template #default="{ row }"><span class="mono">{{ row.delegationNo }}</span><div class="muted small">{{ row.grantedBy }} 授权</div></template></el-table-column>
+              <el-table-column label="被授权人" min-width="110"><template #default="{ row }">{{ row.delegateName }}<div class="muted small mono">{{ row.delegateUsername }}</div></template></el-table-column>
+              <el-table-column label="职责和事项" min-width="200"><template #default="{ row }">{{ row.dutyLabels }}<div class="muted small">{{ row.scope }}</div></template></el-table-column>
+              <el-table-column label="期限" width="175"><template #default="{ row }"><span class="mono small">{{ row.validFrom }} 至 {{ row.validTo }}</span><div v-if="row.expiringSoon" class="warn small">快到期</div></template></el-table-column>
+              <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="STATE_TAG[row.state]" size="small" disable-transitions>{{ row.stateLabel }}</el-tag></template></el-table-column>
+              <el-table-column label="监督" min-width="140">
                 <template #default="{ row }">
                   <template v-if="row.reviews.length">{{ last(row).reviewDate }} {{ last(row).reviewedBy }}<div class="muted small ellipsis">{{ last(row).note }}</div></template>
                   <span v-else class="muted small">还没有监督记录</span>
@@ -57,7 +57,7 @@
                   <div v-if="row.revokeReason" class="muted small">撤销：{{ row.revokeReason }}</div>
                 </template>
               </el-table-column>
-              <el-table-column label="" width="150" :fixed="narrow ? false : 'right'">
+              <el-table-column label="" width="140" :fixed="narrow ? false : 'right'">
                 <template #default="{ row }">
                   <el-button size="small" text @click="openDelegation(row)">详情</el-button>
                   <template v-if="canManage(row)">

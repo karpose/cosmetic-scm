@@ -46,7 +46,7 @@ public class MasterImportService {
     private static final Map<String, String> FIELD_LABELS = Map.ofEntries(
             Map.entry("code", "编码"), Map.entry("name", "名称"), Map.entry("itemType", "类型"), Map.entry("unit", "单位"),
             Map.entry("inci", "INCI 名称"), Map.entry("limitPct", "限用浓度上限"), Map.entry("shelfMonths", "保质期（月）"),
-            Map.entry("filingNo", "备案编号"), Map.entry("netG", "净含量"), Map.entry("kind", "类别"),
+            Map.entry("filingNo", "备案编号"), Map.entry("netG", "净含量"), Map.entry("netLabel", "标签净含量"), Map.entry("kind", "类别"),
             Map.entry("licenseNo", "资质编号"), Map.entry("licenseExpiry", "资质有效期"), Map.entry("licenseScope", "许可范围"),
             Map.entry("batchPrefix", "批号前缀"), Map.entry("channel", "渠道"), Map.entry("minShelfPct", "最低剩余效期"),
             Map.entry("contact", "联系人"), Map.entry("address", "地址"), Map.entry("stdCost", "标准成本"),

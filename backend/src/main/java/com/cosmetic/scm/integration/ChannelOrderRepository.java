@@ -19,6 +19,8 @@ public interface ChannelOrderRepository extends JpaRepository<ChannelOrder, Long
 
     List<ChannelOrder> findByStatus(ChannelOrderStatus status);
 
+    List<ChannelOrder> findBySoIdIn(java.util.Collection<Long> soIds);
+
     /** 状态流转前先锁行：并发时第二个请求排队，读到新状态后按业务规则拒绝。只在写事务里用。 */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from ChannelOrder x where x.id = :id")

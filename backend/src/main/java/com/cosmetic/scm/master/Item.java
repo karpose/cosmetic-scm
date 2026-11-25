@@ -53,6 +53,10 @@ public class Item {
     @Column(name = "net_g") // 默认命名策略会映射成 netg
     private BigDecimal netG;
 
+    /** 标签上标注的净含量，如“30mL”；不填时销售记录按净含量（g）写。 */
+    @Column(name = "net_label")
+    private String netLabel;
+
     /** 标准成本：元 / 物料单位 */
     private BigDecimal stdCost;
 

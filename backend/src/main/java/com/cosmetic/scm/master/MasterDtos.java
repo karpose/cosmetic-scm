@@ -43,10 +43,16 @@ public final class MasterDtos {
             Boolean active,
             @DecimalMin(value = "0", message = "标准成本不能为负") @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "标准成本最多 14 位整数、4 位小数") BigDecimal stdCost,
             @DecimalMin(value = "0", message = "指导价不能为负") @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "指导价最多 14 位整数、4 位小数") BigDecimal listPrice,
-            @Size(max = 40) String casNo) {
+            @Size(max = 40) String casNo,
+            @Size(max = 30, message = "标签净含量最多 30 个字") String netLabel) {
         public ItemReq(String code, String name, ItemType itemType, String unit, String inci, BigDecimal limitPct, boolean banned, Integer shelfMonths,
                        String filingNo, BigDecimal netG, Boolean active, BigDecimal stdCost, BigDecimal listPrice) {
-            this(code, name, itemType, unit, inci, limitPct, banned, shelfMonths, filingNo, netG, active, stdCost, listPrice, null);
+            this(code, name, itemType, unit, inci, limitPct, banned, shelfMonths, filingNo, netG, active, stdCost, listPrice, null, null);
+        }
+
+        public ItemReq(String code, String name, ItemType itemType, String unit, String inci, BigDecimal limitPct, boolean banned, Integer shelfMonths,
+                       String filingNo, BigDecimal netG, Boolean active, BigDecimal stdCost, BigDecimal listPrice, String casNo) {
+            this(code, name, itemType, unit, inci, limitPct, banned, shelfMonths, filingNo, netG, active, stdCost, listPrice, casNo, null);
         }
     }
 

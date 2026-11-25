@@ -22,6 +22,14 @@ import org.springframework.web.bind.annotation.RestController;
 public class SalesController {
 
     private final SalesService sales;
+    private final SalesRecordService salesRecords;
+
+    /** 产品销售记录：不传日期默认最近 30 天，最长一年；价格只给销售、财务、管理员。 */
+    @GetMapping("/records")
+    public SalesRecordService.Records records(@org.springframework.web.bind.annotation.RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+                                              @org.springframework.web.bind.annotation.RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to) {
+        return salesRecords.records(from, to);
+    }
 
     @GetMapping("/summary")
     public SalesService.SalesSummary summary(@org.springframework.web.bind.annotation.RequestParam(defaultValue = "30") int days) {

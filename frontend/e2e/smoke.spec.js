@@ -2107,6 +2107,34 @@ test('质量安全负责人：管理员登记任职、上传任命文件签批�
   await expect(row).toContainText('已撤销')
 })
 
+test('产品销售记录：列出法规要求的内容，缺的标出来，价格只给销售看，能导出', async ({ page }) => {
+  await login(page, 'sales1')
+  await page.goto('/sales?tab=records')
+  const table = page.locator('.rec-table')
+  // 示例数据里两张出库单没有定价，客户有示例地址和联系方式，精华液标签净含量 30mL
+  await expect(table.locator('.el-table__row').first()).toBeVisible()
+  await expect(table).toContainText('30mL')
+  await expect(table).toContainText('示例地址')
+  await expect(table).toContainText('限期使用')
+  await expect(table).toContainText('没有价格')
+  await expect(page.locator('.el-alert').filter({ hasText: '缺的内容' })).toBeVisible()
+  await expect(table.getByText('含税单价')).toBeVisible()
+  await page.getByText('只看不全的').click()
+  await expect(table.getByText('齐全', { exact: true })).toHaveCount(0)
+  const [xlsx] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: '导出销售记录' }).click()])
+  expect(xlsx.suggestedFilename()).toMatch(/^产品销售记录-/)
+  // 出库单列表也标出来
+  await page.locator('.seg').getByText('销售出库单').click()
+  await expect(page.locator('.el-table__row').filter({ hasText: '京东自营' }).first()).toContainText('不全')
+
+  // QA 看得到记录，看不到价格
+  await login(page, 'qa1')
+  await page.goto('/sales?tab=records')
+  await expect(page.locator('.rec-table')).toContainText('30mL')
+  await expect(page.locator('.rec-table').getByText('含税单价')).toHaveCount(0)
+  await expect(page.getByText('价格只有销售、财务和管理员能看')).toBeVisible()
+})
+
 test('受控文件培训考核：确认已读后由质量人员登记考核，没通过可以补考', async ({ page }) => {
   await login(page, 'qa1')
   await page.goto('/docs')
@@ -2537,7 +2565,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页

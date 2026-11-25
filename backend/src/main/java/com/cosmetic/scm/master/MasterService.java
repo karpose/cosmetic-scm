@@ -197,6 +197,7 @@ public class MasterService {
         m.put("保质期（月）", i.getShelfMonths());
         m.put("备案编号", i.getFilingNo());
         m.put("净含量", i.getNetG());
+        m.put("标签净含量", i.getNetLabel());
         m.put("启用", i.isActive());
         m.put("标准成本", i.getStdCost());
         m.put("指导价", i.getListPrice());
@@ -222,6 +223,7 @@ public class MasterService {
         item.setShelfMonths(req.shelfMonths());
         item.setFilingNo(req.itemType() == ItemType.FG ? blankToNull(req.filingNo()) : null);
         item.setNetG(req.itemType() == ItemType.FG ? req.netG() : null);
+        item.setNetLabel(req.itemType() == ItemType.FG ? blankToNull(req.netLabel()) : null);
         item.setActive(req.active() == null || req.active());
         item.setStdCost(req.stdCost());
         item.setListPrice(req.itemType() == ItemType.FG ? req.listPrice() : null);

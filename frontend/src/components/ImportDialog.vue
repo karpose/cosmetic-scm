@@ -143,7 +143,8 @@ const SPECS = {
       { header: '标准成本（元）', key: 'stdCost', conv: num('标准成本'), example: '12' },
       { header: '指导价（元）', key: 'listPrice', conv: num('指导价'), example: '' },
       // 新列放最后：已经下载过旧模板的人，原有各列的位置不变
-      { header: 'CAS 号', key: 'casNo', conv: text, example: '' }
+      { header: 'CAS 号', key: 'casNo', conv: text, example: '' },
+      { header: '标签净含量', key: 'netLabel', conv: text, example: '' }
     ]
   },
   opening: {

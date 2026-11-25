@@ -63,6 +63,7 @@ public class SalesService {
     private final AuditService audit;
     private final TimeProvider time;
     private final CurrentUser currentUser;
+    private final SalesRecordService salesRecords;
 
     private static final Set<String> SALES_PRICE_ROLES = Set.of("ROLE_ADMIN", "ROLE_SALES", "ROLE_FINANCE");
 
@@ -98,7 +99,7 @@ public class SalesService {
     public record SoView(Long id, String soNo, Long customerId, String customerName, String channel,
                          Long warehouseId, String warehouseName, LocalDate orderDate, String status,
                          String createdBy, LocalDateTime createdAt, List<SoLineView> lines,
-                         List<AllocView> allocations) {
+                         List<AllocView> allocations, List<String> recordGaps) {
     }
 
     private record Plan(Partner customer, Warehouse warehouse, List<Item> items, List<SoLineReq> lines,
@@ -169,19 +170,21 @@ public class SalesService {
 
     @Transactional(readOnly = true)
     public List<SoView> list() {
-        return views(orders.findTop300ByOrderByIdDesc());
+        return views(orders.findTop300ByOrderByIdDesc(), true);
     }
 
     /** 全部出库单，导出用（页面列表只取最近 300 张）。 */
     @Transactional(readOnly = true)
     public List<SoView> listAll() {
-        return views(orders.findAllByOrderByIdDesc());
+        return views(orders.findAllByOrderByIdDesc(), false);
     }
 
-    private List<SoView> views(List<SalesOrder> list) {
+    /** withGaps：同时算销售记录缺的内容（页面列表用；导出全部出库单时不算）。 */
+    private List<SoView> views(List<SalesOrder> list, boolean withGaps) {
         if (list.isEmpty()) {
             return List.of();
         }
+        Map<Long, List<String>> gaps = withGaps ? salesRecords.gapsByOrder(list) : Map.of();
         List<Long> ids = list.stream().map(SalesOrder::getId).toList();
         Map<Long, List<SoLine>> lm = lines.findBySoIdIn(ids).stream().collect(Collectors.groupingBy(SoLine::getSoId));
         List<SoAllocation> allocs = allocations.findBySoIdIn(ids);
@@ -209,7 +212,7 @@ public class SalesService {
                     .toList();
             return new SoView(so.getId(), so.getSoNo(), so.getCustomerId(), c.getName(), c.getChannel(),
                     so.getWarehouseId(), w.getName(), so.getOrderDate(), so.getStatus(), so.getCreatedBy(),
-                    so.getCreatedAt(), lv, av);
+                    so.getCreatedAt(), lv, av, gaps.getOrDefault(so.getId(), List.of()));
         }).toList();
     }
 
@@ -270,6 +273,10 @@ public class SalesService {
         so.setStatus("SHIPPED");
         so.setCreatedBy(currentUser.usernameOrSystem());
         so.setCreatedAt(time.now());
+        // 销售记录：记下出库时的购买者信息，以后改主数据不影响这条记录
+        so.setBuyerName(plan.customer().getName());
+        so.setBuyerAddress(blankToNull(plan.customer().getAddress()));
+        so.setBuyerContact(blankToNull(plan.customer().getContact()));
         orders.save(so);
 
         List<String> detail = new ArrayList<>();
@@ -282,6 +289,8 @@ public class SalesService {
             line.setQty(lr.qty());
             line.setUnitPrice(resolvedPrices[i]);
             line.setTaxRate(resolvedRates[i]);
+            line.setFilingNo(blankToNull(item.getFilingNo()));
+            line.setNetContent(SalesRecordService.netContentOf(item));
             lines.save(line);
             List<FefoAllocator.Pick> picks = plan.results().get(i).picks();
             inventory.consume(picks, TxnType.SHIP, so.getSoNo());
@@ -365,4 +374,9 @@ public class SalesService {
     private static String plain(BigDecimal v) {
         return v.stripTrailingZeros().toPlainString();
     }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
+    }
+
 }
