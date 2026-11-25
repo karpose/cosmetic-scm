@@ -561,7 +561,7 @@ public class ReportService {
         return new Table("出库明细", List.of("出库单", "日期", "客户", "渠道", "发货仓", "产品", "批号", "数量"), rows);
     }
 
-    /** 产品销售记录（规范第五十九条）：价格只有销售、财务、管理员导得出，别的岗位这两列为空。 */
+    /** 产品销售记录（规范第五十八条）：价格只有销售、财务、管理员导得出，别的岗位这两列为空。 */
     private Table salesRecordsReport(LocalDate from, LocalDate to) {
         var r = salesRecords.records(from, to);
         List<List<Object>> rows = new ArrayList<>();

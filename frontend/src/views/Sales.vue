@@ -28,7 +28,7 @@
             <el-checkbox v-model="sr.onlyGaps">只看不全的</el-checkbox>
             <span v-if="sr.data" class="muted small">{{ sr.data.orders }} 张出库单、{{ sr.data.rows.length }} 行<template v-if="sr.data.incompleteRows">，<span class="warn">{{ sr.data.incompleteRows }} 行不全</span></template></span>
           </div>
-          <p class="muted small rec-hint">按《化妆品生产质量管理规范》第五十九条：产品名称、注册证或备案编号、使用期限（限期使用日期）、净含量、数量、销售日期、价格，以及购买者名称、地址和联系方式。购买者和产品信息是出库时记下的；价格取出库单价，出库时没定价的取对账单上的价<template v-if="sr.data && !sr.data.priceVisible">，价格只有销售、财务和管理员能看</template>。最多查一年。</p>
+          <p class="muted small rec-hint">按《化妆品生产质量管理规范》第五十八条：产品名称、注册证或备案编号、使用期限（限期使用日期）、净含量、数量、销售日期、价格，以及购买者名称、地址和联系方式。购买者和产品信息是出库时记下的；价格取出库单价，出库时没定价的取对账单上的价<template v-if="sr.data && !sr.data.priceVisible">，价格只有销售、财务和管理员能看</template>。最多查一年。</p>
           <el-alert v-if="sr.data?.gapSummary.length" type="warning" :closable="false" show-icon :title="`缺的内容：${sr.data.gapSummary.join('，')}`"
                     description="购买者地址、联系方式和成品净含量到“主数据”补；价格在对账时补；以后的出库会自动带上。" />
         </template>
