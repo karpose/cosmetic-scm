@@ -63,8 +63,8 @@ public class BatchCostingService {
 
     @Transactional(readOnly = true)
     public List<BatchCostRow> report() {
-        List<MfgOrder> done = mfgOrders.findAllByOrderByIdDesc().stream()
-                .filter(m -> m.getStatus() == MoStatus.COMPLETED && m.getActualQty() != null && m.getActualQty().signum() > 0)
+        List<MfgOrder> done = mfgOrders.findByStatusInOrderByIdDesc(List.of(MoStatus.COMPLETED)).stream()
+                .filter(m -> m.getActualQty() != null && m.getActualQty().signum() > 0)
                 .toList();
         if (done.isEmpty()) {
             return List.of();

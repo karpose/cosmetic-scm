@@ -148,41 +148,36 @@ public class PurchaseService {
     @Transactional(readOnly = true)
     public PoSummary summary() {
         LocalDate today = time.today();
-        List<PurchaseOrder> all = orders.findAll();
         Set<Long> withPortal = users.partnersWithAccounts();
-        int openCount = 0, partialCount = 0, receivedCount = 0, closedOrCancelled = 0;
-        int overdueCount = 0, unconfirmedPortal = 0;
-        for (PurchaseOrder po : all) {
-            if (po.getStatus() == PoStatus.OPEN) {
-                openCount++;
-            } else if (po.getStatus() == PoStatus.PARTIAL) {
-                partialCount++;
-            } else if (po.getStatus() == PoStatus.RECEIVED) {
-                receivedCount++;
+        // 按状态分组计数，只把未完成的单子读出来（不整表读取）
+        int total = 0, openCount = 0, partialCount = 0, receivedCount = 0, closedOrCancelled = 0;
+        for (Object[] r : orders.countGroupByStatus()) {
+            int n = ((Number) r[1]).intValue();
+            total += n;
+            if (r[0] == PoStatus.OPEN) {
+                openCount += n;
+            } else if (r[0] == PoStatus.PARTIAL) {
+                partialCount += n;
+            } else if (r[0] == PoStatus.RECEIVED) {
+                receivedCount += n;
             } else {
-                closedOrCancelled++;
-            }
-            if (po.getStatus() == PoStatus.OPEN || po.getStatus() == PoStatus.PARTIAL) {
-                LocalDate due = po.getPromisedDate() != null ? po.getPromisedDate() : po.getExpectedDate();
-                if (due != null && due.isBefore(today)) {
-                    overdueCount++;
-                }
-                if (withPortal.contains(po.getSupplierId()) && po.getSupplierConfirmedAt() == null) {
-                    unconfirmedPortal++;
-                }
+                closedOrCancelled += n;
             }
         }
-        int openShipments = 0, unresolvedDisputes = 0;
-        for (PoShipment s : shipments.findAll()) {
-            if (s.getStatus() == ShipmentStatus.OPEN) {
-                openShipments++;
+        int overdueCount = 0, unconfirmedPortal = 0;
+        for (PurchaseOrder po : orders.findByStatusIn(List.of(PoStatus.OPEN, PoStatus.PARTIAL))) {
+            LocalDate due = po.getPromisedDate() != null ? po.getPromisedDate() : po.getExpectedDate();
+            if (due != null && due.isBefore(today)) {
+                overdueCount++;
             }
-            if (s.getReceiptDisputedAt() != null && s.getReceiptResolvedAt() == null) {
-                unresolvedDisputes++;
+            if (withPortal.contains(po.getSupplierId()) && po.getSupplierConfirmedAt() == null) {
+                unconfirmedPortal++;
             }
         }
+        int openShipments = (int) shipments.countByStatus(ShipmentStatus.OPEN);
+        int unresolvedDisputes = (int) shipments.countByReceiptResolvedAtIsNullAndReceiptDisputedAtIsNotNull();
         return new PoSummary(
-                all.size(), openCount, partialCount, receivedCount, closedOrCancelled,
+                total, openCount, partialCount, receivedCount, closedOrCancelled,
                 overdueCount, openShipments, unresolvedDisputes, unconfirmedPortal);
     }
 

@@ -12,7 +12,13 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
 
     List<SalesReturn> findByRecallId(Long recallId);
 
+    long countByRecallIdIsNotNull();
+
     List<SalesReturn> findByCustomerId(Long customerId);
 
+    List<SalesReturn> findByCustomerIdAndReturnDateLessThanEqual(Long customerId, java.time.LocalDate to);
+
     List<SalesReturn> findByReturnDateGreaterThanEqual(java.time.LocalDate from);
+
+    List<SalesReturn> findByReturnDateBetween(java.time.LocalDate from, java.time.LocalDate to);
 }

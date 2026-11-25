@@ -85,4 +85,20 @@ public interface BatchRepository extends JpaRepository<Batch, Long> {
 
     List<Batch> findBySourceTypeAndStatusAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(com.cosmetic.scm.domain.SourceType sourceType, BatchStatus status,
             java.time.LocalDateTime from, java.time.LocalDateTime to);
+
+    /** 期间内采购收货生成的批次，按供应商和状态计数：[partnerId, status, count]。供应商绩效用。 */
+    @Query("""
+            select b.partnerId, b.status, count(b) from Batch b
+            where b.sourceType = :source and b.partnerId is not null and b.createdAt >= :from and b.createdAt < :before
+            group by b.partnerId, b.status
+            """)
+    List<Object[]> countBySupplierAndStatus(@Param("source") SourceType source, @Param("from") java.time.LocalDateTime from,
+                                            @Param("before") java.time.LocalDateTime before);
+
+    List<Batch> findByItemIdAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(Long itemId, java.time.LocalDateTime from,
+                                                                              java.time.LocalDateTime to);
+
+    /** 这些批号里系统已有的（只查批号一列，不把批次读进持久化上下文）。 */
+    @Query("select b.batchNo from Batch b where b.batchNo in :nos")
+    List<String> findExistingBatchNos(@Param("nos") Collection<String> nos);
 }

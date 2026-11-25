@@ -25,6 +25,8 @@ public interface CustomerStatementRepository extends JpaRepository<CustomerState
 
     List<CustomerStatement> findByStatusInOrderById(Collection<String> statuses);
 
+    List<CustomerStatement> findByStatusNotAndInvoiceDateBetweenOrderByIdDesc(String status, java.time.LocalDate from, java.time.LocalDate to);
+
     List<CustomerStatement> findByStatusInAndFinanceSyncStatusInOrderById(Collection<String> statuses,
                                                                          Collection<FinanceSyncStatus> syncStatuses);
 

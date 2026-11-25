@@ -639,17 +639,10 @@ public class RfqService {
         if (itemIds.isEmpty()) {
             return Map.of();
         }
-        Map<Long, PoLine> latestLineByItem = new HashMap<>();
-        for (PoLine line : poLines.findAll()) {
-            if (line.getUnitPrice() != null && itemIds.contains(line.getItemId())) {
-                PoLine prev = latestLineByItem.get(line.getItemId());
-                if (prev == null || (line.getId() != null && prev.getId() != null && line.getId() > prev.getId())) {
-                    latestLineByItem.put(line.getItemId(), line);
-                }
-            }
-        }
         Map<Long, BigDecimal> result = new HashMap<>();
-        latestLineByItem.forEach((k, v) -> result.put(k, v.getUnitPrice()));
+        for (PoLine line : poLines.latestPricedByItemIdIn(itemIds)) {
+            result.put(line.getItemId(), line.getUnitPrice());
+        }
         return result;
     }
 

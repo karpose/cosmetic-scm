@@ -49,6 +49,8 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -60,6 +62,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class ArSettlementService {
 
     private static final List<String> VOUCHER_STATUSES = List.of("APPROVED", "PAID");
+    /** 未结清的对账单：待收计入客户未结应收。 */
+    private static final List<String> OPEN_STATUSES = List.of("DRAFT", "INVOICED", "APPROVED");
 
     private final CustomerStatementRepository statements;
     private final CustomerStatementLineRepository statementLines;
@@ -77,6 +81,7 @@ public class ArSettlementService {
     private final IntegrationLogRepository integrationLogs;
     private final TimeProvider time;
     private final CurrentUser currentUser;
+    private final TransactionTemplate tx;
     private final TransactionTemplate txNew;
 
     public ArSettlementService(CustomerStatementRepository statements,
@@ -112,6 +117,7 @@ public class ArSettlementService {
         this.integrationLogs = integrationLogs;
         this.time = time;
         this.currentUser = currentUser;
+        this.tx = new TransactionTemplate(txManager);
         this.txNew = new TransactionTemplate(txManager);
         this.txNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -186,9 +192,13 @@ public class ArSettlementService {
                                       List<ArInvoiceLedgerRow> rows) {
     }
 
+    /**
+     * 授信使用：openAr 是未结对账单的待收，unbilledShipped 是已出库还没对账的金额；
+     * 可用额度、使用率和是否超额按两者合计算，和出库时的额度校验（SalesService.checkCreditLimit）一致。
+     */
     public record CustomerCreditRow(Long customerId, String customerCode, String customerName, String channel,
                                     Integer defaultCreditDays, BigDecimal creditLimit, int openCount,
-                                    BigDecimal openAr, BigDecimal overdueAr, BigDecimal availableCredit,
+                                    BigDecimal openAr, BigDecimal overdueAr, BigDecimal unbilledShipped, BigDecimal availableCredit,
                                     BigDecimal utilizationPct, boolean overLimit) {
     }
 
@@ -251,10 +261,7 @@ public class ArSettlementService {
             throw new BizException("有调整金额时要写明原因");
         }
 
-        List<SalesOrder> sos = salesOrders.findAllByOrderByIdDesc().stream()
-                .filter(o -> customer.getId().equals(o.getCustomerId())
-                        && o.getOrderDate() != null && !o.getOrderDate().isAfter(req.periodTo()))
-                .toList();
+        List<SalesOrder> sos = salesOrders.findByCustomerIdAndOrderDateLessThanEqualOrderByIdDesc(customer.getId(), req.periodTo());
         List<SoLine> allLines = sos.isEmpty() ? List.of()
                 : soLines.findBySoIdIn(sos.stream().map(SalesOrder::getId).toList());
         Set<Long> billed = allLines.isEmpty() ? Set.of()
@@ -300,10 +307,7 @@ public class ArSettlementService {
         }
 
         // 客户销售退货自动冲减（负数行，避免重复冲减）
-        List<SalesReturn> rets = salesReturns.findAll().stream()
-                .filter(r -> customer.getId().equals(r.getCustomerId())
-                        && r.getReturnDate() != null && !r.getReturnDate().isAfter(req.periodTo()))
-                .toList();
+        List<SalesReturn> rets = salesReturns.findByCustomerIdAndReturnDateLessThanEqual(customer.getId(), req.periodTo());
         if (!rets.isEmpty()) {
             Map<Long, SalesReturn> retMap = rets.stream().collect(Collectors.toMap(SalesReturn::getId, r -> r));
             List<SalesReturnLine> retLines = salesReturnLines.findByReturnIdIn(retMap.keySet());
@@ -458,11 +462,10 @@ public class ArSettlementService {
 
     @Transactional(readOnly = true)
     public ArInvoiceLedgerView invoiceLedger(LocalDate from, LocalDate to, Long customerId) {
-        List<CustomerStatement> list = statements.findAllByOrderByIdDesc().stream()
-                .filter(s -> !"CANCELLED".equals(s.getStatus()) && s.getInvoiceNo() != null && s.getInvoiceDate() != null)
+        List<CustomerStatement> list = statements.findByStatusNotAndInvoiceDateBetweenOrderByIdDesc("CANCELLED",
+                        from == null ? LocalDate.of(1900, 1, 1) : from, to == null ? LocalDate.of(9999, 12, 31) : to).stream()
+                .filter(s -> s.getInvoiceNo() != null)
                 .filter(s -> customerId == null || customerId.equals(s.getCustomerId()))
-                .filter(s -> from == null || !s.getInvoiceDate().isBefore(from))
-                .filter(s -> to == null || !s.getInvoiceDate().isAfter(to))
                 .toList();
         List<ArInvoiceLedgerRow> rows = new ArrayList<>();
         BigDecimal totalAmt = BigDecimal.ZERO;
@@ -488,10 +491,7 @@ public class ArSettlementService {
         Map<Long, BigDecimal> openMap = new HashMap<>();
         Map<Long, BigDecimal> overdueMap = new HashMap<>();
         Map<Long, Integer> countMap = new HashMap<>();
-        for (CustomerStatement s : statements.findAllByOrderByIdDesc()) {
-            if ("PAID".equals(s.getStatus()) || "CANCELLED".equals(s.getStatus())) {
-                continue;
-            }
+        for (CustomerStatement s : statements.findByStatusInOrderById(OPEN_STATUSES)) {
             BigDecimal open = s.outstandingAmount();
             if (open.signum() <= 0) {
                 continue;
@@ -502,6 +502,12 @@ public class ArSettlementService {
                 overdueMap.merge(s.getCustomerId(), open, BigDecimal::add);
             }
         }
+        Map<Long, BigDecimal> unbilledMap = new HashMap<>();
+        for (Object[] r : soLines.unbilledShippedAmountByCustomer()) {
+            if (r[1] != null) {
+                unbilledMap.put((Long) r[0], (BigDecimal) r[1]);
+            }
+        }
         List<CustomerCreditRow> rows = new ArrayList<>();
         for (Partner c : lookup.partnerMap().values()) {
             if (c.getKind() != PartnerKind.CUSTOMER) {
@@ -510,13 +516,15 @@ public class ArSettlementService {
             BigDecimal limit = c.getCreditLimit();
             BigDecimal open = openMap.getOrDefault(c.getId(), BigDecimal.ZERO);
             BigDecimal overdue = overdueMap.getOrDefault(c.getId(), BigDecimal.ZERO);
+            BigDecimal unbilled = unbilledMap.getOrDefault(c.getId(), BigDecimal.ZERO);
+            BigDecimal used = open.add(unbilled);
             int cnt = countMap.getOrDefault(c.getId(), 0);
-            BigDecimal avail = limit == null ? null : limit.subtract(open);
+            BigDecimal avail = limit == null ? null : limit.subtract(used);
             BigDecimal util = (limit == null || limit.signum() <= 0) ? null
-                    : open.multiply(BigDecimal.valueOf(100)).divide(limit, 1, RoundingMode.HALF_UP);
-            boolean over = limit != null && open.compareTo(limit) > 0;
+                    : used.multiply(BigDecimal.valueOf(100)).divide(limit, 1, RoundingMode.HALF_UP);
+            boolean over = limit != null && used.compareTo(limit) > 0;
             rows.add(new CustomerCreditRow(c.getId(), c.getCode(), c.getName(), c.getChannel(),
-                    c.getDefaultCreditDays(), limit, cnt, open, overdue, avail, util, over));
+                    c.getDefaultCreditDays(), limit, cnt, open, overdue, unbilled, avail, util, over));
         }
         rows.sort(Comparator.comparing(CustomerCreditRow::openAr, Comparator.reverseOrder())
                 .thenComparing(CustomerCreditRow::customerCode));
@@ -632,52 +640,97 @@ public class ArSettlementService {
         return result;
     }
 
-    @Transactional
+    /**
+     * 外部财务系统的应收凭证回执，规则同应付（{@code FinanceIntegrationService.ackVoucher}）：
+     * 已同步的对账单再收到不同的凭证号返回 409，迟到的失败回执不改状态；失败也写接口日志（另开事务，业务回滚也留下）。
+     */
     public ArStatementView ackVoucher(String statementNo, ArVoucherAckReq req) {
         String stNo = statementNo == null ? "" : statementNo.trim();
-        CustomerStatement st = statements.lockByStatementNo(stNo)
-                .orElseThrow(() -> BizException.notFound("应收对账单 " + stNo + " "));
-        if (!VOUCHER_STATUSES.contains(st.getStatus())) {
-            throw new BizException("应收对账单 " + stNo + " 尚未审批，不能回执凭证");
-        }
         boolean ok = req.success() == null || req.success();
         String extNo = req.extVoucherNo() == null || req.extVoucherNo().isBlank() ? null : req.extVoucherNo().trim();
         String note = req.note() == null || req.note().isBlank() ? null : req.note().trim();
-        if (ok && extNo == null) {
-            throw new BizException("制证成功时请填写外部应收凭证号");
+        try {
+            ArStatementView view = tx.execute(s -> {
+                CustomerStatement st = statements.lockByStatementNo(stNo)
+                        .orElseThrow(() -> BizException.notFound("应收对账单 " + stNo + " "));
+                if (!VOUCHER_STATUSES.contains(st.getStatus())) {
+                    throw new BizException("应收对账单 " + stNo + " 当前为" + st.statusLabel() + "，仅已审批或已结清的对账单可回执凭证");
+                }
+                if (ok && extNo == null) {
+                    throw new BizException("制证成功时请填写外部应收凭证号");
+                }
+                if (st.effectiveFinanceSyncStatus() == FinanceSyncStatus.SYNCED) {
+                    if (ok && !extNo.equals(st.getExtVoucherNo())) {
+                        throw new BizException(HttpStatus.CONFLICT, "应收对账单 " + stNo + " 已绑定外部凭证号 " + st.getExtVoucherNo() + "，请在财务系统核对");
+                    }
+                    return views(List.of(st)).get(0);
+                }
+                st.setFinanceSyncStatus(ok ? FinanceSyncStatus.SYNCED : FinanceSyncStatus.FAILED);
+                if (ok) {
+                    st.setExtVoucherNo(extNo);
+                }
+                st.setFinanceSyncedAt(time.now());
+                st.setFinanceSyncNote(note);
+                statements.save(st);
+                audit.logMoney(ok ? "应收凭证回执" : "应收凭证同步失败", st.getStatementNo(),
+                        ok ? "外部凭证 " + extNo : (note != null ? note : "同步失败"));
+                return views(List.of(st)).get(0);
+            });
+            boolean synced = view.financeSyncStatus() == FinanceSyncStatus.SYNCED;
+            String logMessage = ok ? "外部凭证 " + view.extVoucherNo() : note;
+            if (!ok && synced) {
+                logMessage = "已同步，忽略迟到的失败回执";
+            }
+            log("IN", "FINANCE", "应收凭证回执", stNo, synced, logMessage);
+            return view;
+        } catch (BizException e) {
+            log("IN", "FINANCE", "应收凭证回执", stNo, false, e.getMessage());
+            throw e;
         }
-        st.setFinanceSyncStatus(ok ? FinanceSyncStatus.SYNCED : FinanceSyncStatus.FAILED);
-        if (ok) {
-            st.setExtVoucherNo(extNo);
-        }
-        st.setFinanceSyncedAt(time.now());
-        st.setFinanceSyncNote(note);
-        statements.save(st);
-        log("IN", "FINANCE", "应收凭证回执", stNo, ok, ok ? "外部凭证 " + extNo : note);
-        return views(List.of(st)).get(0);
     }
 
-    @Transactional
+    /**
+     * 外部财务系统的回款回调，按外部回款单号幂等：同号同内容重试返回原结果，日期、金额或参考号不同返回 409。
+     * 两张对账单同时用同一个新单号时，后到的撞唯一约束，同样返回 409 并写接口日志。
+     */
     public ArReceiptCallbackResult receiptCallback(ArReceiptCallbackReq req) {
         String stNo = req.statementNo().trim();
         String extNo = req.extReceiptNo().trim();
-        CustomerStatement st = statements.lockByStatementNo(stNo)
-                .orElseThrow(() -> BizException.notFound("应收对账单 " + stNo + " "));
-        Optional<CustomerReceipt> existing = receipts.findByExtReceiptNo(extNo);
-        if (existing.isPresent()) {
-            CustomerReceipt r = existing.get();
-            if (!r.getStatementId().equals(st.getId())) {
-                throw new BizException("外部回款单号 " + extNo + " 已关联其他应收对账单");
-            }
-            log("IN", "FINANCE", "回款回调核销", stNo, true, "幂等重复：" + extNo);
-            return new ArReceiptCallbackResult(st.getStatementNo(), extNo, r.getReceiptDate(), r.getAmount(),
-                    r.getReferenceNo(), st.getStatus(), st.statusLabel(), st.getReceivedAmount(), st.outstandingAmount(), true);
+        String reference = req.referenceNo() == null || req.referenceNo().isBlank() ? null : req.referenceNo().trim();
+        try {
+            ArReceiptCallbackResult result = tx.execute(s -> {
+                CustomerStatement st = statements.lockByStatementNo(stNo)
+                        .orElseThrow(() -> BizException.notFound("应收对账单 " + stNo + " "));
+                Optional<CustomerReceipt> existing = receipts.findByExtReceiptNo(extNo);
+                if (existing.isPresent()) {
+                    CustomerReceipt r = existing.get();
+                    if (!r.getStatementId().equals(st.getId())) {
+                        throw new BizException("外部回款单号 " + extNo + " 已关联其他应收对账单");
+                    }
+                    boolean referenceChanged = reference != null && !reference.equals(r.getReferenceNo());
+                    if (!req.receiptDate().equals(r.getReceiptDate()) || req.amount().compareTo(r.getAmount()) != 0 || referenceChanged) {
+                        throw new BizException(HttpStatus.CONFLICT,
+                                "外部回款单号 " + extNo + " 与已登记的回款信息不一致，请核对回款日期、金额和参考号");
+                    }
+                    return new ArReceiptCallbackResult(st.getStatementNo(), extNo, r.getReceiptDate(), r.getAmount(),
+                            r.getReferenceNo(), st.getStatus(), st.statusLabel(), st.getReceivedAmount(), st.outstandingAmount(), true);
+                }
+                String refNo = reference == null ? extNo : reference;
+                ArStatementView sv = receive(st.getId(), new ArReceiptReq(req.receiptDate(), req.amount(), refNo), extNo);
+                return new ArReceiptCallbackResult(sv.statementNo(), extNo, req.receiptDate(), req.amount(), refNo,
+                        sv.status(), sv.statusLabel(), sv.receivedAmount(), sv.unreceived(), false);
+            });
+            log("IN", "FINANCE", "回款回调核销", stNo, true,
+                    (result.duplicate() ? "幂等重复：" : "") + extNo + " · " + result.amount().toPlainString());
+            return result;
+        } catch (BizException e) {
+            log("IN", "FINANCE", "回款回调核销", stNo, false, e.getMessage());
+            throw e;
+        } catch (DataIntegrityViolationException e) {
+            String msg = "外部回款单号 " + extNo + " 正被另一笔回调同时登记，请稍后用原内容重试或在财务系统核对";
+            log("IN", "FINANCE", "回款回调核销", stNo, false, msg);
+            throw new BizException(HttpStatus.CONFLICT, msg);
         }
-        String refNo = req.referenceNo() == null || req.referenceNo().isBlank() ? extNo : req.referenceNo().trim();
-        ArStatementView sv = receive(st.getId(), new ArReceiptReq(req.receiptDate(), req.amount(), refNo), extNo);
-        log("IN", "FINANCE", "回款回调核销", stNo, true, extNo + " · " + req.amount().toPlainString());
-        return new ArReceiptCallbackResult(sv.statementNo(), extNo, req.receiptDate(), req.amount(), refNo,
-                sv.status(), sv.statusLabel(), sv.receivedAmount(), sv.unreceived(), false);
     }
 
     private CustomerStatement locked(Long id) {

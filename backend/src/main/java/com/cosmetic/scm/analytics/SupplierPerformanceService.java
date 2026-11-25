@@ -15,16 +15,13 @@ import com.cosmetic.scm.domain.BatchStatus;
 import com.cosmetic.scm.domain.PartnerKind;
 import com.cosmetic.scm.domain.SourceType;
 import com.cosmetic.scm.domain.SupplierReturnStatus;
-import com.cosmetic.scm.inventory.Batch;
 import com.cosmetic.scm.inventory.BatchRepository;
 import com.cosmetic.scm.master.MasterLookup;
 import com.cosmetic.scm.master.Partner;
-import com.cosmetic.scm.purchase.PoShipment;
 import com.cosmetic.scm.purchase.PoShipmentRepository;
 import com.cosmetic.scm.purchase.PurchaseOrder;
 import com.cosmetic.scm.purchase.PurchaseOrderRepository;
 import com.cosmetic.scm.sourcing.SupplierPriceRepository;
-import com.cosmetic.scm.supplierreturn.SupplierReturn;
 import com.cosmetic.scm.supplierreturn.SupplierReturnRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -63,30 +60,21 @@ public class SupplierPerformanceService {
         LocalDateTime startAt = start.atStartOfDay();
         LocalDateTime endBefore = end.plusDays(1).atStartOfDay();
 
+        // 都按期间和供应商在库里分组计数，不整表读取
         Map<Long, int[]> batchStats = new HashMap<>();
-        for (Batch b : batches.findAll()) {
-            if (b.getSourceType() != SourceType.PO || b.getPartnerId() == null || b.getCreatedAt() == null) {
-                continue;
-            }
-            if (b.getCreatedAt().isBefore(startAt) || !b.getCreatedAt().isBefore(endBefore)) {
-                continue;
-            }
-            int[] st = batchStats.computeIfAbsent(b.getPartnerId(), k -> new int[3]);
-            st[0]++;
-            if (b.getStatus() == BatchStatus.RELEASED) {
-                st[1]++;
-            } else if (b.getStatus() == BatchStatus.REJECTED) {
-                st[2]++;
+        for (Object[] r : batches.countBySupplierAndStatus(SourceType.PO, startAt, endBefore)) {
+            int n = ((Number) r[2]).intValue();
+            int[] st = batchStats.computeIfAbsent((Long) r[0], k -> new int[3]);
+            st[0] += n;
+            if (r[1] == BatchStatus.RELEASED) {
+                st[1] += n;
+            } else if (r[1] == BatchStatus.REJECTED) {
+                st[2] += n;
             }
         }
 
-        Map<Long, Long> poToSupplier = new HashMap<>();
         Map<Long, int[]> poStats = new HashMap<>();
-        for (PurchaseOrder po : purchaseOrders.findAllByOrderByIdDesc()) {
-            poToSupplier.put(po.getId(), po.getSupplierId());
-            if (po.getOrderDate() == null || po.getOrderDate().isBefore(start) || po.getOrderDate().isAfter(end)) {
-                continue;
-            }
+        for (PurchaseOrder po : purchaseOrders.findByOrderDateBetween(start, end)) {
             LocalDate due = po.getPromisedDate() != null ? po.getPromisedDate() : po.getExpectedDate();
             if (po.getLastReceivedOn() != null && due != null) {
                 int[] st = poStats.computeIfAbsent(po.getSupplierId(), k -> new int[2]);
@@ -98,32 +86,17 @@ public class SupplierPerformanceService {
         }
 
         Map<Long, Integer> disputes = new HashMap<>();
-        for (PoShipment s : shipments.findAll()) {
-            if (s.getReceiptDisputedAt() == null) {
-                continue;
-            }
-            if (s.getReceiptDisputedAt().isBefore(startAt) || !s.getReceiptDisputedAt().isBefore(endBefore)) {
-                continue;
-            }
-            Long supId = poToSupplier.get(s.getPoId());
-            if (supId != null) {
-                disputes.merge(supId, 1, Integer::sum);
-            }
+        for (Object[] r : shipments.countDisputesBySupplier(startAt, endBefore)) {
+            disputes.put((Long) r[0], ((Number) r[1]).intValue());
         }
 
         Map<Long, Integer> returnCounts = new HashMap<>();
-        for (SupplierReturn r : returns.findAll()) {
-            if (r.getStatus() != SupplierReturnStatus.DONE || r.getSignedAt() == null) {
-                continue;
-            }
-            if (r.getSignedAt().isBefore(startAt) || !r.getSignedAt().isBefore(endBefore)) {
-                continue;
-            }
-            returnCounts.merge(r.getSupplierId(), 1, Integer::sum);
+        for (Object[] r : returns.countBySupplier(SupplierReturnStatus.DONE, startAt, endBefore)) {
+            returnCounts.put((Long) r[0], ((Number) r[1]).intValue());
         }
 
         Map<Long, Integer> contractCounts = new HashMap<>();
-        supplierPrices.findAllByOrderByIdDesc().stream()
+        supplierPrices.findByActiveTrue().stream()
                 .filter(p -> p.isEffectiveOn(today))
                 .forEach(p -> contractCounts.merge(p.getSupplierId(), 1, Integer::sum));
 

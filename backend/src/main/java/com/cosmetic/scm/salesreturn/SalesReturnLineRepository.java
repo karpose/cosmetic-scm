@@ -20,6 +20,16 @@ public interface SalesReturnLineRepository extends JpaRepository<SalesReturnLine
 
     long countByDisposition(ReturnDisposition disposition);
 
+    long countByDispositionNot(ReturnDisposition disposition);
+
+    /** 已处置、且已进没作废的应收对账单冲减的退货行数。 */
+    @Query("""
+            select count(rl) from SalesReturnLine rl where rl.disposition <> :pending and exists (
+                select l.id from CustomerStatementLine l, CustomerStatement s
+                where s.id = l.statementId and s.status <> 'CANCELLED' and l.salesReturnLineId = rl.id)
+            """)
+    long countDisposedAndBilled(@Param("pending") ReturnDisposition pending);
+
     /** 状态流转前先锁行：并发时第二个请求排队，读到新状态后按业务规则拒绝。只在写事务里用。 */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from SalesReturnLine x where x.id = :id")

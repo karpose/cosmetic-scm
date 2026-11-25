@@ -40,4 +40,9 @@ public interface MfgOrderRepository extends JpaRepository<MfgOrder, Long> {
     List<MfgOrder> findByMoTypeAndCompletedAtGreaterThanEqualAndCompletedAtLessThan(MoType moType, java.time.LocalDateTime from, java.time.LocalDateTime to);
 
     List<MfgOrder> findByMoNoIn(Collection<String> moNos);
+
+    List<MfgOrder> findByFgItemIdAndStatusAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByIdDesc(
+            Long fgItemId, MoStatus status, java.time.LocalDateTime from, java.time.LocalDateTime to);
+
+    List<MfgOrder> findByStatusInOrderByIdDesc(Collection<MoStatus> statuses);
 }

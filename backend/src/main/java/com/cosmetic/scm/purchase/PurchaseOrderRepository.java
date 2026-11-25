@@ -26,6 +26,10 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, Lo
 
     List<PurchaseOrder> findByStatusIn(Collection<PoStatus> statuses);
 
+    /** [status, count]，汇总用。 */
+    @Query("select x.status, count(x) from PurchaseOrder x group by x.status")
+    List<Object[]> countGroupByStatus();
+
     List<PurchaseOrder> findTop300BySupplierIdOrderByIdDesc(Long supplierId);
 
     List<PurchaseOrder> findBySupplierIdAndStatusInOrderById(Long supplierId, Collection<PoStatus> statuses);
@@ -57,4 +61,6 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, Lo
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from PurchaseOrder x where x.id = :id")
     Optional<PurchaseOrder> lockById(@Param("id") Long id);
+
+    List<PurchaseOrder> findByOrderDateBetween(java.time.LocalDate from, java.time.LocalDate to);
 }

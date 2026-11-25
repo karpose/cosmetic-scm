@@ -23,7 +23,7 @@
 - **外部财务系统对接（V39 新增）**：
   - 凭证拉取/导出：外部财务系统可通过 `GET /api/integration/finance/vouchers`（`X-Api-Key` 认证，支持 `syncStatus`、`pendingOnly` 过滤）拉取已审批/已结清对账单（含往来单位税号、开户行、财务客商编码、分税率汇总、发票与批次明细）；内部财务也可在结算页通过 `GET /api/statements/finance-vouchers` 导出凭证 JSON。
   - 凭证回执：`POST /api/integration/finance/vouchers/{statementNo}/ack` 回写外部凭证号与同步状态（`SYNCED` / `FAILED`）。失败单仍可通过 `pendingOnly=true` 拉取重试。首次成功后保留原凭证号、时间和备注，同号重试或迟到的失败回执均返回当前已同步状态。成功回执带不同凭证号时返回 HTTP 409，需在财务系统核对。
-  - 付款水单回调核销：`POST /api/integration/finance/payments` 按外部付款单号（`extPaymentNo`）幂等核销付款或红字退款。同一对账单、收付类型、日期和金额的重试返回原水单与当前余额，参考号可省略。已登记的单号收到不同的收付类型、日期、金额或明确不同的参考号时返回 HTTP 409，保留原核销记录。
+  - 付款水单回调核销：`POST /api/integration/finance/payments` 按外部付款单号（`extPaymentNo`）幂等核销付款或红字退款。同一对账单、收付类型、日期和金额的重试返回原水单与当前余额，参考号可省略。已登记的单号收到不同的收付类型、日期、金额或明确不同的参考号时返回 HTTP 409，保留原核销记录。两张对账单同时用同一个新付款单号时，后到的撞唯一约束，返回 HTTP 409 并写对接日志。
 - **发票退回与更正**：财务可在审批前签批退回并填写供应商可见的原因。原对账单和批次保留，退回的发票及原因留档。供应商或采购在原单重提后，财务须审核最新提交。采购和供应商的每日提醒包含待更正事项。
 - **谁能看价格**：采购、财务、管理员。其它岗位接口不返回单价，审计记录遮盖成“含金额”
 
@@ -56,21 +56,21 @@
 ## 受托厂门户协同、协议价闭环、客户应收（AR）与供应商绩效（V42 新增）
 - **受托厂门户（OEM Portal）委外对账协同**：受托生产企业账号可在门户查看本单位委外对账单（`GET /api/portal/oem/statements`），支持在线确认对账（`confirm`）、提交异议（`dispute`）及登记/更正委外加工费发票（`invoices`），与内部采购/财务审批流完全打通。
 - **协议价闭环增强**：询价定标（`RfqService.award`）可一键将中标价沉淀为有效协议价（`saveToContractPrice`）；总览待办自动对 30 天内到期协议价发出预警（`PRICE_EXPIRING`，按价格权限隔离）；支持通过 `/api/reports/supplier-prices` 导出全量协议价 Excel。
-- **客户应收对账与回款核销（V42 AR）**：在 `so_line` 扩展销售单价与税率，新增 `customer_statement` / `customer_statement_line` / `customer_receipt` 三表；支持按客户已出库销售单生成应收对账单（`/api/ar-statements`）、登记销项发票、财务签批与回款核销；外部财务系统可通过 `GET /api/integration/finance/ar-vouchers`、`POST /api/integration/finance/ar-vouchers/{statementNo}/ack` 与 `POST /api/integration/finance/receipts` 拉取应收凭证并按外部回款单号幂等核销。
+- **客户应收对账与回款核销（V42 AR）**：在 `so_line` 扩展销售单价与税率，新增 `customer_statement` / `customer_statement_line` / `customer_receipt` 三表；支持按客户已出库销售单生成应收对账单（`/api/ar-statements`）、登记销项发票、财务签批与回款核销；外部财务系统可通过 `GET /api/integration/finance/ar-vouchers`、`POST /api/integration/finance/ar-vouchers/{statementNo}/ack` 与 `POST /api/integration/finance/receipts` 拉取应收凭证并按外部回款单号幂等核销。规则和应付一致：凭证首次回执成功后保留原凭证号，同号重试和迟到的失败回执返回当前已同步状态，换凭证号返回 HTTP 409；同一外部回款单号的回款日期、金额相同（参考号可省略）的重试返回原回款记录，日期、金额或明确不同的参考号返回 HTTP 409；两张对账单同时用同一个新回款单号时，后到的返回 HTTP 409。失败的回执和回调也写对接日志（另开事务，业务回滚也留下记录）。
 - **供应商绩效考核台账**：`GET /api/analytics/supplier-performance` 与 Excel 导出（`supplier-performance`）按时间区间汇总各供应商的来料合格率（权重 50）、准时交货率（权重 30）与协作扣分项（收货异议/退供，权重 20），给出综合评分与 A/B/C/D 等级，不暴露任何价格或金额，可供质量与采购共用复审；经营看板（`Analytics.vue`）直接提供绩效台账筛选与导出入口。
 - **销售出库单价录入与经销商门户对账**：销售出库单支持按权限（管理员/销售/财务）录入含税单价与税率（留空取客户默认税率）直接衔接客户应收对账；总览待办自动对 7 天内到期及已逾期客户回款发出提醒（`AR_COLLECT`，正文不含金额）；经销商门户（`/api/portal/dealer/ar-statements`）开放本客户应收对账单与回款进度查询。
 - **应付 / 应收账龄分析（AP & AR Aging）**：`GET /api/statements/aging?side=AP|AR` 与 Excel 导出（`ap-aging` / `ar-aging`）按往来单位汇总已审批未结清余额在未到期、1–30 天、31–60 天、61–90 天与 90 天以上五个区间的分布，在结算页“账龄分析”页签提供切换与一键导出。
 
 ## 客户协议价、信用额度风控与补货协议价联动（V43 新增）
 - **客户协议价 / 渠道供货价目表**：通过 `/api/customer-prices` 按“客户 + 成品”维护含税供货价、税率与有效期（仅管理员/销售/财务可见，支持 `customer-prices` Excel 导出）；销售出库与经销商订单审核转出库留空单价时自动带入当日有效协议价。
-- **客户信用额度风控**：在往来单位维护客户 `creditLimit`（留空表示不限额）；销售出库及经销商订单审核转出库时实时校验“当前未结应收 + 本次出库金额 ≤ 授信额度”，超额自动拦截并提示欠款明细。
+- **客户信用额度风控**：在往来单位维护客户 `creditLimit`（留空表示不限额）；销售出库、经销商订单审核和电商订单出库时校验“未结清的应收对账单待收 + 已出库还没进对账单的金额 + 本次出库金额 ≤ 授信额度”，超额拦截并提示欠款明细。已出库未对账的金额按出库单价算（逐行四舍五入到分，和生成对账单一致），出库时没填单价、对账时才定价的行在对账前不计；还没对账的客户退货不先扣减，生成对账单冲减后才释放额度。出库前先锁客户行，同一客户的几张单同时出库时排队校验，不会一起超额。
 - **补货建议（MRP）联动协议价**：`/api/planning/materials` 按 BOM 展开净采购需求时自动匹配当日有效最低协议价供应商（仅价格权限角色返回协议单价与税率），一键生成采购单时自动带入协议价。
 - **每日提醒扩展**：`TodoRouting` 已将客户回款到期/逾期（`AR_COLLECT` → 销售/财务）和供应商协议价到期（`PRICE_EXPIRING` → 采购/财务）纳入岗位每日提醒。
 
 ## 客户退货冲减、销项台账、授信概览与批次实际成本（V44 新增）
 - **客户退货自动冲减应收（V44）**：`customer_statement_line` 关联 `sales_return_id` / `sales_return_line_id`；生成客户应收对账单时自动带入截止日前未冲减的客户退货行生成负数冲减行，避免重复冲减。
 - **客户应收作废与销项发票台账**：草稿/已开票状态的客户应收单支持作废重算（`POST /api/ar-statements/{id}/cancel`），自动释放关联出库行与退货行；`GET /api/ar-statements/invoice-ledger` 与 `ar-invoice-ledger` Excel 导出按开票月份汇总销项含税/不含税/销项税额。
-- **客户授信使用率概览**：`GET /api/ar-statements/credit-summary` 与 `customer-credit` Excel 导出汇总各客户授信额度、未结应收、逾期应收、可用余额及使用率%。
+- **客户授信使用率概览**：`GET /api/ar-statements/credit-summary` 与 `customer-credit` Excel 导出汇总各客户授信额度、未结应收、逾期应收、已出库未对账、可用余额及使用率%。可用余额、使用率和是否超额按“未结应收 + 已出库未对账”算，和出库时的校验一致。
 - **生产批次实际成本核算**：`GET /api/analytics/batch-costs` 与 `batch-costs` Excel 导出（严格按价格权限隔离）按完工生产单汇总实际领料成本与委外加工费，核算实际单位成本及与标准成本的偏差率。
 
 ## 毛利分析、现金流预测、库存损益估值与对账单打印（V45 新增）

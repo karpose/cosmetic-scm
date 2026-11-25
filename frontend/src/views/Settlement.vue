@@ -563,8 +563,9 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="cs.visible" title="客户授信额度使用概览" width="820px">
-      <div style="margin-bottom:10px;display:flex;justify-content:flex-end">
+    <el-dialog v-model="cs.visible" title="客户授信额度使用概览" width="940px">
+      <div style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <span class="muted small">可用额度 = 授信额度 − 未结应收 − 已出库未对账，和出库时的额度校验一致</span>
         <ExportButton report="customer-credit" />
       </div>
       <el-table :data="cs.rows" v-loading="cs.loading" size="small" empty-text="暂无客户数据">
@@ -572,6 +573,7 @@
         <el-table-column label="授信额度" width="110" align="right"><template #default="{ row }"><span class="mono">{{ row.creditLimit != null ? fmtMoney(row.creditLimit) : '不限' }}</span></template></el-table-column>
         <el-table-column label="未结应收" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.openAr) }}</span></template></el-table-column>
         <el-table-column label="逾期应收" width="105" align="right"><template #default="{ row }"><span class="mono" :class="{ late: Number(row.overdueAr) > 0 }">{{ fmtMoney(row.overdueAr) }}</span></template></el-table-column>
+        <el-table-column label="已出库未对账" width="115" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.unbilledShipped) }}</span></template></el-table-column>
         <el-table-column label="可用额度" width="110" align="right"><template #default="{ row }"><span class="mono">{{ row.availableCredit != null ? fmtMoney(row.availableCredit) : '—' }}</span></template></el-table-column>
         <el-table-column label="使用率" width="95" align="right">
           <template #default="{ row }">

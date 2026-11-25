@@ -156,6 +156,16 @@ public class ProductionService {
                                     BigDecimal unitCost, BigDecimal value) {
     }
 
+    /**
+     * 超耗台账页面：最近 {@link #VARIANCE_RECENT_ORDERS} 张单的全部明细，加上所有超耗的明细（超耗要处理，不因为单子旧就藏起来）。
+     * orderCount、overuseCount 按全部单子算；全部明细走导出。
+     */
+    public record MaterialVarianceView(List<MaterialVarianceRow> rows, int orderCount, int recentOrderCount,
+                                       long overuseCount) {
+    }
+
+    public static final int VARIANCE_RECENT_ORDERS = 300;
+
     public record MaterialVarianceRow(Long moId, String moNo, MoType moType, String moTypeLabel,
                                       Long factoryId, String factoryName, Long fgItemId, String fgCode, String fgName,
                                       MoStatus moStatus, String moStatusLabel, BigDecimal plannedQty, BigDecimal actualQty,
@@ -333,10 +343,22 @@ public class ProductionService {
     /** 生产与委外物料超耗与平衡台账：对比每张已发料/已完工工单的品牌供料理论标耗与净发料量（差异金额按 PriceAccess 权限控制）。 */
     @Transactional(readOnly = true)
     public List<MaterialVarianceRow> materialVariance() {
-        List<MfgOrder> mos = orders.findAllByOrderByIdDesc().stream()
-                .filter(m -> m.getStatus() == MoStatus.ISSUED || m.getStatus() == MoStatus.COMPLETED)
-                .toList();
+        List<MfgOrder> mos = orders.findByStatusInOrderByIdDesc(List.of(MoStatus.ISSUED, MoStatus.COMPLETED));
         return computeMaterialVariance(mos, com.cosmetic.scm.security.PriceAccess.allowed(), false);
+    }
+
+    /** 页面用：数据多时只带最近的单子和全部超耗，见 {@link MaterialVarianceView}。 */
+    @Transactional(readOnly = true)
+    public MaterialVarianceView materialVarianceView() {
+        List<MfgOrder> mos = orders.findByStatusInOrderByIdDesc(List.of(MoStatus.ISSUED, MoStatus.COMPLETED));
+        List<MaterialVarianceRow> all = computeMaterialVariance(mos, com.cosmetic.scm.security.PriceAccess.allowed(), false);
+        java.util.Set<Long> recent = mos.stream().limit(VARIANCE_RECENT_ORDERS).map(MfgOrder::getId)
+                .collect(java.util.stream.Collectors.toSet());
+        List<MaterialVarianceRow> rows = all.stream()
+                .filter(r -> recent.contains(r.moId()) || "OVERUSE".equals(r.state()))
+                .toList();
+        long overuse = all.stream().filter(r -> "OVERUSE".equals(r.state())).count();
+        return new MaterialVarianceView(rows, mos.size(), recent.size(), overuse);
     }
 
     /** 供委外对账单预览调用：返回指定已完工委外工单中存在品牌供料超耗（netIssued > standard）的明细及超耗金额。 */
@@ -360,14 +382,18 @@ public class ProductionService {
         for (MfgIssue i : issues.findByMoIdIn(moIds)) {
             netByMoItem.merge(i.getMoId() + ":" + i.getItemId(), i.getQty(), BigDecimal::add);
         }
+        // 用量按配方版本读，同一版本只查一次（几千张单一般只有几个版本，逐单查库在总览里要好几秒）
+        Map<Long, List<BomLine>> versionLines = new java.util.HashMap<>();
+        Map<Long, List<BomLine>> currentLines = new java.util.HashMap<>();
         List<MaterialVarianceRow> rows = new ArrayList<>();
         for (MfgOrder mo : mos) {
             Item fg = im.get(mo.getFgItemId());
             Partner f = pm.get(mo.getFactoryId());
             BigDecimal baseQty = (mo.getStatus() == MoStatus.COMPLETED && mo.getActualQty() != null && mo.getActualQty().signum() > 0)
                     ? mo.getActualQty() : mo.getPlannedQty();
-            List<BomLine> lines = mo.getFormulaVersionId() == null ? master.bomLines(mo.getFgItemId())
-                    : master.versionLines(mo.getFormulaVersionId());
+            List<BomLine> lines = mo.getFormulaVersionId() == null
+                    ? currentLines.computeIfAbsent(mo.getFgItemId(), master::bomLines)
+                    : versionLines.computeIfAbsent(mo.getFormulaVersionId(), master::versionLines);
             for (BomLine l : lines) {
                 SupplyMode mode = mo.getMoType() == MoType.OWN ? SupplyMode.BRAND : l.getSupplyMode();
                 if (mode != SupplyMode.BRAND) {

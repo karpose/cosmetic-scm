@@ -517,6 +517,8 @@ public class IntegrationService {
                 if (o.getStatus() == ChannelOrderStatus.SHIPPED || o.getStatus() == ChannelOrderStatus.CANCELLED) {
                     return result(o, false);
                 }
+                // 信用额度要锁客户，而且要在下面的普通查询之前（见 SalesService.lockCustomer）
+                sales.lockCustomer(o.getCustomerId());
                 List<ChannelOrderLine> ls = lines.findByOrderIdIn(List.of(id));
                 List<String> unmatched = ls.stream().filter(l -> l.getItemId() == null).map(ChannelOrderLine::getSku).toList();
                 if (!unmatched.isEmpty()) {

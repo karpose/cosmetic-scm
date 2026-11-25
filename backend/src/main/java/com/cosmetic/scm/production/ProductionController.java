@@ -77,8 +77,8 @@ public class ProductionController {
     }
 
     @GetMapping("/material-variance")
-    public List<ProductionService.MaterialVarianceRow> materialVariance() {
-        return production.materialVariance();
+    public ProductionService.MaterialVarianceView materialVariance() {
+        return production.materialVarianceView();
     }
 
     @PostMapping("/{id}/complete")

@@ -131,18 +131,11 @@ public class ReturnService {
     /** 客退隔离处置与客户应收冲减闭环概览。 */
     @Transactional(readOnly = true)
     public ClosureSummary closureSummary() {
-        List<SalesReturn> allReturns = returns.findAll();
-        List<SalesReturnLine> allLines = lines.findAll();
-        long recallLinked = allReturns.stream().filter(r -> r.getRecallId() != null).count();
-        long pending = allLines.stream().filter(l -> l.getDisposition() == ReturnDisposition.PENDING).count();
-        List<Long> disposedIds = allLines.stream()
-                .filter(l -> l.getDisposition() != ReturnDisposition.PENDING)
-                .map(SalesReturnLine::getId).toList();
-        Set<Long> billed = disposedIds.isEmpty() ? Set.of()
-                : Set.copyOf(arStatementLines.billedReturnLineIds(disposedIds));
-        long offsetDone = billed.size();
-        long unbilled = disposedIds.size() - offsetDone;
-        return new ClosureSummary(allReturns.size(), recallLinked, pending, unbilled, offsetDone);
+        long recallLinked = returns.countByRecallIdIsNotNull();
+        long pending = lines.countByDisposition(ReturnDisposition.PENDING);
+        long disposed = lines.countByDispositionNot(ReturnDisposition.PENDING);
+        long offsetDone = lines.countDisposedAndBilled(ReturnDisposition.PENDING);
+        return new ClosureSummary(returns.count(), recallLinked, pending, disposed - offsetDone, offsetDone);
     }
 
     /** 某客户可退的批次：已出库 - 已退。 */

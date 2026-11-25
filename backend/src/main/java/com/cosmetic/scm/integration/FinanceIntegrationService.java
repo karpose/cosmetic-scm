@@ -44,6 +44,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -259,6 +260,11 @@ public class FinanceIntegrationService {
         } catch (BizException e) {
             log("IN", "FINANCE", "付款回调核销", stNo, false, e.getMessage());
             throw e;
+        } catch (DataIntegrityViolationException e) {
+            // 两张对账单同时用同一个新的外部付款单号：后到的撞唯一约束
+            String msg = "外部付款单号 " + extNo + " 正被另一笔回调同时登记，请稍后用原内容重试或在财务系统核对";
+            log("IN", "FINANCE", "付款回调核销", stNo, false, msg);
+            throw new BizException(HttpStatus.CONFLICT, msg);
         }
     }
 

@@ -57,4 +57,13 @@ public interface SupplierReturnRepository extends JpaRepository<SupplierReturn, 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from SupplierReturn x where x.id = :id")
     Optional<SupplierReturn> lockById(@Param("id") Long id);
+
+    /** 期间内签批完成的退供，按供应商计数：[supplierId, count]。供应商绩效用。 */
+    @Query("""
+            select r.supplierId, count(r) from SupplierReturn r
+            where r.status = :status and r.signedAt >= :from and r.signedAt < :before
+            group by r.supplierId
+            """)
+    List<Object[]> countBySupplier(@Param("status") SupplierReturnStatus status, @Param("from") LocalDateTime from,
+                                   @Param("before") LocalDateTime before);
 }
