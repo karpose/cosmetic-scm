@@ -26,6 +26,17 @@
 
 ## 系统架构
 
+业务流程架构：按销售、生产、采购、仓库、财务分区，紫色是质量签批关口，彩色箭头是单据和实物的流向，虚线是依据、生成和冲减关系。点开图片可看原尺寸。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/business-flow-dark.svg">
+  <img src="docs/diagrams/business-flow.svg" alt="业务流程架构图：采购单经送货通知、采购收货、物料检验放行进入批次库存；按 FEFO 发料到自产批生产记录或受托厂完工申报，完工入库后经成品上市放行回到批次库存；按 FEFO 销售出库，退货进退货隔离区质量处置；出库和放行来料分别进入应收、应付对账，审批后由财务系统回调核销；底部是贯穿全程的质量与合规模块。">
+</picture>
+
+图由 `scripts/business-flow-svg.py` 生成（浅色、深色各一份），改了主线流程或模块名称后改脚本重新生成。
+
+部署和对接：
+
 ```mermaid
 flowchart LR
   subgraph users [使用者]
@@ -378,6 +389,8 @@ frontend/
   e2e-empty/           空库上线走查（无示例数据，只用页面）
 deploy/                HTTPS 配置、证书目录、数据库备份 / 恢复脚本
 docs/csv/              计算机化系统验证文档包
+docs/diagrams/         业务流程架构图（SVG，由 scripts/business-flow-svg.py 生成）
+scripts/               依赖漏洞扫描（dep-scan.py）、业务流程架构图生成
 ```
 
 ### 角色与权限
