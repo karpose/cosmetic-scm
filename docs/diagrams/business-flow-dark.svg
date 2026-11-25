@@ -1,0 +1,229 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1512" viewBox="0 0 1680 1512" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans CJK SC','Source Han Sans SC','WenQuanYi Zen Hei',sans-serif" role="img" aria-labelledby="t d">
+<title id="t">化妆品供应链系统业务流程架构图</title>
+<desc id="d">按销售、生产、采购、仓库、财务分区，展示从采购收货、物料检验放行、自产和委托生产、成品上市放行、FEFO 销售出库，到应收应付对账和财务系统回调的单据流，以及贯穿全程的质量与合规模块。</desc>
+<defs><marker id="m-fin" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#8A9AB8"/></marker><marker id="m-prod" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#2DBF8E"/></marker><marker id="m-purch" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#E8894A"/></marker><marker id="m-sales" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#5B93F0"/></marker><marker id="m-wh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#2FB3C6"/></marker></defs>
+<rect width="1680" height="1512" rx="14" fill="#0E141B"/>
+<rect x="24" y="24" width="400" height="44" rx="6" fill="#2B63C7"/><text x="224.0" y="53.0" text-anchor="middle" font-size="20" font-weight="700" letter-spacing="4" fill="#FFFFFF">销售管理</text>
+<rect x="444" y="24" width="792" height="44" rx="6" fill="#0C8763"/><text x="840.0" y="53.0" text-anchor="middle" font-size="20" font-weight="700" letter-spacing="4" fill="#FFFFFF">生产管理</text>
+<rect x="1256" y="24" width="400" height="44" rx="6" fill="#B85A17"/><text x="1456.0" y="53.0" text-anchor="middle" font-size="20" font-weight="700" letter-spacing="4" fill="#FFFFFF">采购管理</text>
+<rect x="24" y="84" width="400" height="654" rx="10" fill="#5B93F0" fill-opacity="0.05" stroke="#5B93F0" stroke-width="1.6" stroke-dasharray="9 6"/>
+<rect x="1256" y="84" width="400" height="654" rx="10" fill="#E8894A" fill-opacity="0.05" stroke="#E8894A" stroke-width="1.6" stroke-dasharray="9 6"/>
+<rect x="444" y="84" width="792" height="352" rx="10" fill="#2DBF8E" fill-opacity="0.05" stroke="#2DBF8E" stroke-width="1.6" stroke-dasharray="9 6"/>
+<rect x="444" y="452" width="792" height="232" rx="10" fill="#2FB3C6" fill-opacity="0.05" stroke="#2FB3C6" stroke-width="1.6" stroke-dasharray="9 6"/>
+<rect x="444" y="694" width="792" height="44" rx="6" fill="#0C7F90"/><text x="840.0" y="723.0" text-anchor="middle" font-size="20" font-weight="700" letter-spacing="4" fill="#FFFFFF">仓库管理</text>
+<rect x="24" y="766" width="1632" height="360" rx="10" fill="#8A9AB8" fill-opacity="0.05" stroke="#8A9AB8" stroke-width="1.6" stroke-dasharray="9 6"/>
+<rect x="24" y="1136" width="1632" height="44" rx="6" fill="#46546E"/><text x="840.0" y="1165.0" text-anchor="middle" font-size="20" font-weight="700" letter-spacing="4" fill="#FFFFFF">财务管理</text>
+<rect x="24" y="1210" width="1632" height="168" rx="10" fill="#9478F5" fill-opacity="0.05" stroke="#9478F5" stroke-width="1.6" stroke-dasharray="9 6"/>
+<rect x="24" y="1388" width="1632" height="44" rx="6" fill="#5B3BD0"/><text x="840.0" y="1417.0" text-anchor="middle" font-size="20" font-weight="700" letter-spacing="4" fill="#FFFFFF">质量与合规（贯穿全程）</text>
+<path d="M175 164 L175 180.0" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M100 180.0 L250 180.0" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M100 180.0 L100 196" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-sales)"/>
+<path d="M250 180.0 L250 196" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-sales)"/>
+<path d="M100 248 L100 264.0 L175 264.0" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M250 248 L250 264.0 L175 264.0" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M175 264.0 L175 280" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-sales)"/>
+<path d="M175 332 L175 476" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-sales)"/>
+<path d="M235 532 L235 630.0 L283 630.0" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-sales)"/>
+<path d="M255 490 L382 490 L382 138.0 L460.0 138.0" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round" stroke-dasharray="6 5" marker-end="url(#m-sales)"/>
+<path d="M522 164 L522 196" fill="none" stroke="#2DBF8E" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-prod)"/>
+<path d="M522 280 L522 248" fill="none" stroke="#2DBF8E" stroke-width="1.8" stroke-linejoin="round" stroke-dasharray="6 5" marker-end="url(#m-prod)"/>
+<path d="M584.0 222.0 L619.0 222.0" fill="none" stroke="#2DBF8E" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-prod)"/>
+<path d="M743.0 222.0 L840 222.0" fill="none" stroke="#2DBF8E" stroke-width="1.8" stroke-linejoin="round"/>
+<circle cx="840" cy="222.0" r="3.5" fill="#2DBF8E"/>
+<path d="M840 222.0 L840 164" fill="none" stroke="#2DBF8E" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-prod)"/>
+<path d="M840 222.0 L840 280" fill="none" stroke="#2DBF8E" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-prod)"/>
+<path d="M902.0 138.0 L919.5 138.0 L919.5 222.0" fill="none" stroke="#2DBF8E" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M902.0 306.0 L919.5 306.0 L919.5 222.0" fill="none" stroke="#2DBF8E" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M919.5 222.0 L937.0 222.0" fill="none" stroke="#2DBF8E" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-prod)"/>
+<path d="M840 364 L840 332" fill="none" stroke="#2DBF8E" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-prod)"/>
+<path d="M1061.0 222.0 L1096.0 222.0" fill="none" stroke="#2DBF8E" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-prod)"/>
+<path d="M552 112 L552 98 L1292 98 L1292 222.0 L1330 222.0" fill="none" stroke="#2DBF8E" stroke-width="1.8" stroke-linejoin="round" stroke-dasharray="6 5" marker-end="url(#m-prod)"/>
+<path d="M681 476 L681 248" fill="none" stroke="#2FB3C6" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-wh)"/>
+<path d="M1158 248 L1158 476" fill="none" stroke="#2DBF8E" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-prod)"/>
+<path d="M840 532 L840 604" fill="none" stroke="#2FB3C6" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-wh)" marker-start="url(#m-wh)"/>
+<path d="M999 604 L999 532" fill="none" stroke="#2FB3C6" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-wh)"/>
+<path d="M1158 532 L1158 604" fill="none" stroke="#2FB3C6" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-wh)"/>
+<path d="M584.0 630.0 L619.0 630.0" fill="none" stroke="#2FB3C6" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-wh)"/>
+<path d="M681 604 L681 532" fill="none" stroke="#2FB3C6" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-wh)"/>
+<path d="M619.0 516 L255 516" fill="none" stroke="#2FB3C6" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-wh)"/>
+<path d="M407 630.0 L460.0 630.0" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-sales)"/>
+<path d="M1410 164 L1410 196" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M1514 222.0 L1490 222.0" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M1410 248 L1410 280" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M1514 306.0 L1490 306.0" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M1410 332 L1410 364" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M1410 416 L1410 476" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M1330 494 L1220.0 494" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M1220.0 516 L1290 516 L1290 630.0 L1330 630.0" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M175 532 L175 790" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-sales)"/>
+<path d="M1490 504.0 L1640 504.0 L1640 816.0 L1490 816.0" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M1410 656 L1410 790" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" stroke-dasharray="6 5" marker-end="url(#m-purch)"/>
+<path d="M175 842 L175 874" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-sales)"/>
+<path d="M175 926 L175 958" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-sales)"/>
+<path d="M175 1010 L175 1036" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-sales)"/>
+<path d="M255 816.0 L454 816.0" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round" stroke-dasharray="6 5" marker-end="url(#m-sales)"/>
+<path d="M1410 842 L1410 874" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M1514 900.0 L1490 900.0" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M1410 926 L1410 958" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M1410 1010 L1410 1036" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M1226 816.0 L1330 816.0" fill="none" stroke="#8A9AB8" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-fin)"/>
+<path d="M255 984.0 L840 984.0" fill="none" stroke="#8A9AB8" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M1330 984.0 L840 984.0" fill="none" stroke="#8A9AB8" stroke-width="1.8" stroke-linejoin="round"/>
+<circle cx="840" cy="984.0" r="3.5" fill="#8A9AB8"/>
+<path d="M840 984.0 L840 1044" fill="none" stroke="#8A9AB8" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-fin)"/>
+<path d="M765 1070.0 L590 1070.0" fill="none" stroke="#8A9AB8" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-fin)"/>
+<path d="M915 1070.0 L1090 1070.0" fill="none" stroke="#8A9AB8" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-fin)"/>
+<path d="M454 1070.0 L259 1070.0" fill="none" stroke="#5B93F0" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-sales)"/>
+<path d="M1226 1070.0 L1326 1070.0" fill="none" stroke="#E8894A" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-purch)"/>
+<path d="M835.36 1460 L875.36 1460" fill="none" stroke="#8A9AB8" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#m-fin)"/>
+<path d="M1013.48 1460 L1053.48 1460" fill="none" stroke="#8A9AB8" stroke-width="1.8" stroke-linejoin="round" stroke-dasharray="6 5" marker-end="url(#m-fin)"/>
+<rect x="70.0" y="112" width="210" height="52" rx="8" fill="#253752" stroke="#5B93F0" stroke-width="1.5"/>
+<text x="175" y="135.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">渠道客户</text><text x="175" y="152.0" text-anchor="middle" font-size="12" fill="#9AA7B4">经销商 · 电商平台 · 门店</text>
+<rect x="32.0" y="196" width="136" height="52" rx="8" fill="#17202A" stroke="#5B93F0" stroke-width="1.5"/>
+<text x="100" y="219.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">经销商订单</text><text x="100" y="236.0" text-anchor="middle" font-size="12" fill="#9AA7B4">门户下单 · 内部审核</text>
+<rect x="182.0" y="196" width="136" height="52" rx="8" fill="#17202A" stroke="#5B93F0" stroke-width="1.5"/>
+<text x="250" y="219.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">电商订单</text><text x="250" y="236.0" text-anchor="middle" font-size="12" fill="#9AA7B4">ERP 接口 · 失败重试</text>
+<rect x="87.0" y="280" width="176" height="52" rx="8" fill="#212A35" stroke="#3D4957" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="175" y="303.0" text-anchor="middle" font-size="15" font-weight="600" fill="#B4BEC9">协议价 · 信用额度</text><text x="175" y="320.0" text-anchor="middle" font-size="12" fill="#9AA7B4">带入单价 · 超额不能出库</text>
+<rect x="95.0" y="476" width="160" height="56" rx="8" fill="#17202A" stroke="#5B93F0" stroke-width="1.5"/>
+<text x="175" y="501.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">销售出库</text><text x="175" y="518.0" text-anchor="middle" font-size="12" fill="#9AA7B4">FEFO · 客户效期标准</text>
+<rect x="38.0" y="492.0" width="44" height="24" rx="5" fill="#212A35" stroke="#3D4957"/><text x="60" y="508.5" text-anchor="middle" font-size="12" fill="#B4BEC9">批次</text>
+<rect x="283.0" y="604" width="124" height="52" rx="8" fill="#17202A" stroke="#5B93F0" stroke-width="1.5"/>
+<text x="345" y="627.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">销售退货</text><text x="345" y="644.0" text-anchor="middle" font-size="12" fill="#9AA7B4">普通退货 · 召回回收</text>
+<rect x="460.0" y="112" width="124" height="52" rx="8" fill="#212A35" stroke="#3D4957" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="522" y="135.0" text-anchor="middle" font-size="15" font-weight="600" fill="#B4BEC9">补货建议</text><text x="522" y="152.0" text-anchor="middle" font-size="12" fill="#9AA7B4">MRP · 预测 · 齐套</text>
+<rect x="778.0" y="112" width="124" height="52" rx="8" fill="#17202A" stroke="#2DBF8E" stroke-width="1.5"/>
+<text x="840" y="135.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">批生产记录</text><text x="840" y="152.0" text-anchor="middle" font-size="12" fill="#9AA7B4">自产 · 工序 · 复核</text>
+<rect x="937.0" y="112" width="124" height="52" rx="8" fill="#1B403E" stroke="#2DBF8E" stroke-width="1.5"/>
+<text x="999" y="135.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">配方版本 · BOM</text><text x="999" y="152.0" text-anchor="middle" font-size="12" fill="#9AA7B4">签批生效 · 备案</text>
+<rect x="1096.0" y="112" width="124" height="52" rx="8" fill="#1B403E" stroke="#2DBF8E" stroke-width="1.5"/>
+<text x="1158" y="135.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">工艺路线 · 设备</text><text x="1158" y="152.0" text-anchor="middle" font-size="12" fill="#9AA7B4">自产工序 · 校准</text>
+<rect x="460.0" y="196" width="124" height="52" rx="8" fill="#17202A" stroke="#2DBF8E" stroke-width="1.5"/>
+<text x="522" y="219.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">自产单 / 委托单</text><text x="522" y="236.0" text-anchor="middle" font-size="12" fill="#9AA7B4">按生效配方版本</text>
+<rect x="619.0" y="196" width="124" height="52" rx="8" fill="#17202A" stroke="#2DBF8E" stroke-width="1.5"/>
+<text x="681" y="219.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">按 FEFO 发料</text><text x="681" y="236.0" text-anchor="middle" font-size="12" fill="#9AA7B4">只发已放行批次</text>
+<rect x="937.0" y="196" width="124" height="52" rx="8" fill="#17202A" stroke="#2DBF8E" stroke-width="1.5"/>
+<text x="999" y="219.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">完工入库</text><text x="999" y="236.0" text-anchor="middle" font-size="12" fill="#9AA7B4">物料平衡 95%–102%</text>
+<rect x="1096.0" y="196" width="124" height="52" rx="8" fill="#231C40" stroke="#9478F5" stroke-width="2.2"/>
+<circle cx="1112.0" cy="196" r="9" fill="#9478F5"/><path d="M1107.5 192 l4.5 -1.8 l4.5 1.8 v3.6 c0 3 -2.2 4.8 -4.5 5.6 c-2.3 -0.8 -4.5 -2.6 -4.5 -5.6z" fill="#FFFFFF"/>
+<text x="1158" y="219.0" text-anchor="middle" font-size="15" font-weight="600" fill="#D4C6FF">成品上市放行</text><text x="1158" y="236.0" text-anchor="middle" font-size="12" fill="#B3A4E8">仅 QSO · 登记留样</text>
+<rect x="460.0" y="280" width="124" height="52" rx="8" fill="#1B403E" stroke="#2DBF8E" stroke-width="1.5"/>
+<text x="522" y="303.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">委托生产合同</text><text x="522" y="320.0" text-anchor="middle" font-size="12" fill="#9AA7B4">签批生效才算依据</text>
+<rect x="778.0" y="280" width="124" height="52" rx="8" fill="#17202A" stroke="#2DBF8E" stroke-width="1.5"/>
+<text x="840" y="303.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">受托厂完工申报</text><text x="840" y="320.0" text-anchor="middle" font-size="12" fill="#9AA7B4">委托 · 出厂放行</text>
+<rect x="939.56" y="290" width="118.88000000000001" height="24" rx="5" fill="#212A35" stroke="#3D4957"/><text x="999" y="306.5" text-anchor="middle" font-size="12" fill="#B4BEC9">成品批次 · 待放行</text>
+<rect x="778.0" y="364" width="124" height="52" rx="8" fill="#1B403E" stroke="#2DBF8E" stroke-width="1.5"/>
+<text x="840" y="387.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">受托厂</text><text x="840" y="404.0" text-anchor="middle" font-size="12" fill="#9AA7B4">代工厂门户</text>
+<rect x="619.0" y="476" width="601.0" height="56" rx="8" fill="#1C3D49" stroke="#2FB3C6" stroke-width="1.5"/>
+<text x="919.5" y="501.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">批次库存</text><text x="919.5" y="518.0" text-anchor="middle" font-size="12" fill="#9AA7B4">自有仓 · 平台仓 · 第三方仓 · 只分配已放行、未过期批次</text>
+<rect x="460.0" y="604" width="124" height="52" rx="8" fill="#17202A" stroke="#2FB3C6" stroke-width="1.5"/>
+<text x="522" y="627.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">退货隔离区</text><text x="522" y="644.0" text-anchor="middle" font-size="12" fill="#9AA7B4">不参与分配</text>
+<rect x="619.0" y="604" width="124" height="52" rx="8" fill="#231C40" stroke="#9478F5" stroke-width="2.2"/>
+<circle cx="635.0" cy="604" r="9" fill="#9478F5"/><path d="M630.5 600 l4.5 -1.8 l4.5 1.8 v3.6 c0 3 -2.2 4.8 -4.5 5.6 c-2.3 -0.8 -4.5 -2.6 -4.5 -5.6z" fill="#FFFFFF"/>
+<text x="681" y="627.0" text-anchor="middle" font-size="15" font-weight="600" fill="#D4C6FF">退货处置</text><text x="681" y="644.0" text-anchor="middle" font-size="12" fill="#B3A4E8">转可售 / 报废</text>
+<rect x="778.0" y="604" width="124" height="52" rx="8" fill="#17202A" stroke="#2FB3C6" stroke-width="1.5"/>
+<text x="840" y="627.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">库存作业</text><text x="840" y="644.0" text-anchor="middle" font-size="12" fill="#9AA7B4">调拨 · 盘点 · 报废</text>
+<rect x="937.0" y="604" width="124" height="52" rx="8" fill="#17202A" stroke="#2FB3C6" stroke-width="1.5"/>
+<text x="999" y="627.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">期初导入</text><text x="999" y="644.0" text-anchor="middle" font-size="12" fill="#9AA7B4">QSO 签批</text>
+<rect x="1096.0" y="604" width="124" height="52" rx="8" fill="#17202A" stroke="#2FB3C6" stroke-width="1.5"/>
+<text x="1158" y="627.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">受托厂寄存仓</text><text x="1158" y="644.0" text-anchor="middle" font-size="12" fill="#9AA7B4">补料 · 余料退库</text>
+<rect x="1330.0" y="112" width="160" height="52" rx="8" fill="#413530" stroke="#E8894A" stroke-width="1.5"/>
+<text x="1410" y="135.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">供应商</text><text x="1410" y="152.0" text-anchor="middle" font-size="12" fill="#9AA7B4">合格名录 · 资质有效</text>
+<rect x="1330.0" y="196" width="160" height="52" rx="8" fill="#17202A" stroke="#E8894A" stroke-width="1.5"/>
+<text x="1410" y="219.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">采购单</text><text x="1410" y="236.0" text-anchor="middle" font-size="12" fill="#9AA7B4">禁用原料不能采购</text>
+<rect x="1514.0" y="196" width="128" height="52" rx="8" fill="#17202A" stroke="#E8894A" stroke-width="1.5"/>
+<text x="1578" y="219.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">询价比价</text><text x="1578" y="236.0" text-anchor="middle" font-size="12" fill="#9AA7B4">封标 · 定标转协议价</text>
+<rect x="1330.0" y="280" width="160" height="52" rx="8" fill="#17202A" stroke="#E8894A" stroke-width="1.5"/>
+<text x="1410" y="303.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">送货通知</text><text x="1410" y="320.0" text-anchor="middle" font-size="12" fill="#9AA7B4">逐批绑定 COA</text>
+<rect x="1514.0" y="280" width="128" height="52" rx="8" fill="#413530" stroke="#E8894A" stroke-width="1.5"/>
+<text x="1578" y="303.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">供应商门户</text><text x="1578" y="320.0" text-anchor="middle" font-size="12" fill="#9AA7B4">确认订单 · 交期</text>
+<rect x="1330.0" y="364" width="160" height="52" rx="8" fill="#17202A" stroke="#E8894A" stroke-width="1.5"/>
+<text x="1410" y="387.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">采购收货</text><text x="1410" y="404.0" text-anchor="middle" font-size="12" fill="#9AA7B4">生成物料批次</text>
+<rect x="1524.56" y="378.0" width="106.88000000000001" height="24" rx="5" fill="#212A35" stroke="#3D4957"/><text x="1578" y="394.5" text-anchor="middle" font-size="12" fill="#B4BEC9">物料批次 · 待检</text>
+<rect x="1330.0" y="476" width="160" height="56" rx="8" fill="#231C40" stroke="#9478F5" stroke-width="2.2"/>
+<circle cx="1346.0" cy="476" r="9" fill="#9478F5"/><path d="M1341.5 472 l4.5 -1.8 l4.5 1.8 v3.6 c0 3 -2.2 4.8 -4.5 5.6 c-2.3 -0.8 -4.5 -2.6 -4.5 -5.6z" fill="#FFFFFF"/>
+<text x="1410" y="501.0" text-anchor="middle" font-size="15" font-weight="600" fill="#D4C6FF">物料检验放行</text><text x="1410" y="518.0" text-anchor="middle" font-size="12" fill="#B3A4E8">QA / QSO 签批</text>
+<rect x="1330.0" y="604" width="160" height="52" rx="8" fill="#17202A" stroke="#E8894A" stroke-width="1.5"/>
+<text x="1410" y="627.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">退供</text><text x="1410" y="644.0" text-anchor="middle" font-size="12" fill="#9AA7B4">质量签批后扣库存</text>
+<rect x="95.0" y="790" width="160" height="52" rx="8" fill="#17202A" stroke="#5B93F0" stroke-width="1.5"/>
+<text x="175" y="813.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">应收对账单</text><text x="175" y="830.0" text-anchor="middle" font-size="12" fill="#9AA7B4">出库行 − 退货冲减</text>
+<rect x="95.0" y="874" width="160" height="52" rx="8" fill="#17202A" stroke="#5B93F0" stroke-width="1.5"/>
+<text x="175" y="897.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">销项发票</text><text x="175" y="914.0" text-anchor="middle" font-size="12" fill="#9AA7B4">开票 · 销项台账</text>
+<rect x="95.0" y="958" width="160" height="52" rx="8" fill="#17202A" stroke="#5B93F0" stroke-width="1.5"/>
+<text x="175" y="981.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">财务审批</text><text x="175" y="998.0" text-anchor="middle" font-size="12" fill="#9AA7B4">审批人不能是制单人</text>
+<polygon points="175,1036.0 259.0,1070 175,1104.0 91.0,1070" fill="#17202A" stroke="#5B93F0" stroke-width="1.6" stroke-linejoin="round"/>
+<text x="175" y="1075.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">回款核销</text>
+<rect x="1330.0" y="790" width="160" height="52" rx="8" fill="#17202A" stroke="#E8894A" stroke-width="1.5"/>
+<text x="1410" y="813.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">采购 / 委外对账单</text><text x="1410" y="830.0" text-anchor="middle" font-size="12" fill="#9AA7B4">只结已放行批次</text>
+<rect x="1330.0" y="874" width="160" height="52" rx="8" fill="#17202A" stroke="#E8894A" stroke-width="1.5"/>
+<text x="1410" y="897.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">进项发票</text><text x="1410" y="914.0" text-anchor="middle" font-size="12" fill="#9AA7B4">金额与合计一致</text>
+<rect x="1514.0" y="874" width="128" height="52" rx="8" fill="#413530" stroke="#E8894A" stroke-width="1.5"/>
+<text x="1578" y="897.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">供应商 / 受托厂</text><text x="1578" y="914.0" text-anchor="middle" font-size="12" fill="#9AA7B4">门户确认 · 开票</text>
+<rect x="1330.0" y="958" width="160" height="52" rx="8" fill="#17202A" stroke="#E8894A" stroke-width="1.5"/>
+<text x="1410" y="981.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">财务审批</text><text x="1410" y="998.0" text-anchor="middle" font-size="12" fill="#9AA7B4">审批人不能是制单人</text>
+<polygon points="1410,1036.0 1494.0,1070 1410,1104.0 1326.0,1070" fill="#17202A" stroke="#E8894A" stroke-width="1.6" stroke-linejoin="round"/>
+<text x="1410" y="1075.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">付款核销</text>
+<rect x="454.0" y="790" width="136" height="52" rx="8" fill="#212A35" stroke="#3D4957" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="522" y="813.0" text-anchor="middle" font-size="15" font-weight="600" fill="#B4BEC9">信用额度</text><text x="522" y="830.0" text-anchor="middle" font-size="12" fill="#9AA7B4">待收 + 已出库未对账</text>
+<rect x="1090.0" y="790" width="136" height="52" rx="8" fill="#212A35" stroke="#3D4957" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="1158" y="813.0" text-anchor="middle" font-size="15" font-weight="600" fill="#B4BEC9">委外加工费</text><text x="1158" y="830.0" text-anchor="middle" font-size="12" fill="#9AA7B4">上市放行后可结算</text>
+<rect x="454.0" y="874" width="136" height="52" rx="8" fill="#212A35" stroke="#3D4957" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="522" y="897.0" text-anchor="middle" font-size="15" font-weight="600" fill="#B4BEC9">应收应付账龄</text><text x="522" y="914.0" text-anchor="middle" font-size="12" fill="#9AA7B4">账龄分段 · 催收</text>
+<rect x="772.0" y="874" width="136" height="52" rx="8" fill="#212A35" stroke="#3D4957" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="840" y="897.0" text-anchor="middle" font-size="15" font-weight="600" fill="#B4BEC9">批次成本 · 毛利</text><text x="840" y="914.0" text-anchor="middle" font-size="12" fill="#9AA7B4">标准成本估值</text>
+<rect x="1090.0" y="874" width="136" height="52" rx="8" fill="#212A35" stroke="#3D4957" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="1158" y="897.0" text-anchor="middle" font-size="15" font-weight="600" fill="#B4BEC9">现金流预测</text><text x="1158" y="914.0" text-anchor="middle" font-size="12" fill="#9AA7B4">按应收应付到期日</text>
+<rect x="454.0" y="1044" width="136" height="52" rx="8" fill="#17202A" stroke="#8A9AB8" stroke-width="1.5"/>
+<text x="522" y="1067.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">回款登记</text><text x="522" y="1084.0" text-anchor="middle" font-size="12" fill="#9AA7B4">手工 · 回调</text>
+<rect x="765.0" y="1044" width="150" height="52" rx="8" fill="#2E3846" stroke="#8A9AB8" stroke-width="1.5"/>
+<text x="840" y="1067.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">财务系统</text><text x="840" y="1084.0" text-anchor="middle" font-size="12" fill="#9AA7B4">凭证 · 回执 · 收付款</text>
+<rect x="1090.0" y="1044" width="136" height="52" rx="8" fill="#17202A" stroke="#8A9AB8" stroke-width="1.5"/>
+<text x="1158" y="1067.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">付款登记</text><text x="1158" y="1084.0" text-anchor="middle" font-size="12" fill="#9AA7B4">手工 · 回调</text>
+<rect x="50.0" y="1230" width="230" height="52" rx="8" fill="#17202A" stroke="#9478F5" stroke-width="1.5"/>
+<text x="165" y="1253.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">质量标准 · 批次检验</text><text x="165" y="1270.0" text-anchor="middle" font-size="12" fill="#9AA7B4">可采用供方报告 · 不合格转偏差</text>
+<rect x="320.0" y="1230" width="230" height="52" rx="8" fill="#17202A" stroke="#9478F5" stroke-width="1.5"/>
+<text x="435" y="1253.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">偏差 · CAPA</text><text x="435" y="1270.0" text-anchor="middle" font-size="12" fill="#9AA7B4">重大偏差未关不能放行</text>
+<rect x="590.0" y="1230" width="230" height="52" rx="8" fill="#17202A" stroke="#9478F5" stroke-width="1.5"/>
+<text x="705" y="1253.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">留样台账</text><text x="705" y="1270.0" text-anchor="middle" font-size="12" fill="#9AA7B4">上市放行时登记 · 效期 + 6 个月</text>
+<rect x="860.0" y="1230" width="230" height="52" rx="8" fill="#17202A" stroke="#9478F5" stroke-width="1.5"/>
+<text x="975" y="1253.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">稳定性试验</text><text x="975" y="1270.0" text-anchor="middle" font-size="12" fill="#9AA7B4">签批结论作保质期依据</text>
+<rect x="1130.0" y="1230" width="230" height="52" rx="8" fill="#17202A" stroke="#9478F5" stroke-width="1.5"/>
+<text x="1245" y="1253.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">投诉 · 不良反应 · 召回</text><text x="1245" y="1270.0" text-anchor="middle" font-size="12" fill="#9AA7B4">QSO 发起 · 逐客户通知</text>
+<rect x="1400.0" y="1230" width="230" height="52" rx="8" fill="#17202A" stroke="#9478F5" stroke-width="1.5"/>
+<text x="1515" y="1253.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">供应商审核</text><text x="1515" y="1270.0" text-anchor="middle" font-size="12" fill="#9AA7B4">合格名录 · 资质到期提醒</text>
+<rect x="50.0" y="1306" width="230" height="52" rx="8" fill="#17202A" stroke="#9478F5" stroke-width="1.5"/>
+<text x="165" y="1329.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">变更控制</text><text x="165" y="1346.0" text-anchor="middle" font-size="12" fill="#9AA7B4">配方 · 标签 · 原料变更</text>
+<rect x="320.0" y="1306" width="230" height="52" rx="8" fill="#17202A" stroke="#9478F5" stroke-width="1.5"/>
+<text x="435" y="1329.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">受控文件 · 培训</text><text x="435" y="1346.0" text-anchor="middle" font-size="12" fill="#9AA7B4">已读确认 · 考核 · 制度覆盖</text>
+<rect x="590.0" y="1306" width="230" height="52" rx="8" fill="#17202A" stroke="#9478F5" stroke-width="1.5"/>
+<text x="705" y="1329.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">标签设计稿 · 打样</text><text x="705" y="1346.0" text-anchor="middle" font-size="12" fill="#9AA7B4">包材放行核对印刷一致</text>
+<rect x="860.0" y="1306" width="230" height="52" rx="8" fill="#17202A" stroke="#9478F5" stroke-width="1.5"/>
+<text x="975" y="1329.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">GMP 自查</text><text x="975" y="1346.0" text-anchor="middle" font-size="12" fill="#9AA7B4">检查要点委托生产版 24 项</text>
+<rect x="1130.0" y="1306" width="230" height="52" rx="8" fill="#17202A" stroke="#9478F5" stroke-width="1.5"/>
+<text x="1245" y="1329.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">质量安全负责人</text><text x="1245" y="1346.0" text-anchor="middle" font-size="12" fill="#9AA7B4">任职 · 协助履职授权</text>
+<rect x="1400.0" y="1306" width="230" height="52" rx="8" fill="#17202A" stroke="#9478F5" stroke-width="1.5"/>
+<text x="1515" y="1329.0" text-anchor="middle" font-size="15" font-weight="600" fill="#E6EDF3">批次追溯 · 审计日志</text><text x="1515" y="1346.0" text-anchor="middle" font-size="12" fill="#9AA7B4">正查到客户 · 反查到原料</text>
+<rect x="40" y="1449" width="30" height="20" rx="5" fill="#17202A" stroke="#2DBF8E" stroke-width="1.5"/><text x="80" y="1464" font-size="13" fill="#9AA7B4">单据 / 操作</text>
+<rect x="182.12" y="1449" width="30" height="20" rx="5" fill="#1B403E" stroke="#2DBF8E" stroke-width="1.5"/><text x="222.12" y="1464" font-size="13" fill="#9AA7B4">往来单位 · 外部系统 · 主数据</text>
+<rect x="431.36" y="1449" width="30" height="20" rx="5" fill="#212A35" stroke="#3D4957" stroke-width="1.5" stroke-dasharray="5 4"/><text x="471.36" y="1464" font-size="13" fill="#9AA7B4">系统计算</text>
+<rect x="557.36" y="1449" width="30" height="20" rx="5" fill="#231C40" stroke="#9478F5" stroke-width="1.5"/><text x="597.36" y="1464" font-size="13" fill="#9AA7B4">质量签批关口</text>
+<rect x="709.36" y="1449" width="30" height="20" rx="5" fill="#212A35" stroke="#3D4957" stroke-width="1.5"/><text x="749.36" y="1464" font-size="13" fill="#9AA7B4">批次状态</text>
+<text x="885.36" y="1464" font-size="13" fill="#9AA7B4">单据流 / 实物流</text>
+<text x="1063.48" y="1464" font-size="13" fill="#9AA7B4">依据 · 生成 · 冲减</text>
+<rect x="354.0" y="288" width="56.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="382" y="300" text-anchor="middle" font-size="12" fill="#5B93F0" font-weight="500">出库历史</text>
+<rect x="354.0" y="306" width="56.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="382" y="318" text-anchor="middle" font-size="12" fill="#5B93F0" font-weight="500">需求预测</text>
+<rect x="526" y="257.0" width="32.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="530" y="269.0" text-anchor="start" font-size="12" fill="#2DBF8E" font-weight="500">依据</text>
+<rect x="982.0" y="90" width="116.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="1040" y="102" text-anchor="middle" font-size="12" fill="#2DBF8E" font-weight="500">补货建议生成采购单</text>
+<rect x="685" y="362" width="64.64" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="689" y="374" text-anchor="start" font-size="12" fill="#2FB3C6" font-weight="500">FEFO 分配</text>
+<rect x="1086.0" y="362" width="68.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="1150" y="374" text-anchor="end" font-size="12" fill="#2DBF8E" font-weight="500">放行后可用</text>
+<rect x="1074.0" y="561.0" width="80.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="1150" y="573.0" text-anchor="end" font-size="12" fill="#2FB3C6" font-weight="500">委托发料转入</text>
+<rect x="685" y="561.0" width="44.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="689" y="573.0" text-anchor="start" font-size="12" fill="#2FB3C6" font-weight="500">转可售</text>
+<rect x="489.68" y="498" width="64.64" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="522" y="510" text-anchor="middle" font-size="12" fill="#2FB3C6" font-weight="500">FEFO 出库</text>
+<rect x="1247.0" y="476" width="56.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="1275.0" y="488" text-anchor="middle" font-size="12" fill="#E8894A" font-weight="500">合格入库</text>
+<rect x="127.0" y="724" width="44.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="167" y="736" text-anchor="end" font-size="12" fill="#5B93F0" font-weight="500">已出库</text>
+<rect x="1568.0" y="724" width="68.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="1632" y="736" text-anchor="end" font-size="12" fill="#E8894A" font-weight="500">已放行来料</text>
+<rect x="1350.0" y="724" width="56.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="1402" y="736" text-anchor="end" font-size="12" fill="#E8894A" font-weight="500">退供冲减</text>
+<rect x="734.0" y="964.0" width="212.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="840" y="976.0" text-anchor="middle" font-size="12" fill="#8A9AB8" font-weight="500">审批后生成凭证，财务系统拉取并回执</text>
+<rect x="649.5" y="1050.0" width="56.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="677.5" y="1062.0" text-anchor="middle" font-size="12" fill="#8A9AB8" font-weight="500">回款回调</text>
+<rect x="974.5" y="1050.0" width="56.0" height="17" rx="3" fill="#0E141B" fill-opacity="0.92"/><text x="1002.5" y="1062.0" text-anchor="middle" font-size="12" fill="#8A9AB8" font-weight="500">付款回调</text>
+</svg>
