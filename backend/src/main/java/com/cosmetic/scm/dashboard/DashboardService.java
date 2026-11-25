@@ -81,6 +81,7 @@ public class DashboardService {
     private final BatchRepository batches;
     private final MfgOrderRepository mfgOrders;
     private final SalesOrderRepository salesOrders;
+    private final com.cosmetic.scm.sales.SoLineRepository soLines;
     private final InventoryService inventory;
     private final MasterService master;
     private final MasterLookup lookup;
@@ -404,6 +405,12 @@ public class DashboardService {
                 todos.add(new Todo("AR_COLLECT", "客户回款即将到期", "info", cname, ar.getStatementNo(),
                         "到期日 " + due, "/settlement?tab=ar"));
             }
+        }
+        // 出库行没有单价：补上之前不进应收、不占信用额度（待办不带金额）
+        for (Object[] r : soLines.countUnpricedUnbilledByCustomer()) {
+            com.cosmetic.scm.master.Partner c = lookup.partner((Long) r[0]);
+            todos.add(new Todo("SO_UNPRICED", "出库行没有单价", "warn", c.getName(), c.getCode(),
+                    r[1] + " 行出库没有单价（最早 " + r[2] + "），补上前不进应收、不占信用额度", "/sales?tab=unpriced&customerId=" + r[0]));
         }
         long channelFailed = integration.failedCount();
         if (channelFailed > 0) {

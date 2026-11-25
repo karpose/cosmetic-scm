@@ -2195,6 +2195,60 @@ test('产品销售记录：列出法规要求的内容，缺的标出来，价�
   await expect(page.getByText('价格只有销售、财务和管理员能看')).toBeVisible()
 })
 
+test('出库后补单价：缺单价的行列出来，补上后进应收、占额度；没进对账单的可以改价，QA 看不到', async ({ page }) => {
+  await login(page, 'sales1')
+  // 总览待办：示例数据里京东和天猫各有一张没定价的出库单（前面经销商审核发货的也没定价）
+  await page.goto('/')
+  await expect(page.getByText('出库行没有单价').first()).toBeVisible()
+  await page.goto('/sales?tab=unpriced')
+  const card = page.locator('.el-card').filter({ hasText: '补上单价前不进应收对账单' })
+  const tmRow = card.locator('.el-table__row').filter({ hasText: '天猫旗舰店' })
+  await expect(tmRow).toHaveCount(1)
+  const before = await card.locator('.el-table__row').count()
+  await expect(page.locator('.seg')).toContainText(`缺单价（${before}）`)
+  await tmRow.getByRole('spinbutton', { name: /含税单价/ }).fill('99')
+  await page.getByRole('button', { name: '保存 1 行单价' }).click()
+  await toast(page, '已补 1 行单价')
+  await expect(card.locator('.el-table__row')).toHaveCount(before - 1)
+  await expect(page.locator('.seg')).toContainText(before > 1 ? `缺单价（${before - 1}）` : '缺单价')
+
+  // 生成应收单前提示还没补的（对账结算页给财务和管理员）
+  await login(page, 'finance1')
+  await page.goto('/settlement?tab=ar')
+  await page.getByRole('button', { name: '生成客户应收单' }).click()
+  const arDlg = dialog(page, '生成客户应收对账单')
+  await arDlg.locator('.el-select').first().click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: '京东自营入仓' }).click()
+  await expect(arDlg.locator('.el-alert')).toContainText('1 行出库没有单价')
+  await arDlg.getByRole('button', { name: '取消' }).click()
+
+  // 出库单上改价（财务也能改）：要写原因
+  await page.goto('/sales')
+  const tmOrder = page.locator('.el-table__row').filter({ hasText: '天猫旗舰店' }).filter({ hasText: '¥99' }).first()
+  await tmOrder.getByRole('button', { name: /^改 .* 的单价$/ }).click()
+  const rp = dialog(page, '更正出库单价')
+  await expect(rp).toContainText('现在 ¥99')
+  await rp.locator('#rp-price').fill('108')
+  await rp.getByRole('button', { name: '确认改价' }).click()
+  await toast(page, '请写明更正原因')
+  await rp.locator('#rp-reason').fill('按年度合同价更正')
+  await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+  const bad = await rp.evaluate(async (e) => {
+    const r = await window.axe.run(e, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+    return r.violations.map((v) => `${v.id} ×${v.nodes.length}：${v.nodes[0].target[0]}`)
+  })
+  expect(bad).toEqual([])
+  await rp.getByRole('button', { name: '确认改价' }).click()
+  await toast(page, '的单价已更正')
+  await expect(page.locator('.el-table__row').filter({ hasText: '天猫旗舰店' }).filter({ hasText: '¥108' }).first()).toBeVisible()
+
+  // QA 没有缺单价页签，也没有改价按钮
+  await login(page, 'qa1')
+  await page.goto('/sales?tab=unpriced')
+  await expect(page.locator('.seg').getByText('缺单价')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /^改 .* 的单价$/ })).toHaveCount(0)
+})
+
 test('受控文件培训考核：确认已读后由质量人员登记考核，没通过可以补考', async ({ page }) => {
   await login(page, 'qa1')
   await page.goto('/docs')
@@ -2625,7 +2679,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/sales?tab=unpriced', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页

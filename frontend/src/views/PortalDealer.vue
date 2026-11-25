@@ -22,7 +22,7 @@
       <div class="kpi-card" :class="{ warn: unpaidArCount > 0 }" @click="tab = 'ar'">
         <div class="kpi-label">待结应收对账</div>
         <div class="kpi-val mono">{{ unpaidArCount }} <span class="kpi-unit">单</span></div>
-        <div class="kpi-sub">待付合计 ¥{{ fmtMoney(unpaidArTotal) }}</div>
+        <div class="kpi-sub">待付合计 {{ fmtMoney(unpaidArTotal) }}</div>
       </div>
       <div class="kpi-card" :class="{ danger: pendingRecalls.length > 0 }" @click="tab = 'recalls'">
         <div class="kpi-label">待确认召回通知</div>
@@ -108,9 +108,9 @@
             <div class="small mono" :class="{ late: row.overdue }">到期 {{ row.dueDate }} <el-tag v-if="row.overdue" size="small" type="danger" disable-transitions>逾期 {{ row.overdueDays }} 天</el-tag></div>
           </template>
         </el-table-column>
-        <el-table-column label="应收合计" width="115" align="right"><template #default="{ row }"><span class="mono">¥{{ fmtMoney(row.totalAmount) }}</span></template></el-table-column>
+        <el-table-column label="应收合计" width="115" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.totalAmount) }}</span></template></el-table-column>
         <el-table-column label="已付 / 待付" width="160" align="right">
-          <template #default="{ row }"><span class="mono">¥{{ fmtMoney(row.receivedAmount) }} / ¥{{ fmtMoney(row.unreceived) }}</span></template>
+          <template #default="{ row }"><span class="mono">{{ fmtMoney(row.receivedAmount) }} / {{ fmtMoney(row.unreceived) }}</span></template>
         </el-table-column>
         <el-table-column label="销项发票" min-width="150">
           <template #default="{ row }"><span class="mono">{{ row.invoiceNo || '-' }}</span><div v-if="row.invoiceDate" class="muted small mono">{{ row.invoiceDate }}</div></template>

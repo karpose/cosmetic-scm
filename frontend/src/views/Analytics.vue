@@ -223,7 +223,7 @@
             </div>
           </div>
           <div v-if="bc.summary" class="muted small" style="margin-top:6px">
-            已核算 <b class="mono">{{ bc.summary.totalBatches }}</b> 批 · 超标(&gt;5%) <b class="mono" :class="{ bad: bc.summary.overrunCount > 0 }">{{ bc.summary.overrunCount }}</b> 批 · 节约(&lt;-5%) <b class="mono">{{ bc.summary.savingCount }}</b> 批 · 平均偏差 <b class="mono">{{ bc.summary.avgVariancePct == null ? '—' : `${Number(bc.summary.avgVariancePct) > 0 ? '+' : ''}${bc.summary.avgVariancePct}%` }}</b> · 超标累计超支 <b class="mono" :class="{ bad: Number(bc.summary.totalOverrunAmount) > 0 }">¥{{ fmtMoney(bc.summary.totalOverrunAmount) }}</b>
+            已核算 <b class="mono">{{ bc.summary.totalBatches }}</b> 批 · 超标(&gt;5%) <b class="mono" :class="{ bad: bc.summary.overrunCount > 0 }">{{ bc.summary.overrunCount }}</b> 批 · 节约(&lt;-5%) <b class="mono">{{ bc.summary.savingCount }}</b> 批 · 平均偏差 <b class="mono">{{ bc.summary.avgVariancePct == null ? '—' : `${Number(bc.summary.avgVariancePct) > 0 ? '+' : ''}${bc.summary.avgVariancePct}%` }}</b> · 超标累计超支 <b class="mono" :class="{ bad: Number(bc.summary.totalOverrunAmount) > 0 }">{{ fmtMoney(bc.summary.totalOverrunAmount) }}</b>
           </div>
         </template>
         <el-table :data="filteredBatchCosts" v-loading="bc.loading" size="small" empty-text="暂无符合条件的已完工生产单成本数据">
@@ -251,7 +251,7 @@
             <template #default="{ row }">
               <span v-if="row.variancePct != null" class="mono" :class="{ bad: Number(row.variancePct) > 5, ok: Number(row.variancePct) < -5 }">{{ Number(row.variancePct) > 0 ? '+' : '' }}{{ row.variancePct }}%</span>
               <span v-else class="muted">—</span>
-              <div v-if="row.varianceAmount != null" class="muted small mono">{{ Number(row.varianceAmount) > 0 ? '+' : '' }}¥{{ fmtMoney(row.varianceAmount) }}</div>
+              <div v-if="row.varianceAmount != null" class="muted small mono">{{ Number(row.varianceAmount) > 0 ? '+' : '' }}{{ fmtMoney(row.varianceAmount) }}</div>
             </template>
           </el-table-column>
           <el-table-column prop="costDriver" label="偏差归因" min-width="145" />
@@ -273,7 +273,7 @@
               </div>
             </div>
             <div v-if="mg.data" class="muted small" style="margin-top:6px">
-              销售额 <b class="mono">¥{{ fmtMoney(mg.data.totalRevenue) }}</b> · 成本 <b class="mono">¥{{ fmtMoney(mg.data.totalCogs) }}</b> · 毛利 <b class="mono">¥{{ fmtMoney(mg.data.totalGrossProfit) }}</b>（{{ mg.data.grossMarginPct ?? '—' }}%）
+              销售额 <b class="mono">{{ fmtMoney(mg.data.totalRevenue) }}</b> · 成本 <b class="mono">{{ fmtMoney(mg.data.totalCogs) }}</b> · 毛利 <b class="mono">{{ fmtMoney(mg.data.totalGrossProfit) }}</b>（{{ mg.data.grossMarginPct ?? '—' }}%）
             </div>
           </template>
           <el-table :data="mg.dim === 'item' ? (mg.data?.byItem || []) : (mg.data?.byCustomer || [])" v-loading="mg.loading" size="small" empty-text="暂无带价销售出库数据">
@@ -294,10 +294,10 @@
               </div>
             </div>
             <div v-if="cf.data" class="muted small" style="margin-top:6px">
-              预计流入 <b class="mono">¥{{ fmtMoney(cf.data.totalInflow) }}</b> · 预计流出 <b class="mono">¥{{ fmtMoney(cf.data.totalOutflow) }}</b> · 净现金流 <b class="mono" :class="{ bad: Number(cf.data.netCashFlow) < 0 }">¥{{ fmtMoney(cf.data.netCashFlow) }}</b>
+              预计流入 <b class="mono">{{ fmtMoney(cf.data.totalInflow) }}</b> · 预计流出 <b class="mono">{{ fmtMoney(cf.data.totalOutflow) }}</b> · 净现金流 <b class="mono" :class="{ bad: Number(cf.data.netCashFlow) < 0 }">{{ fmtMoney(cf.data.netCashFlow) }}</b>
             </div>
             <div v-if="iv.data" class="muted small" style="margin-top:4px">
-              近 180 天库存损益：盘盈 ¥{{ fmtMoney(iv.data.gainValue) }} · 盘亏 ¥{{ fmtMoney(iv.data.lossValue) }} · 报废 ¥{{ fmtMoney(iv.data.scrapValue) }} · 净额 <b class="mono" :class="{ bad: Number(iv.data.netValue) < 0 }">¥{{ fmtMoney(iv.data.netValue) }}</b>
+              近 180 天库存损益：盘盈 {{ fmtMoney(iv.data.gainValue) }} · 盘亏 {{ fmtMoney(iv.data.lossValue) }} · 报废 {{ fmtMoney(iv.data.scrapValue) }} · 净额 <b class="mono" :class="{ bad: Number(iv.data.netValue) < 0 }">{{ fmtMoney(iv.data.netValue) }}</b>
             </div>
           </template>
           <el-table :data="cf.data?.buckets || []" v-loading="cf.loading" size="small">
@@ -316,7 +316,7 @@
             <b>库存 ABC 价值分类</b>
             <div class="toolbar">
               <span v-if="abc.data" class="muted small">
-                A类 {{ abc.data.aCount }} 项（¥{{ fmtMoney(abc.data.aValue) }}）· B类 {{ abc.data.bCount }} 项（¥{{ fmtMoney(abc.data.bValue) }}）· C类 {{ abc.data.cCount }} 项（¥{{ fmtMoney(abc.data.cValue) }}）
+                A类 {{ abc.data.aCount }} 项（{{ fmtMoney(abc.data.aValue) }}）· B类 {{ abc.data.bCount }} 项（{{ fmtMoney(abc.data.bValue) }}）· C类 {{ abc.data.cCount }} 项（{{ fmtMoney(abc.data.cValue) }}）
               </span>
               <ExportButton report="inventory-abc" />
             </div>
@@ -328,7 +328,7 @@
           </el-table-column>
           <el-table-column label="物料" min-width="170"><template #default="{ row }">{{ row.itemName }}<div class="muted small mono">{{ row.itemCode }} · {{ row.itemType }}</div></template></el-table-column>
           <el-table-column label="在库数量" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }} {{ row.unit }}</span></template></el-table-column>
-          <el-table-column label="库存金额" width="120" align="right"><template #default="{ row }"><b class="mono">¥{{ fmtMoney(row.value) }}</b></template></el-table-column>
+          <el-table-column label="库存金额" width="120" align="right"><template #default="{ row }"><b class="mono">{{ fmtMoney(row.value) }}</b></template></el-table-column>
           <el-table-column label="占比 / 累计" width="130" align="right"><template #default="{ row }"><span class="mono">{{ row.sharePct }}% / {{ row.cumulativePct }}%</span></template></el-table-column>
         </el-table>
       </el-card>

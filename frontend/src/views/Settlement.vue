@@ -19,12 +19,12 @@
     <div v-if="!selectedNo && summary" class="kpi-grid">
       <div class="kpi-card" :class="{ warn: summary.apPendingApproveCount > 0 || summary.apDisputedCount > 0 }" @click="activeTab = 'statements'; followUp = ''">
         <div class="kpi-label">未结应付余额</div>
-        <div class="kpi-val mono">¥{{ fmtMoney(summary.apOpenAmount) }}</div>
+        <div class="kpi-val mono">{{ fmtMoney(summary.apOpenAmount) }}</div>
         <div class="kpi-sub">待审批 {{ summary.apPendingApproveCount }} · 异议 {{ summary.apDisputedCount }}</div>
       </div>
       <div class="kpi-card" :class="{ danger: summary.apOverdueCount > 0 }" @click="activeTab = 'statements'; followUp = 'OVERDUE'">
         <div class="kpi-label">已逾期应付</div>
-        <div class="kpi-val mono">¥{{ fmtMoney(summary.apOverdueAmount) }}</div>
+        <div class="kpi-val mono">{{ fmtMoney(summary.apOverdueAmount) }}</div>
         <div class="kpi-sub">逾期 {{ summary.apOverdueCount }} 单（点击直达）</div>
       </div>
       <div class="kpi-card" :class="{ warn: summary.apPendingSyncCount > 0 }" @click="activeTab = 'statements'; syncFilter = 'PENDING'">
@@ -34,8 +34,8 @@
       </div>
       <div v-if="summary.arOpenAmount != null" class="kpi-card" :class="{ danger: summary.arOverdueCount > 0 }" @click="activeTab = 'ar'; loadAr()">
         <div class="kpi-label">待回款客户应收</div>
-        <div class="kpi-val mono">¥{{ fmtMoney(summary.arOpenAmount) }}</div>
-        <div class="kpi-sub">未结 {{ summary.arOpenCount }} 单 · 逾期 ¥{{ fmtMoney(summary.arOverdueAmount) }}</div>
+        <div class="kpi-val mono">{{ fmtMoney(summary.arOpenAmount) }}</div>
+        <div class="kpi-sub">未结 {{ summary.arOpenCount }} 单 · 逾期 {{ fmtMoney(summary.arOverdueAmount) }}</div>
       </div>
     </div>
 
@@ -59,9 +59,9 @@
           <el-button @click="loadLedger">查询</el-button>
         </div>
         <div v-if="lg.data" class="muted small" style="margin-top:8px">
-          共 <b class="mono">{{ lg.data.count }}</b> 张发票 · 含税合计 <b class="mono">¥{{ fmtMoney(lg.data.totalAmount) }}</b> · 不含税 <b class="mono">¥{{ fmtMoney(lg.data.totalNetAmount) }}</b> · 进项税额 <b class="mono">¥{{ fmtMoney(lg.data.totalTaxAmount) }}</b>
+          共 <b class="mono">{{ lg.data.count }}</b> 张发票 · 含税合计 <b class="mono">{{ fmtMoney(lg.data.totalAmount) }}</b> · 不含税 <b class="mono">{{ fmtMoney(lg.data.totalNetAmount) }}</b> · 进项税额 <b class="mono">{{ fmtMoney(lg.data.totalTaxAmount) }}</b>
           <span v-for="tb in lg.data.byTaxRate" :key="tb.taxRate" class="mono" style="margin-left:10px">
-            [{{ fmtQty(tb.taxRate) }}%: 税额 ¥{{ fmtMoney(tb.taxAmount) }}]
+            [{{ fmtQty(tb.taxRate) }}%: 税额 {{ fmtMoney(tb.taxAmount) }}]
           </span>
         </div>
       </template>
@@ -139,7 +139,7 @@
           <el-button size="small" @click="loadArCollection">刷新</el-button>
         </div>
         <div v-if="col.data" class="muted small" style="margin-top:8px">
-          待催收 <b class="mono">{{ col.data.totalCount }}</b> 笔 · 待回款合计 <b class="mono">¥{{ fmtMoney(col.data.totalUnreceived) }}</b> · 其中已逾期 <b class="mono" :class="{ late: Number(col.data.totalOverdueAmount) > 0 }">¥{{ fmtMoney(col.data.totalOverdueAmount) }}</b> · 授信超额客户 <b class="mono" :class="{ late: col.data.overLimitCustomerCount > 0 }">{{ col.data.overLimitCustomerCount }}</b> 家
+          待催收 <b class="mono">{{ col.data.totalCount }}</b> 笔 · 待回款合计 <b class="mono">{{ fmtMoney(col.data.totalUnreceived) }}</b> · 其中已逾期 <b class="mono" :class="{ late: Number(col.data.totalOverdueAmount) > 0 }">{{ fmtMoney(col.data.totalOverdueAmount) }}</b> · 授信超额客户 <b class="mono" :class="{ late: col.data.overLimitCustomerCount > 0 }">{{ col.data.overLimitCustomerCount }}</b> 家
         </div>
       </template>
       <el-table :data="filteredArCollection" v-loading="col.loading" empty-text="当前没有待催收的已审批应收单">
@@ -161,7 +161,7 @@
           </template>
         </el-table-column>
         <el-table-column label="待回款" width="115" align="right">
-          <template #default="{ row }"><b class="mono" :class="{ late: row.overdueDays > 0 }">¥{{ fmtMoney(row.unreceived) }}</b></template>
+          <template #default="{ row }"><b class="mono" :class="{ late: row.overdueDays > 0 }">{{ fmtMoney(row.unreceived) }}</b></template>
         </el-table-column>
         <el-table-column label="授信风控" width="135" align="right">
           <template #default="{ row }">
@@ -189,7 +189,7 @@
           <el-button size="small" @click="loadAging">刷新</el-button>
         </div>
         <div v-if="ag.data" class="muted small" style="margin-top:8px">
-          统计日 <b class="mono">{{ ag.data.asOf }}</b> · 未结合计 <b class="mono">¥{{ fmtMoney(ag.data.total) }}</b> · 未到期 <b class="mono">¥{{ fmtMoney(ag.data.notDue) }}</b> · 1-30天 <b class="mono">¥{{ fmtMoney(ag.data.days1to30) }}</b> · 31-60天 <b class="mono">¥{{ fmtMoney(ag.data.days31to60) }}</b> · 61-90天 <b class="mono">¥{{ fmtMoney(ag.data.days61to90) }}</b> · 90天以上 <b class="mono late">¥{{ fmtMoney(ag.data.over90) }}</b>
+          统计日 <b class="mono">{{ ag.data.asOf }}</b> · 未结合计 <b class="mono">{{ fmtMoney(ag.data.total) }}</b> · 未到期 <b class="mono">{{ fmtMoney(ag.data.notDue) }}</b> · 1-30天 <b class="mono">{{ fmtMoney(ag.data.days1to30) }}</b> · 31-60天 <b class="mono">{{ fmtMoney(ag.data.days31to60) }}</b> · 61-90天 <b class="mono">{{ fmtMoney(ag.data.days61to90) }}</b> · 90天以上 <b class="mono late">{{ fmtMoney(ag.data.over90) }}</b>
         </div>
       </template>
       <el-table :data="ag.data?.rows || []" v-loading="ag.loading" empty-text="当前没有已审批未结清余额">
@@ -312,17 +312,17 @@
         <div v-if="cr.preview?.taxBreakdown?.length" class="muted small" style="margin-top:8px">
           分税率汇总：
           <span v-for="tb in cr.preview.taxBreakdown" :key="tb.taxRate" class="mono" style="margin-right:12px">
-            [{{ fmtQty(tb.taxRate) }}% 税率：含税 ¥{{ fmtMoney(tb.goodsAmount) }} / 不含税 ¥{{ fmtMoney(tb.netAmount) }} / 税额 ¥{{ fmtMoney(tb.taxAmount) }}]
+            [{{ fmtQty(tb.taxRate) }}% 税率：含税 {{ fmtMoney(tb.goodsAmount) }} / 不含税 {{ fmtMoney(tb.netAmount) }} / 税额 {{ fmtMoney(tb.taxAmount) }}]
           </span>
         </div>
         <el-alert v-if="cr.preview?.oemOveruses?.length" type="warning" :closable="false" show-icon style="margin-top:10px">
           <template #title>
             关联委外工单存在 {{ cr.preview.oemOveruses.length }} 项品牌供料超耗
-            <span v-if="Number(cr.preview.suggestedDeduction) > 0">（按标准成本折合 ¥{{ fmtMoney(cr.preview.suggestedDeduction) }}）</span>
+            <span v-if="Number(cr.preview.suggestedDeduction) > 0">（按标准成本折合 {{ fmtMoney(cr.preview.suggestedDeduction) }}）</span>
             <el-button v-if="Number(cr.preview.suggestedDeduction) > 0" size="small" type="warning" plain style="margin-left:10px" @click="applyOveruseDeduction">按超耗建议填入扣款</el-button>
           </template>
           <div v-for="(o, idx) in cr.preview.oemOveruses" :key="idx" class="small mono">
-            {{ o.moNo }} · {{ o.itemName }}（标耗 {{ fmtQty(o.standardQty) }} / 净发 {{ fmtQty(o.netIssuedQty) }} / 超耗 +{{ fmtQty(o.overuseQty) }} {{ o.unit }}<span v-if="o.overuseAmount != null">，折合 ¥{{ fmtMoney(o.overuseAmount) }}</span>）
+            {{ o.moNo }} · {{ o.itemName }}（标耗 {{ fmtQty(o.standardQty) }} / 净发 {{ fmtQty(o.netIssuedQty) }} / 超耗 +{{ fmtQty(o.overuseQty) }} {{ o.unit }}<span v-if="o.overuseAmount != null">，折合 {{ fmtMoney(o.overuseAmount) }}</span>）
           </div>
         </el-alert>
         <div v-if="cr.preview?.lines.length" class="form-grid" style="margin-top:12px">
@@ -332,7 +332,7 @@
         <div v-if="cr.preview?.lines.length && previewTotal < 0" style="margin-top:4px">
           <el-checkbox v-model="cr.allowNegative">允许生成红字冲减对账单（当期退货冲减大于新入库货款，需供应商开具红字发票并退款）</el-checkbox>
         </div>
-        <p v-if="cr.preview?.lines.length" class="total">合计 <b class="mono" :class="{ late: previewTotal < 0 }">¥{{ fmtMoney(previewTotal) }}</b> <span class="muted small">货款 ¥{{ fmtMoney(cr.preview.goodsAmount) }}，其中税额 ¥{{ fmtMoney(cr.preview.taxAmount) }}</span></p>
+        <p v-if="cr.preview?.lines.length" class="total">合计 <b class="mono" :class="{ late: previewTotal < 0 }">{{ fmtMoney(previewTotal) }}</b> <span class="muted small">货款 {{ fmtMoney(cr.preview.goodsAmount) }}，其中税额 {{ fmtMoney(cr.preview.taxAmount) }}</span></p>
       </el-form>
       <template #footer>
         <el-button @click="cr.visible = false">取消</el-button>
@@ -368,7 +368,7 @@
         <div v-if="dt.s.taxBreakdown?.length" class="muted small" style="margin-top:8px">
           <b>分税率拆分：</b>
           <span v-for="tb in dt.s.taxBreakdown" :key="tb.taxRate" class="mono" style="margin-right:12px">
-            {{ fmtQty(tb.taxRate) }}% 税率（{{ tb.lineCount }} 行）：含税 ¥{{ fmtMoney(tb.goodsAmount) }} / 不含税 ¥{{ fmtMoney(tb.netAmount) }} / 税额 ¥{{ fmtMoney(tb.taxAmount) }}
+            {{ fmtQty(tb.taxRate) }}% 税率（{{ tb.lineCount }} 行）：含税 {{ fmtMoney(tb.goodsAmount) }} / 不含税 {{ fmtMoney(tb.netAmount) }} / 税额 {{ fmtMoney(tb.taxAmount) }}
           </span>
         </div>
         <el-table :data="dt.s.lines" size="small" max-height="240" style="margin-top:12px" scrollbar-tabindex="0">
@@ -384,7 +384,7 @@
           <b class="small">发票明细（{{ dt.s.invoices.length }} 张）</b>
           <div v-for="inv in dt.s.invoices" :key="inv.id" class="small">
             <el-tag size="small" :type="inv.invoiceType === 'RED' ? 'danger' : 'primary'" disable-transitions>{{ inv.invoiceTypeLabel }}</el-tag>
-            <span class="mono" style="margin-left:6px">{{ inv.invoiceNo }} · {{ inv.invoiceDate }} · 税率 {{ fmtQty(inv.taxRate) }}% · 含税 ¥{{ fmtMoney(inv.amount) }}（税额 ¥{{ fmtMoney(inv.taxAmount) }}）</span>
+            <span class="mono" style="margin-left:6px">{{ inv.invoiceNo }} · {{ inv.invoiceDate }} · 税率 {{ fmtQty(inv.taxRate) }}% · 含税 {{ fmtMoney(inv.amount) }}（税额 {{ fmtMoney(inv.taxAmount) }}）</span>
           </div>
         </div>
         <div v-if="dt.s.payments.length" style="margin-top:12px">
@@ -408,7 +408,7 @@
       <el-form label-position="top" @submit.prevent>
         <el-alert v-if="iv.s?.invoiceCorrectionPending" type="warning" :closable="false" :title="`退回原因：${iv.s.invoiceReturns[0].reason}`" />
         <p class="muted small" style="margin-top:0">
-          支持一单多票及蓝字/红字发票组合，所有发票含税金额合计必须等于对账单合计 <b class="mono">¥{{ fmtMoney(iv.s?.totalAmount) }}</b>。
+          支持一单多票及蓝字/红字发票组合，所有发票含税金额合计必须等于对账单合计 <b class="mono">{{ fmtMoney(iv.s?.totalAmount) }}</b>。
           <span v-if="iv.s?.supplierTaxId"> 供应商档案税号：<b class="mono">{{ iv.s.supplierTaxId }}</b>。</span>
         </p>
         <div v-for="(item, idx) in iv.items" :key="idx" class="form-grid" style="margin-bottom:8px;align-items:end">
@@ -446,9 +446,9 @@
     <el-dialog v-model="ap.visible" :title="`审批：${ap.s?.statementNo || ''}`" width="440px" :close-on-click-modal="false">
       <el-form label-position="top" @submit.prevent>
         <StatementReceiptDisputes :disputes="ap.s?.receiptDisputes" :can-open="canBuy" />
-        <p style="margin-top:0">{{ ap.s?.supplierName }}，合计 <b class="mono">¥{{ fmtMoney(ap.s?.totalAmount) }}</b>，发票 <span class="mono">{{ ap.s?.invoiceNo }}</span>。</p>
+        <p style="margin-top:0">{{ ap.s?.supplierName }}，合计 <b class="mono">{{ fmtMoney(ap.s?.totalAmount) }}</b>，发票 <span class="mono">{{ ap.s?.invoiceNo }}</span>。</p>
         <ul v-if="ap.s?.invoices.length" class="small">
-          <li v-for="inv in ap.s.invoices" :key="inv.id">{{ inv.invoiceNo }} · {{ inv.invoiceDate }} · 税率 {{ fmtQty(inv.taxRate) }}% · ¥{{ fmtMoney(inv.amount) }}</li>
+          <li v-for="inv in ap.s.invoices" :key="inv.id">{{ inv.invoiceNo }} · {{ inv.invoiceDate }} · 税率 {{ fmtQty(inv.taxRate) }}% · {{ fmtMoney(inv.amount) }}</li>
         </ul>
         <p v-if="ap.s?.createdBy === auth.user?.username" class="late small">这张对账单是您生成的，审批要由另一位财务签批。</p>
         <el-form-item label="签批密码"><el-input id="ap-password" v-model="ap.password" type="password" show-password autocomplete="current-password" /></el-form-item>
@@ -477,7 +477,7 @@
       <el-form label-position="top" @submit.prevent>
         <StatementReceiptDisputes :disputes="pa.s?.receiptDisputes" :can-open="canBuy" />
         <p class="muted small" style="margin-top:0">
-          {{ pa.isRefund ? `红字冲减对账单，待供应商退回 ¥${fmtMoney(Math.abs(Number(pa.s?.unpaid || 0)))}。` : `只做登记，实际付款在银行或财务系统完成。未付 ¥${fmtMoney(pa.s?.unpaid)}。` }}
+          {{ pa.isRefund ? `红字冲减对账单，待供应商退回 ${fmtMoney(Math.abs(Number(pa.s?.unpaid || 0)))}。` : `只做登记，实际付款在银行或财务系统完成。未付 ${fmtMoney(pa.s?.unpaid)}。` }}
         </p>
         <el-form-item :label="pa.isRefund ? '退款日期' : '付款日期'"><el-date-picker id="pa-date" v-model="pa.payDate" type="date" value-format="YYYY-MM-DD" style="width:100%" :disabled-date="(d) => d > startOfToday" /></el-form-item>
         <el-form-item :label="pa.isRefund ? '收到退款金额（正数）' : '付款金额'"><el-input-number id="pa-amount" v-model="pa.amount" :min="0" :precision="2" :controls="false" style="width:100%" /></el-form-item>
@@ -523,6 +523,9 @@
         <el-form-item label="信用账期（天，留空按客户默认）"><el-input-number v-model="arCr.creditDays" :min="0" :max="365" :precision="0" :controls="false" style="width:100%" /></el-form-item>
         <el-form-item label="调整金额（选填）"><el-input-number v-model="arCr.adjustment" :precision="2" :controls="false" style="width:100%" /></el-form-item>
         <el-form-item label="调整原因"><el-input v-model="arCr.adjustmentNote" maxlength="300" /></el-form-item>
+        <el-alert v-if="arCr.unpriced" type="warning" :closable="false" show-icon :title="`截止日前有 ${arCr.unpriced} 行出库没有单价，不会进这张应收单`">
+          <template #default>先到 <router-link :to="`/sales?tab=unpriced&customerId=${arCr.customerId}`">销售出库的“缺单价”页签</router-link>补上单价再生成。</template>
+        </el-alert>
       </el-form>
       <template #footer>
         <el-button @click="arCr.visible = false">取消</el-button>
@@ -536,7 +539,7 @@
           <el-descriptions-item label="客户">{{ arDt.s.customerName }}（{{ arDt.s.customerCode }}）</el-descriptions-item>
           <el-descriptions-item label="状态"><StatusTag :status="arDt.s.status" :label="arDt.s.statusLabel" /></el-descriptions-item>
           <el-descriptions-item label="账期与到期日"><span class="mono">{{ arDt.s.creditDays }} 天 · 到期 {{ arDt.s.dueDate }}</span></el-descriptions-item>
-          <el-descriptions-item label="应收合计"><b class="mono">¥{{ fmtMoney(arDt.s.totalAmount) }}</b>（已收 ¥{{ fmtMoney(arDt.s.receivedAmount) }} / 待收 ¥{{ fmtMoney(arDt.s.unreceived) }}）</el-descriptions-item>
+          <el-descriptions-item label="应收合计"><b class="mono">{{ fmtMoney(arDt.s.totalAmount) }}</b>（已收 {{ fmtMoney(arDt.s.receivedAmount) }} / 待收 {{ fmtMoney(arDt.s.unreceived) }}）</el-descriptions-item>
           <el-descriptions-item label="销项发票">{{ arDt.s.invoiceNo ? `${arDt.s.invoiceNo} · ${arDt.s.invoiceDate}` : '-' }}</el-descriptions-item>
           <el-descriptions-item label="财务凭证">{{ arDt.s.extVoucherNo || arDt.s.financeSyncLabel }}</el-descriptions-item>
         </el-descriptions>
@@ -553,7 +556,7 @@
         <div v-if="arDt.s.receipts?.length" style="margin-top:12px">
           <b class="small">回款记录</b>
           <div v-for="(r, i) in arDt.s.receipts" :key="i" class="small mono">
-            {{ r.receiptDate }} · ¥{{ fmtMoney(r.amount) }} · {{ r.referenceNo || '无流水号' }}<span v-if="r.extReceiptNo">（回调 {{ r.extReceiptNo }}）</span>
+            {{ r.receiptDate }} · {{ fmtMoney(r.amount) }} · {{ r.referenceNo || '无流水号' }}<span v-if="r.extReceiptNo">（回调 {{ r.extReceiptNo }}）</span>
           </div>
         </div>
       </template>
@@ -565,7 +568,7 @@
 
     <el-dialog v-model="cs.visible" title="客户授信额度使用概览" width="940px">
       <div style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:12px">
-        <span class="muted small">可用额度 = 授信额度 − 未结应收 − 已出库未对账，和出库时的额度校验一致</span>
+        <span class="muted small">可用额度 = 授信额度 − 未结应收 − 已出库未对账，和出库时的额度校验一致；没有单价的出库行补上单价前不计入</span>
         <ExportButton report="customer-credit" />
       </div>
       <el-table :data="cs.rows" v-loading="cs.loading" size="small" empty-text="暂无客户数据">
@@ -573,7 +576,9 @@
         <el-table-column label="授信额度" width="110" align="right"><template #default="{ row }"><span class="mono">{{ row.creditLimit != null ? fmtMoney(row.creditLimit) : '不限' }}</span></template></el-table-column>
         <el-table-column label="未结应收" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.openAr) }}</span></template></el-table-column>
         <el-table-column label="逾期应收" width="105" align="right"><template #default="{ row }"><span class="mono" :class="{ late: Number(row.overdueAr) > 0 }">{{ fmtMoney(row.overdueAr) }}</span></template></el-table-column>
-        <el-table-column label="已出库未对账" width="115" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.unbilledShipped) }}</span></template></el-table-column>
+        <el-table-column label="已出库未对账" width="125" align="right">
+          <template #default="{ row }"><span class="mono">{{ fmtMoney(row.unbilledShipped) }}</span><div v-if="row.unpricedLines" class="late small">另有 {{ row.unpricedLines }} 行没单价</div></template>
+        </el-table-column>
         <el-table-column label="可用额度" width="110" align="right"><template #default="{ row }"><span class="mono">{{ row.availableCredit != null ? fmtMoney(row.availableCredit) : '—' }}</span></template></el-table-column>
         <el-table-column label="使用率" width="95" align="right">
           <template #default="{ row }">
@@ -628,7 +633,20 @@ async function loadLedger() {
 }
 const ar = reactive({ loading: false, rows: [] })
 const arDt = reactive({ visible: false, s: null })
-const arCr = reactive({ visible: false, saving: false, customerId: null, periodTo: null, creditDays: undefined, adjustment: undefined, adjustmentNote: '' })
+const arCr = reactive({ visible: false, saving: false, customerId: null, periodTo: null, creditDays: undefined, adjustment: undefined, adjustmentNote: '', unpriced: 0 })
+// 生成应收单前提示：截止日前没有单价的出库行不会进来
+const arUnpricedReq = latestOnly()
+watch(() => [arCr.visible, arCr.customerId, arCr.periodTo], async ([visible, customerId, periodTo]) => {
+  const current = arUnpricedReq()
+  arCr.unpriced = 0
+  if (!visible || !customerId || !periodTo) return
+  try {
+    const d = await http.get('/sales-orders/unpriced-lines', { params: { customerId, to: periodTo }, silent: true })
+    if (current()) arCr.unpriced = d.total
+  } catch {
+    // 只是提示，查不到不影响生成
+  }
+})
 async function loadAr() {
   ar.loading = true
   try { ar.rows = await http.get('/ar-statements') } finally { ar.loading = false }
@@ -645,7 +663,7 @@ async function loadArCollection() {
 }
 async function arReceiveFromBoard(row) {
   let amt
-  try { amt = (await ElMessageBox.prompt(`待收 ¥${fmtMoney(row.unreceived)}，请输入本次回款金额`, `登记回款：${row.statementNo}`, { inputValue: String(row.unreceived) })).value } catch { return }
+  try { amt = (await ElMessageBox.prompt(`待收 ${fmtMoney(row.unreceived)}，请输入本次回款金额`, `登记回款：${row.statementNo}`, { inputValue: String(row.unreceived) })).value } catch { return }
   await http.post(`/ar-statements/${row.statementId}/receive`, { receiptDate: today(), amount: Number(amt) })
   ElMessage.success('回款已登记')
   loadArCollection()
@@ -663,7 +681,7 @@ function onTabChange(name) {
 }
 async function openArCreate() {
   await rd.ready()
-  Object.assign(arCr, { visible: true, saving: false, customerId: null, periodTo: today(), creditDays: undefined, adjustment: undefined, adjustmentNote: '' })
+  Object.assign(arCr, { visible: true, saving: false, customerId: null, periodTo: today(), creditDays: undefined, adjustment: undefined, adjustmentNote: '', unpriced: 0 })
 }
 async function submitArCreate() {
   if (!arCr.customerId || !arCr.periodTo) return ElMessage.warning('请选择客户和截止日期')
@@ -691,7 +709,7 @@ async function arApprove(row) {
 }
 async function arReceive(row) {
   let amt
-  try { amt = (await ElMessageBox.prompt(`待收 ¥${fmtMoney(row.unreceived)}，请输入本次回款金额`, `登记回款：${row.statementNo}`, { inputValue: String(row.unreceived) })).value } catch { return }
+  try { amt = (await ElMessageBox.prompt(`待收 ${fmtMoney(row.unreceived)}，请输入本次回款金额`, `登记回款：${row.statementNo}`, { inputValue: String(row.unreceived) })).value } catch { return }
   await http.post(`/ar-statements/${row.id}/receive`, { receiptDate: today(), amount: Number(amt) })
   ElMessage.success('回款已登记')
   loadAr()

@@ -57,6 +57,7 @@ final class TodoRouting {
             Map.entry("STATEMENT_PAY", Set.of(Role.FINANCE)),
             Map.entry("STATEMENT_REFUND", Set.of(Role.FINANCE)),
             Map.entry("AR_COLLECT", Set.of(Role.SALES, Role.FINANCE)),
+            Map.entry("SO_UNPRICED", Set.of(Role.SALES, Role.FINANCE)),
             Map.entry("PRICE_EXPIRING", Set.of(Role.PURCHASE, Role.FINANCE)),
             Map.entry("RELEASE", Set.of(Role.QSO)),
             Map.entry("MO_ISSUE", Set.of(Role.PRODUCTION, Role.WAREHOUSE)),

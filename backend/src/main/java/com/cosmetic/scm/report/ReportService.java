@@ -302,9 +302,10 @@ public class ReportService {
         arSettlement.creditSummary().forEach(r -> rows.add(row(
                 r.customerCode(), r.customerName(), r.channel(), r.defaultCreditDays(),
                 r.creditLimit(), r.openCount(), r.openAr(), r.overdueAr(), r.unbilledShipped(), r.availableCredit(),
-                r.utilizationPct(), r.overLimit() ? "超额" : "正常")));
+                r.utilizationPct(), r.overLimit() ? "超额" : "正常", r.unpricedLines())));
         return new Table("客户授信使用概览", List.of("客户编码", "客户名称", "渠道", "默认账期（天）",
-                "授信额度", "未结单数", "未结应收", "逾期应收", "已出库未对账", "剩余可用额度", "使用率（%）", "状态"), rows);
+                "授信额度", "未结单数", "未结应收", "逾期应收", "已出库未对账", "剩余可用额度", "使用率（%）", "状态",
+                "没有单价的出库行（未计入额度）"), rows);
     }
 
     private Table arCollectionReport() {

@@ -89,8 +89,8 @@
             <div>
               <h3 class="mono">{{ s.statementNo }}</h3>
               <div class="muted small">
-                对账截止 {{ s.periodTo }} · 账期 {{ s.creditDays ?? 30 }} 天（到期 {{ s.dueDate || '-' }}） · 合计 <b class="mono">¥{{ fmtMoney(s.totalAmount) }}</b>
-                <template v-if="Number(s.paidAmount) !== 0"> · {{ Number(s.totalAmount) < 0 ? '已退' : '已收' }} ¥{{ fmtMoney(Math.abs(Number(s.paidAmount))) }}</template>
+                对账截止 {{ s.periodTo }} · 账期 {{ s.creditDays ?? 30 }} 天（到期 {{ s.dueDate || '-' }}） · 合计 <b class="mono">{{ fmtMoney(s.totalAmount) }}</b>
+                <template v-if="Number(s.paidAmount) !== 0"> · {{ Number(s.totalAmount) < 0 ? '已退' : '已收' }} {{ fmtMoney(Math.abs(Number(s.paidAmount))) }}</template>
               </div>
             </div>
             <StatusTag :status="s.status" :label="s.statusLabel" />
@@ -100,22 +100,22 @@
           <div class="lines">
             <div v-for="l in s.lines" :key="l.batchNo + (l.returnNo || '')" class="mat">
               <span>{{ l.itemName }} <span class="muted small mono">批号 {{ l.extBatchNo }} · {{ l.poNo }} · 收货 {{ l.receivedOn }} · 税率 {{ fmtQty(l.taxRate) }}%</span><span v-if="l.returnNo" class="small"> · 退货冲减 <span class="mono">{{ l.returnNo }}</span></span></span>
-              <span class="small mono">{{ fmtQty(l.qty) }} {{ l.unit }} × ¥{{ fmtQty(l.unitPrice) }} = ¥{{ fmtMoney(l.amount) }}</span>
+              <span class="small mono">{{ fmtQty(l.qty) }} {{ l.unit }} × ¥{{ fmtQty(l.unitPrice) }} = {{ fmtMoney(l.amount) }}</span>
             </div>
-            <div v-if="Number(s.adjustment) !== 0" class="mat"><span>调整：{{ s.adjustmentNote }}</span><span class="small mono">¥{{ fmtMoney(s.adjustment) }}</span></div>
+            <div v-if="Number(s.adjustment) !== 0" class="mat"><span>调整：{{ s.adjustmentNote }}</span><span class="small mono">{{ fmtMoney(s.adjustment) }}</span></div>
           </div>
           <div v-if="s.taxBreakdown?.length" class="muted small">
             分税率汇总：
             <span v-for="tb in s.taxBreakdown" :key="tb.taxRate" class="mono" style="margin-right:10px">
-              {{ fmtQty(tb.taxRate) }}% 税率：含税 ¥{{ fmtMoney(tb.goodsAmount) }}（税额 ¥{{ fmtMoney(tb.taxAmount) }}）
+              {{ fmtQty(tb.taxRate) }}% 税率：含税 {{ fmtMoney(tb.goodsAmount) }}（税额 {{ fmtMoney(tb.taxAmount) }}）
             </span>
           </div>
           <div v-if="s.invoices?.length" class="small">
             <div v-for="inv in s.invoices" :key="inv.id">
-              {{ inv.invoiceTypeLabel }} <span class="mono">{{ inv.invoiceNo }} · {{ inv.invoiceDate }} · 税率 {{ fmtQty(inv.taxRate) }}% · ¥{{ fmtMoney(inv.amount) }}</span>
+              {{ inv.invoiceTypeLabel }} <span class="mono">{{ inv.invoiceNo }} · {{ inv.invoiceDate }} · 税率 {{ fmtQty(inv.taxRate) }}% · {{ fmtMoney(inv.amount) }}</span>
             </div>
           </div>
-          <div v-else-if="s.invoiceNo" class="small">发票 <span class="mono">{{ s.invoiceNo }}</span> · {{ s.invoiceDate }} · ¥{{ fmtMoney(s.invoiceAmount) }}</div>
+          <div v-else-if="s.invoiceNo" class="small">发票 <span class="mono">{{ s.invoiceNo }}</span> · {{ s.invoiceDate }} · {{ fmtMoney(s.invoiceAmount) }}</div>
           <StatementInvoiceReturns :statement="s" />
           <AttachmentList owner-type="SUPPLIER_STATEMENT" :owner-id="s.id" :list-path="`/portal/supplier/statements/${s.id}/attachments`" download-prefix="/portal/supplier/attachments" :can-upload="s.status !== 'CANCELLED'" title="附件（发票扫描件）" empty-text="开票后请上传发票扫描件" />
           <footer v-if="s.status === 'SENT' || s.status === 'CONFIRMED'" class="toolbar">
@@ -316,7 +316,7 @@
     <el-dialog v-model="iv.visible" :title="`${iv.st?.invoiceCorrectionPending ? '更正发票' : '登记发票'}：${iv.st?.statementNo || ''}`" width="600px" :close-on-click-modal="false">
       <el-form label-position="top" @submit.prevent>
         <el-alert v-if="iv.st?.invoiceCorrectionPending" type="warning" :closable="false" :title="`退回原因：${iv.st.invoiceReturns[0].reason}`" />
-        <p class="muted small" style="margin-top:0">支持一单多票及蓝字/红字发票组合，合计须等于对账单金额 <b class="mono">¥{{ fmtMoney(iv.st?.totalAmount) }}</b>。</p>
+        <p class="muted small" style="margin-top:0">支持一单多票及蓝字/红字发票组合，合计须等于对账单金额 <b class="mono">{{ fmtMoney(iv.st?.totalAmount) }}</b>。</p>
         <div v-for="(item, idx) in iv.items" :key="idx" class="form-grid" style="margin-bottom:8px;align-items:end">
           <el-form-item label="发票号">
             <el-input :id="idx === 0 ? 'iv-no' : `iv-no-${idx}`" v-model="item.invoiceNo" maxlength="60" />
@@ -539,7 +539,7 @@ function replaceStatement(view) {
 }
 async function confirmStatement(s) {
   try {
-    await ElMessageBox.confirm(`确认对账单 ${s.statementNo}，合计 ¥${fmtMoney(s.totalAmount)}？确认后开票。`, '确认对账单',
+    await ElMessageBox.confirm(`确认对账单 ${s.statementNo}，合计 ${fmtMoney(s.totalAmount)}？确认后开票。`, '确认对账单',
       { confirmButtonText: '确认对账单', cancelButtonText: '不确认' })
   } catch { return }
   replaceStatement(await http.post(`/portal/supplier/statements/${s.id}/confirm`))

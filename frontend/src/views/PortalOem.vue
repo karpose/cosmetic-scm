@@ -48,7 +48,7 @@
           <header class="oh">
             <div>
               <div class="mono muted small">{{ s.statementNo }} · 截止 {{ s.periodTo }} · 到期 {{ s.dueDate }}</div>
-              <h3>合计 <span class="mono">¥{{ fmtMoney(s.totalAmount) }}</span> <span class="muted small">（已结 ¥{{ fmtMoney(s.paidAmount) }}）</span></h3>
+              <h3>合计 <span class="mono">{{ fmtMoney(s.totalAmount) }}</span> <span class="muted small">（已结 {{ fmtMoney(s.paidAmount) }}）</span></h3>
             </div>
             <div class="tags">
               <StatusTag :status="s.status" :label="s.statusLabel" />
@@ -61,7 +61,7 @@
             <el-table-column label="数量" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span></template></el-table-column>
             <el-table-column label="加工费" width="95" align="right"><template #default="{ row }"><span class="mono">¥{{ fmtQty(row.unitPrice) }}</span></template></el-table-column>
             <el-table-column label="税率" width="75" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.taxRate) }}%</span></template></el-table-column>
-            <el-table-column label="含税金额" width="110" align="right"><template #default="{ row }"><span class="mono">¥{{ fmtMoney(row.amount) }}</span></template></el-table-column>
+            <el-table-column label="含税金额" width="110" align="right"><template #default="{ row }"><span class="mono">{{ fmtMoney(row.amount) }}</span></template></el-table-column>
           </el-table>
           <footer class="toolbar" style="margin-top:8px">
             <el-button v-if="s.status === 'SENT'" type="primary" size="small" @click="confirmStatement(s)">确认对账</el-button>
