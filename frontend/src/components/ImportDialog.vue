@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="visible" :title="`批量导入${spec.title}`" width="820px" :close-on-click-modal="false" @closed="reset">
+  <el-dialog v-model="visible" :title="title || `批量导入${spec.title}`" width="820px" :close-on-click-modal="false" @closed="reset">
     <ol class="steps">
       <li :class="{ on: step >= 1 }">下载模板，在 Excel 里填写</li>
       <li :class="{ on: step >= 2 }">另存为 CSV 后上传</li>
@@ -24,7 +24,8 @@
       <div class="summary">
         <span v-if="rows.length">共 <b class="mono">{{ rows.length }}</b> 行</span>
         <template v-if="result">
-          <el-tag v-if="!issues.length" type="success" disable-transitions>预检通过：{{ spec.unit ? `${result.created} ${spec.unit}` : spec.sign ? `${result.created} 个批次` : `新增 ${result.created}，修改 ${result.updated}` }}</el-tag>
+          <el-tag v-if="!issues.length" type="success" disable-transitions>预检通过：{{ spec.unit ? `${result.created} ${spec.unit}` : spec.sign ? `${result.created} 个批次` : `新增 ${result.created}，修改 ${result.updated}` }}{{ result.skipped ? `，已有 ${result.skipped} 条跳过` : '' }}</el-tag>
+          <el-tag v-if="!issues.length && result.outOfRange" type="danger" disable-transitions>超限 {{ result.outOfRange }} 条{{ result.newExcursions ? `，新的超限 ${result.newExcursions} 次，各生成一份偏差` : '，并入还没关闭的超限' }}</el-tag>
           <el-tag v-else type="danger" disable-transitions>{{ issues.length }} 处问题，修改文件后重新上传</el-tag>
         </template>
         <el-tag v-else-if="parseErrors.length" type="danger" disable-transitions>{{ parseErrors.length }} 处格式问题</el-tag>
@@ -74,7 +75,8 @@ import http, { LONG_TIMEOUT } from '../api'
 import { ITEM_TYPE, PARTNER_KIND } from '../utils/format'
 
 const visible = defineModel({ type: Boolean, default: false })
-const props = defineProps({ kind: { type: String, required: true } })
+// url、title：同一种模板用在不同对象上时（如某个贮存区域的温湿度记录）由页面给出
+const props = defineProps({ kind: { type: String, required: true }, url: { type: String, default: '' }, title: { type: String, default: '' } })
 const emit = defineEmits(['done'])
 
 // ---------- 两种模板的列定义：表头 → 字段，以及单元格到接口值的转换 ----------
@@ -124,6 +126,21 @@ const date = (label) => (v) => {
   return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
 }
 const yn = (v) => (v ? '是' : '否')
+// 记录仪导出的时间：2026-11-20 08:00、2026/11/20 8:00:00、2026-11-20T08:00，秒舍去（同一分钟只记一条）
+const datetime = (label) => (v) => {
+  const s = String(v ?? '').trim()
+  if (!s) return null
+  const m = s.match(/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?[\sT]+(\d{1,2})[:：时](\d{1,2})(?:[:：分](\d{1,2}(?:\.\d+)?)秒?)?$/)
+  if (!m) throw new Error(`${label}“${s}”格式应为 2026-11-20 08:00`)
+  const [y, mo, d, h, mi] = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5])]
+  const real = new Date(y, mo - 1, d)
+  if (real.getMonth() !== mo - 1 || real.getDate() !== d) throw new Error(`${label}“${s}”这一天不存在`)
+  if (h > 23 || mi > 59) throw new Error(`${label}“${s}”的时间不对`)
+  const p2 = (n) => String(n).padStart(2, '0')
+  return `${m[1]}-${p2(mo)}-${p2(d)}T${p2(h)}:${p2(mi)}:00`
+}
+// 读数可能带单位：22.5℃、22.5°C、55%RH
+const reading = (label) => (v) => num(label)(String(v ?? '').replace(/℃|°\s*c|%\s*rh|rh/gi, ''))
 
 const SPECS = {
   items: {
@@ -187,6 +204,20 @@ const SPECS = {
       { header: '使用条件', key: 'conditions', conv: text, example: '' },
       { header: '来源文件和版本', key: 'source', conv: text, example: '请填文件名和版本' },
       { header: '别名（其它 INCI 写法，分号分隔）', key: 'aliases', conv: text, example: '' }
+    ]
+  },
+  env: {
+    title: '温湿度记录', file: '温湿度记录导入模板.csv', codeKey: 'recordedAt', required: ['recordedAt'], requiredAny: ['temp', 'rh'], unit: '条温湿度记录',
+    hint: '记录仪导出的 CSV 可以直接上传：认得“时间”“日期时间”“温度”“湿度”“相对湿度”等表头，也认 Time、Temperature、Humidity。同一分钟只记一条，库里已有的跳过；温湿度保留 1 位小数，多的四舍五入。超出范围的记录按次生成偏差。一次最多 10000 行。',
+    columns: [
+      { header: '时间', key: 'recordedAt', conv: datetime('时间'), show: (v) => (v ? v.slice(0, 16).replace('T', ' ') : ''), example: '2026-11-20 08:00',
+        aliases: ['日期时间', '记录时间', '采集时间', '时间戳', 'time', 'datetime', 'date time', 'date/time', 'timestamp'] },
+      { header: '温度（℃）', key: 'temp', conv: reading('温度'), example: '22.5',
+        aliases: ['温度', '温度(°c)', '温度值', 'temperature', 'temp', 'temperature(°c)', 'temperature(℃)', 'temp(°c)', 'temp(℃)'] },
+      { header: '相对湿度（%）', key: 'rh', conv: reading('相对湿度'), example: '55',
+        aliases: ['湿度', '相对湿度', '湿度(%)', '湿度(%rh)', '相对湿度(%rh)', 'humidity', 'rh', 'rh(%)', 'humidity(%)', 'humidity(%rh)'] },
+      { header: '记录仪编号', key: 'device', conv: text, example: '', aliases: ['记录仪', '设备编号', 'device', 'logger'] },
+      { header: '备注', key: 'note', conv: text, example: '', aliases: ['note', 'remark'] }
     ]
   },
   partners: {
@@ -344,13 +375,20 @@ async function onFile(e) {
   }
   const header = table[0].map(normHeader)
   const cols = spec.value.columns
-  const known = new Set(cols.map((c) => normHeader(c.header)))
+  const names = (c) => [c.header, ...(c.aliases || [])].map(normHeader)
+  const known = new Set(cols.flatMap(names))
   ignoredHeaders.value = table[0].filter((h) => clean(h) && !known.has(normHeader(h))).map(clean)
-  const index = Object.fromEntries(cols.map((c) => [c.key, header.indexOf(normHeader(c.header))]))
+  // 表头可以是模板的名字或别名（记录仪导出的表头各家不同），取第一个对上的列
+  const index = Object.fromEntries(cols.map((c) => [c.key, header.findIndex((h) => names(c).includes(h))]))
   const requiredKeys = spec.value.required || ['code', 'name', 'itemType', 'unit', 'kind']
   const missing = cols.filter((c) => requiredKeys.includes(c.key) && index[c.key] < 0)
   if (missing.length) {
     parseErrors.value = [{ line: 1, code: '', message: `表头缺少：${missing.map((c) => c.header).join('、')}。请用“下载模板”的表头` }]
+    return
+  }
+  const anyOf = spec.value.requiredAny
+  if (anyOf && anyOf.every((k) => index[k] < 0)) {
+    parseErrors.value = [{ line: 1, code: '', message: `表头至少要有其中一列：${cols.filter((c) => anyOf.includes(c.key)).map((c) => c.header).join('、')}` }]
     return
   }
   const errs = []
@@ -405,7 +443,7 @@ async function send(dryRun) {
       ElMessage.warning('请输入签批密码')
       return
     }
-    const res = await http.post(spec.value.url, { rows: rows.value, dryRun, ...(spec.value.sign ? { password: password.value } : {}) }, { timeout: LONG_TIMEOUT })
+    const res = await http.post(props.url || spec.value.url, { rows: rows.value, dryRun, ...(spec.value.sign ? { password: password.value } : {}) }, { timeout: LONG_TIMEOUT })
     result.value = res
     // 法规目录的变化由后端算：留空的上限是“无上限”，不是保留原值，放宽了也要让人看到
     if (dryRun && Array.isArray(res.changes)) changes.value = res.changes

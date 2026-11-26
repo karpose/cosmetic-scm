@@ -105,6 +105,7 @@ public class DashboardService {
     private final com.cosmetic.scm.qms.QsoService qso;
     private final com.cosmetic.scm.oemcontract.OemContractService oemContracts;
     private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervision;
+    private final com.cosmetic.scm.storage.StorageMonitorService storageMonitor;
     private final com.cosmetic.scm.sales.SalesRecordService salesRecords;
     private final TimeProvider time;
 
@@ -292,6 +293,12 @@ public class DashboardService {
             todos.add(new Todo("OEM_SUPERVISION_DUE", "受托厂监督到期", "warn", f.factoryName(), f.factoryCode(),
                     f.openOrders() + " 张委托单在做，" + (f.lastSupervised() == null ? "还没有监督记录" : "最近一次监督 " + f.lastSupervised() + "，超过 "
                             + oemSupervision.intervalDays() + " 天"), "/oem-supervision?tab=factories"));
+        }
+        // 贮存区域温湿度（检查要点第 16、20 项）：仍超限的、昨天漏记的
+        for (com.cosmetic.scm.storage.StorageMonitorService.TodoRow r : storageMonitor.todos()) {
+            boolean out = "OUT".equals(r.kind());
+            todos.add(new Todo(out ? "STORAGE_EXCURSION" : "STORAGE_RECORD_MISSING", out ? "贮存区域温湿度超限" : "温湿度漏记", out ? "bad" : "warn",
+                    r.areaName(), r.areaCode(), r.detail(), out ? "/storage-env?tab=excursions" : "/storage-env"));
         }
         for (com.cosmetic.scm.qms.GmpSelfCheckService.CheckRow r : selfChecks.waitingApproval()) {
             todos.add(new Todo("SELF_CHECK_APPROVE", "GMP 自查待签批", "warn", r.editionLabel(), r.checkNo(), "结论：" + r.conclusionLabel() + "，" + r.submittedBy() + " 提交", "/self-checks"));
