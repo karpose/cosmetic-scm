@@ -25,7 +25,8 @@ export default defineConfig({
     {
       command: "mvn -q -B spring-boot:run -Dspring-boot.run.profiles=e2e '-Dspring-boot.run.arguments=--server.port=8091 --scm.demo-data=false --scm.security.force-password-change=true --spring.datasource.url=jdbc:h2:mem:scm-empty;MODE=MySQL;DB_CLOSE_DELAY=-1'",
       cwd: '../backend',
-      url: `${API}/api/auth/roles`,
+      // 等启动完成（示例数据写完）才算就绪：端口一能连上就开跑，第一个用例会读到写了一半的数据
+      url: `${API}/api/health`,
       timeout: 240_000,
       reuseExistingServer: false,
       // CI 上把后端输出打到任务日志里：Maven 用了 -q，报错只在标准输出，丢掉的话启动失败时什么都看不到

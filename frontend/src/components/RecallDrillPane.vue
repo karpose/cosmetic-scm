@@ -98,12 +98,24 @@
 
       <el-table :data="dt.row.lines" size="small" scrollbar-tabindex="0">
         <el-table-column label="对象" min-width="170">
-          <template #default="{ row }">{{ row.name }}<div class="muted small">{{ row.targetLabel }}<template v-if="row.contact"> · {{ row.contact }}</template></div></template>
+          <template #default="{ row }">
+            {{ row.name }}<div class="muted small">{{ row.targetLabel }}<template v-if="row.contact"> · {{ row.contact }}</template></div>
+            <template v-if="narrow">
+              <div v-if="row.expectedQty != null" class="small">{{ row.target === 'WAREHOUSE' ? '账面' : '在外' }} <span class="mono">{{ fmtQty(row.expectedQty) }}</span></div>
+              <template v-if="row.result">
+                <el-tag :type="row.result === 'REACHED' ? 'success' : 'danger'" size="small" disable-transitions>{{ row.resultLabel }}</el-tag>
+                <span v-if="row.confirmedQty != null" class="small"> {{ row.target === 'WAREHOUSE' ? '实盘' : '在手' }} <span class="mono">{{ fmtQty(row.confirmedQty) }}</span></span>
+                <div class="muted small">{{ row.recordedBy }} · {{ fmtTime(row.contactedAt) }}</div>
+                <div v-if="row.note" class="muted small">{{ row.note }}</div>
+              </template>
+              <div v-else class="muted small">还没登记</div>
+            </template>
+          </template>
         </el-table-column>
-        <el-table-column label="在外 / 账面" width="100" align="right">
+        <el-table-column v-if="!narrow" label="在外 / 账面" width="100" align="right">
           <template #default="{ row }"><span class="mono">{{ row.expectedQty == null ? '—' : fmtQty(row.expectedQty) }}</span></template>
         </el-table-column>
-        <el-table-column label="联系结果" min-width="190">
+        <el-table-column v-if="!narrow" label="联系结果" min-width="190">
           <template #default="{ row }">
             <template v-if="row.result">
               <el-tag :type="row.result === 'REACHED' ? 'success' : 'danger'" size="small" disable-transitions>{{ row.resultLabel }}</el-tag>
@@ -114,7 +126,7 @@
             <span v-else class="muted small">还没登记</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="editable" label="" width="90">
+        <el-table-column v-if="editable" label="" :width="narrow ? 64 : 90">
           <template #default="{ row }"><el-button v-if="canRecord" size="small" text type="primary" @click="openRecord(row)">{{ row.result ? '改' : '登记' }}</el-button></template>
         </el-table-column>
       </el-table>
