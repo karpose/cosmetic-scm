@@ -230,11 +230,29 @@ public class GmpEvidenceService {
         c.orders().stream().filter(m -> m.getMoType() == MoType.OEM && m.getStatus() != MoStatus.CANCELLED && (c.in(m.getCreatedAt()) || c.in(m.getCompletedAt())))
                 .map(MfgOrder::getFgItemId).distinct().filter(fg -> !filed.contains(fg))
                 .forEach(fg -> problems.add(name(c, fg) + "：委托生产了，但系统里没有已完成的备案或注册"));
+        // 眼部护肤类、儿童护肤类成品：受托厂许可项目要标注具备相应生产条件（按现在的主数据核对期间内的委托单）
+        Set<String> special = new java.util.TreeSet<>();
+        Set<String> seen = new java.util.HashSet<>();
+        c.orders().stream().filter(m -> m.getMoType() == MoType.OEM && m.getStatus() != MoStatus.CANCELLED).forEach(m -> {
+            Partner p = c.partners().get(m.getFactoryId());
+            Item fg = c.items().get(m.getFgItemId());
+            if (p == null || fg == null || com.cosmetic.scm.domain.rules.LicenseScope.required(fg.isEyeCare(), fg.isChildCare()).isEmpty()) {
+                return;
+            }
+            special.add(fg.getName());
+            List<String> missing = p.missingConditionsFor(fg);
+            if (!missing.isEmpty() && seen.add(p.getId() + ":" + fg.getId())) {
+                problems.add(p.getName() + "：委托生产 " + fg.getName() + "（" + String.join("、", missing) + "），许可项目没有标注具备相应生产条件（" + m.getMoNo() + " 等）");
+            }
+        });
         int factories = activeFactories(c).size();
+        String scope = special.isEmpty() ? "期间内没有委托生产标为眼部护肤类、儿童护肤类的成品。"
+                : "期间内委托生产的眼部护肤类、儿童护肤类成品（" + String.join("、", special) + "）已按受托厂许可项目的标注核对。";
+        String manual = "成品类别标注是否准确、其他许可项目（生产单元）请人工核对。";
         if (problems.isEmpty()) {
-            return new Evidence(2, "OK", "期间内 " + factories + " 家受托厂的生产许可证都已登记且在有效期内，委托生产的成品都有备案或注册。许可范围（眼部、儿童护肤类）请人工核对。", List.of());
+            return new Evidence(2, "OK", "期间内 " + factories + " 家受托厂的生产许可证都已登记且在有效期内，委托生产的成品都有备案或注册。" + scope + manual, List.of());
         }
-        return new Evidence(2, "WARN", problems.size() + " 处要注意。许可范围（眼部、儿童护肤类）请人工核对。", limit(problems));
+        return new Evidence(2, "WARN", problems.size() + " 处要注意。" + scope + manual, limit(problems));
     }
 
     /** 第 4 项：现任质量安全负责人的任职档案；有质量安全负责人角色的账号要么是现任、要么有生效授权（第 5 项另列授权）。 */
@@ -321,10 +339,16 @@ public class GmpEvidenceService {
         List<com.cosmetic.scm.domain.rules.ContractCoverage.Term> terms = com.cosmetic.scm.oemcontract.OemContractTerms.ofFactories(oemContracts, oemContractProducts,
                 all.stream().map(Partner::getId).toList());
         List<String> details = all.stream().map(p -> p.getName() + "（" + p.getCode() + "）许可证 " + (p.getLicenseNo() == null ? "未登记" : p.getLicenseNo())
-                + (p.getLicenseExpiry() == null ? "" : "，有效期至 " + p.getLicenseExpiry()) + (p.isQualified() ? "" : "，已停用") + contractsOf(terms, p.getId(), c.today())).toList();
+                + (p.getLicenseExpiry() == null ? "" : "，有效期至 " + p.getLicenseExpiry()) + marked(p) + (p.isQualified() ? "" : "，已停用")
+                + contractsOf(terms, p.getId(), c.today())).toList();
         long missing = all.stream().filter(p -> p.getLicenseNo() == null || p.getLicenseNo().isBlank()).count();
         return new Evidence(7, missing > 0 ? "WARN" : "INFO", "主数据里有受托生产企业 " + all.size() + " 家" + (missing > 0 ? "，其中 " + missing + " 家没有登记许可证编号" : "")
                 + "；委托合同见第 8 项，审核评估见第 6 项，其他资料请在往来单位的附件里核对。", limit(details));
+    }
+
+    private static String marked(Partner p) {
+        List<String> m = com.cosmetic.scm.domain.rules.LicenseScope.required(p.isLicenseEyeCare(), p.isLicenseChildCare());
+        return m.isEmpty() ? "" : "，许可项目标注具备" + String.join("、", m) + "生产条件";
     }
 
     private static String contractsOf(List<com.cosmetic.scm.domain.rules.ContractCoverage.Term> terms, Long factoryId, LocalDate today) {
