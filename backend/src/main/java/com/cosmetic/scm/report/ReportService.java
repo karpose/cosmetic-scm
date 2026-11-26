@@ -78,6 +78,7 @@ public class ReportService {
     private final com.cosmetic.scm.oemcontract.OemContractService oemContracts;
     private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervision;
     private final com.cosmetic.scm.storage.StorageMonitorService storageMonitor;
+    private final com.cosmetic.scm.recall.RecallDrillService recallDrills;
     private final RetainService retains;
     private final PurchaseService purchases;
     private final com.cosmetic.scm.settlement.SettlementService settlement;
@@ -114,6 +115,7 @@ public class ReportService {
         m.put("supplier-audits", this::supplierAudits);
         m.put("oem-contracts", this::oemContractsReport);
         m.put("oem-supervision", this::oemSupervisionReport);
+        m.put("recall-drills", this::recallDrillsReport);
         m.put("env-records", () -> envRecordsReport(from, to));
         m.put("env-excursions", this::envExcursionsReport);
         m.put("partner-compliance", this::partnerComplianceReport);
@@ -629,6 +631,21 @@ public class ReportService {
                 r.statusLabel(), r.createdBy(), r.submittedBy(), r.submittedAt(), r.reviewedBy(), r.reviewedAt(), r.reviewNote(), r.cancelReason())));
         return new Table("受托生产监督", List.of("编号", "受托生产企业", "委托单", "成品", "监督方式", "监督日期", "监督环节", "参加人员", "监督情况", "结论",
                 "发现的问题", "状态", "登记人", "提交人", "提交时间", "审核人", "审核时间", "审核意见", "作废原因"), rows);
+    }
+
+    private Table recallDrillsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        recallDrills.listAll().forEach(d -> rows.add(row(d.drillNo(), d.itemCode(), d.itemName(), d.batchNo(), d.scenario(), d.startedBy(), d.startedAt(),
+                d.targetHours(), d.finishedAt(), d.elapsedHours(), d.recordedCount() + "/" + d.lines().size(), d.locatedPct(),
+                d.status() == com.cosmetic.scm.domain.DrillStatus.IN_PROGRESS ? "" : d.met() ? "达标" : "没达标", String.join("；", d.gaps()),
+                d.lines().stream().map(l -> l.seq() + ". " + l.targetLabel() + " " + l.name() + (l.expectedQty() == null ? "" : "（" + l.expectedQty().stripTrailingZeros().toPlainString() + "）")
+                        + "：" + (l.resultLabel() == null ? "未登记" : l.resultLabel() + (l.confirmedQty() == null ? "" : " " + l.confirmedQty().stripTrailingZeros().toPlainString())
+                        + (l.note() == null ? "" : "，" + l.note()))).collect(java.util.stream.Collectors.joining("；")),
+                d.balance(), d.capaNo() == null ? "" : d.capaNo() + "（" + d.capaStatusLabel() + "）", d.summary(), d.statusLabel(), d.submittedBy(), d.submittedAt(),
+                d.reviewedBy(), d.reviewedAt(), d.reviewNote(), d.cancelReason())));
+        return new Table("召回演练", List.of("编号", "成品编码", "成品", "批号", "模拟情景", "发起人", "发起时间", "目标用时（小时）", "最后联系完", "用时（小时）",
+                "已登记 / 对象", "在外数量定位率（%）", "结论", "没达标的原因", "联系结果", "数量平衡", "CAPA", "演练总结", "状态", "提交人", "提交时间",
+                "审核人", "审核时间", "审核意见", "作废原因"), rows);
     }
 
     private Table envRecordsReport(LocalDate from, LocalDate to) {

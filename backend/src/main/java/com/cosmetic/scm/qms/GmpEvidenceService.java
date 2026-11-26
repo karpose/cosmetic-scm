@@ -100,7 +100,13 @@ public class GmpEvidenceService {
     private final com.cosmetic.scm.storage.StorageAreaRepository storageAreas;
     private final com.cosmetic.scm.storage.EnvRecordRepository envRecords;
     private final com.cosmetic.scm.storage.EnvExcursionRepository envExcursions;
+    private final com.cosmetic.scm.recall.RecallDrillRepository recallDrills;
+    private final com.cosmetic.scm.sales.SoAllocationRepository soAllocations;
     private final TimeProvider time;
+
+    /** 召回演练的周期（月），和总览到期提醒一致。 */
+    @org.springframework.beans.factory.annotation.Value("${scm.recall.drill-interval-months:12}")
+    private int drillIntervalMonths;
 
     /** level：OK 没发现问题，WARN 要注意，INFO 仅供参考。 */
     public record Evidence(int itemNo, String level, String summary, List<String> details) {
@@ -768,11 +774,56 @@ public class GmpEvidenceService {
                 : new Evidence(23, "WARN", "期间内不良反应 " + ad.size() + " 件，" + pending.size() + " 件还没上报。", limit(pending));
     }
 
+    /**
+     * 第 24 项：期间内的召回和没关闭的召回；召回演练看期间结束前 scm.recall.drill-interval-months 个月内（至少覆盖整个期间）发起、
+     * 已审核的演练，有过出库却没有的要注意，最近一次没达标、CAPA 还没验证的也要注意。
+     */
     private Evidence recallCheck(Ctx c) {
         long inPeriod = recalls.countByOpenedAtGreaterThanEqualAndOpenedAtLessThan(c.start(), c.end());
-        List<String> open = recalls.findByStatus(CaseStatus.OPEN).stream().map(r -> r.getRecallNo() + "：" + r.getOpenedAt().toLocalDate() + " 发起，还没关闭").toList();
-        return new Evidence(24, open.isEmpty() ? "INFO" : "WARN", "期间内召回 " + inPeriod + " 次" + (open.isEmpty() ? "，没有未关闭的召回。" : "，" + open.size() + " 次还没关闭。")
-                + "召回制度和召回演练记录请人工核对。", limit(open));
+        List<String> problems = new ArrayList<>(recalls.findByStatus(CaseStatus.OPEN).stream()
+                .map(r -> r.getRecallNo() + "：" + r.getOpenedAt().toLocalDate() + " 发起，还没关闭").toList());
+        long openRecalls = problems.size();
+        LocalDate windowFrom = c.to().plusDays(1).minusMonths(drillIntervalMonths);
+        if (c.from().isBefore(windowFrom)) {
+            windowFrom = c.from();
+        }
+        List<com.cosmetic.scm.recall.RecallDrill> ds = recallDrills.findByStatusInAndStartedAtGreaterThanEqualAndStartedAtLessThanOrderByStartedAtAsc(
+                List.of(com.cosmetic.scm.domain.DrillStatus.SUBMITTED, com.cosmetic.scm.domain.DrillStatus.REVIEWED), windowFrom.atStartOfDay(), c.end());
+        List<com.cosmetic.scm.recall.RecallDrill> reviewed = ds.stream().filter(d -> d.getStatus() == com.cosmetic.scm.domain.DrillStatus.REVIEWED).toList();
+        long pending = ds.size() - reviewed.size();
+        Map<Long, Batch> bm = ds.isEmpty() ? Map.of() : batches.findAllById(ds.stream().map(com.cosmetic.scm.recall.RecallDrill::getBatchId).distinct().toList())
+                .stream().collect(Collectors.toMap(Batch::getId, Function.identity()));
+        Map<Long, Capa> cm = ds.isEmpty() ? Map.of() : capas.findAllById(ds.stream().map(com.cosmetic.scm.recall.RecallDrill::getCapaId).filter(Objects::nonNull)
+                .distinct().toList()).stream().collect(Collectors.toMap(Capa::getId, Function.identity()));
+        boolean shipped = soAllocations.count() > 0;
+        String window = windowFrom + " 至 " + c.to();
+        if (shipped && reviewed.isEmpty()) {
+            problems.add(window + " 没有审核过的召回演练" + (pending > 0 ? "（" + pending + " 份待审核）" : ""));
+        }
+        if (!reviewed.isEmpty()) {
+            com.cosmetic.scm.recall.RecallDrill last = reviewed.get(reviewed.size() - 1);
+            Capa x = last.getCapaId() == null ? null : cm.get(last.getCapaId());
+            if (!Boolean.TRUE.equals(last.getMet()) && (x == null || x.getStatus() != com.cosmetic.scm.domain.CapaStatus.VERIFIED)) {
+                problems.add("最近一次召回演练 " + last.getDrillNo() + " 没达标" + (x == null ? "" : "，CAPA " + x.getCapaNo() + " " + x.getStatus().getLabel()));
+            }
+        }
+        List<String> details = new ArrayList<>(problems);
+        ds.stream().sorted(Comparator.comparing(com.cosmetic.scm.recall.RecallDrill::getStartedAt).reversed()).forEach(d -> {
+            Batch b = bm.get(d.getBatchId());
+            Capa x = d.getCapaId() == null ? null : cm.get(d.getCapaId());
+            details.add(d.getDrillNo() + " " + d.getStartedAt().toLocalDate() + " 批号 " + (b == null ? d.getBatchId() : b.getBatchNo()) + "："
+                    + (Boolean.TRUE.equals(d.getMet()) ? "达标" : "没达标") + "，用时 " + (d.getElapsedMinutes() == null ? "—"
+                    : com.cosmetic.scm.domain.rules.RecallDrillRule.hours(d.getElapsedMinutes())) + " 小时（目标 " + d.getTargetHours() + " 小时）"
+                    + (d.getLocatedPct() == null ? "" : "，在外数量定位 " + d.getLocatedPct().stripTrailingZeros().toPlainString() + "%")
+                    + (x == null ? "" : "，CAPA " + x.getCapaNo() + " " + x.getStatus().getLabel())
+                    + (d.getStatus() == com.cosmetic.scm.domain.DrillStatus.SUBMITTED ? "（待审核）" : ""));
+        });
+        String recallText = "期间内召回 " + inPeriod + " 次" + (openRecalls == 0 ? "，没有未关闭的召回。" : "，" + openRecalls + " 次还没关闭。");
+        String drillText = reviewed.isEmpty()
+                ? (shipped ? window + " 没有审核过的召回演练。" : "还没有成品出库，召回演练可在出货后做。")
+                : window + " 审核过的召回演练 " + reviewed.size() + " 次，最近一次 " + reviewed.get(reviewed.size() - 1).getStartedAt().toLocalDate() + "。";
+        String level = !problems.isEmpty() ? "WARN" : reviewed.isEmpty() ? "INFO" : "OK";
+        return new Evidence(24, level, recallText + drillText, limit(details));
     }
 
     // ---- 工具 ----
