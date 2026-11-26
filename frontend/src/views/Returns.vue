@@ -95,7 +95,7 @@
                 {{ l.targetWarehouseName ? `→ ${l.targetWarehouseName}` : '' }} {{ l.disposedByName }} · {{ l.dispositionNote }}
               </span>
               <el-tag v-if="l.arStatementNo" size="small" type="success" disable-transitions>应收已冲减 {{ l.arStatementNo }}</el-tag>
-              <router-link v-else-if="l.disposition !== 'PENDING'" to="/settlement?tab=ar" class="small">去冲减应收</router-link>
+              <template v-else-if="l.disposition !== 'PENDING'"><router-link v-if="canAr" to="/settlement?tab=ar" class="small">去冲减应收</router-link></template>
               <el-button v-else-if="canDispose" size="small" type="primary" plain @click="openDispose(row, l)">处置</el-button>
             </div>
           </template>
@@ -222,6 +222,8 @@ const closure = ref(null)
 const state = ref('')
 const canCreate = computed(() => auth.hasAny('ADMIN', 'SALES', 'WAREHOUSE'))
 const canDispose = computed(() => auth.hasAny('QA', 'QSO'))
+// 客户应收只给销售、财务、管理员，其他岗位点过去会被送回总览
+const canAr = computed(() => auth.hasAny('ADMIN', 'SALES', 'FINANCE'))
 
 const loader = useLoader(async () => {
   const [rs, rc, rep, cl] = await Promise.all([

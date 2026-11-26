@@ -3,7 +3,8 @@
     <div class="page-head">
       <div>
         <h2>对账结算</h2>
-        <p>只结算检验放行的来料批次，按采购单价算金额，支持账期到期日计算、多税率拆分汇总、一单多票/红字发票及退货冲减退款登记。这里只做业务台账登记，不代替财务记账。</p>
+        <p v-if="canAp">只结算检验放行的来料批次，按采购单价算金额，支持账期到期日计算、多税率拆分汇总、一单多票/红字发票及退货冲减退款登记。这里只做业务台账登记，不代替财务记账。</p>
+        <p v-else>按已出库、有单价的行生成客户应收对账单，跟进销项发票、回款和逾期催收，查看客户授信。登记发票、审批和回款由财务办理。这里只做业务台账登记，不代替财务记账。</p>
       </div>
       <div class="toolbar">
         <ExportButton :report="activeTab === 'ledger' ? 'invoice-ledger' : activeTab === 'ar' ? 'ar-statements' : activeTab === 'ar-collection' ? 'ar-collection' : activeTab === 'aging' ? (ag.side === 'AR' ? 'ar-aging' : 'ap-aging') : 'statements'" />
@@ -17,6 +18,7 @@
     </div>
 
     <div v-if="!selectedNo && summary" class="kpi-grid">
+      <template v-if="summary.apOpenAmount != null">
       <div class="kpi-card" :class="{ warn: summary.apPendingApproveCount > 0 || summary.apDisputedCount > 0 }" @click="activeTab = 'statements'; followUp = ''">
         <div class="kpi-label">未结应付余额</div>
         <div class="kpi-val mono">{{ fmtMoney(summary.apOpenAmount) }}</div>
@@ -32,6 +34,7 @@
         <div class="kpi-val mono">{{ summary.apPendingSyncCount }} <span class="kpi-unit">单</span></div>
         <div class="kpi-sub">已审批但尚未完成外部制证</div>
       </div>
+      </template>
       <div v-if="summary.arOpenAmount != null" class="kpi-card" :class="{ danger: summary.arOverdueCount > 0 }" @click="activeTab = 'ar'; loadAr()">
         <div class="kpi-label">待回款客户应收</div>
         <div class="kpi-val mono">{{ fmtMoney(summary.arOpenAmount) }}</div>
@@ -40,8 +43,8 @@
     </div>
 
     <el-tabs v-if="!selectedNo" v-model="activeTab" class="seg" @tab-change="onTabChange">
-      <el-tab-pane label="对账单" name="statements" />
-      <el-tab-pane label="进项发票台账" name="ledger" />
+      <el-tab-pane v-if="canAp" label="对账单" name="statements" />
+      <el-tab-pane v-if="canAp" label="进项发票台账" name="ledger" />
       <el-tab-pane v-if="canAr" label="客户应收对账" name="ar" />
       <el-tab-pane v-if="canAr" label="应收催收看板" name="ar-collection" />
       <el-tab-pane label="账龄分析" name="aging" />
@@ -183,7 +186,7 @@
       <template #header>
         <div class="filters">
           <el-radio-group v-model="ag.side" size="small" @change="loadAging">
-            <el-radio-button value="AP">应付账龄（供应商/受托厂）</el-radio-button>
+            <el-radio-button v-if="canAp" value="AP">应付账龄（供应商/受托厂）</el-radio-button>
             <el-radio-button v-if="canAr" value="AR">应收账龄（客户）</el-radio-button>
           </el-radio-group>
           <el-button size="small" @click="loadAging">刷新</el-button>
@@ -618,8 +621,10 @@ const rd = useRefData()
 const canBuy = computed(() => auth.hasAny('ADMIN', 'PURCHASE'))
 const canFinance = computed(() => auth.hasAny('ADMIN', 'FINANCE'))
 const canAr = computed(() => auth.hasAny('ADMIN', 'SALES', 'FINANCE'))
+// 采购侧金额（应付对账单、进项发票、应付账龄）只给采购、财务、管理员；销售进来只看客户应收
+const canAp = computed(() => auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE'))
 
-const activeTab = ref('statements')
+const activeTab = ref(canAp.value ? 'statements' : 'ar')
 const lg = reactive({ loading: false, from: null, to: null, invoiceType: '', data: null })
 async function loadLedger() {
   lg.loading = true
@@ -668,7 +673,7 @@ async function arReceiveFromBoard(row) {
   ElMessage.success('回款已登记')
   loadArCollection()
 }
-const ag = reactive({ loading: false, side: 'AP', data: null })
+const ag = reactive({ loading: false, side: canAp.value ? 'AP' : 'AR', data: null })
 async function loadAging() {
   ag.loading = true
   try { ag.data = await http.get('/statements/aging', { params: { side: ag.side } }) } finally { ag.loading = false }
@@ -747,16 +752,16 @@ const summary = ref(null)
 const filterBy = ref('')
 const followUp = ref('')
 const syncFilter = ref('')
-const selectedNo = computed(() => typeof route.query.no === 'string' ? route.query.no : '')
+const selectedNo = computed(() => canAp.value && typeof route.query.no === 'string' ? route.query.no : '')
 const listRequest = latestOnly()
 const loader = useLoader(async () => {
   const current = listRequest()
   const [data, sum] = await Promise.all([
-    http.get('/statements', { params: {
+    canAp.value ? http.get('/statements', { params: {
       statementNo: selectedNo.value || undefined,
       followUp: followUp.value || undefined,
       financeSyncStatus: syncFilter.value || undefined
-    } }),
+    } }) : [],
     http.get('/statements/summary', { silent: true }).catch(() => null)
   ])
   if (current()) {
@@ -780,8 +785,8 @@ watch([selectedNo, followUp, syncFilter], () => {
 const startOfToday = startOfBusinessDay()
 const canVoid = (s) => ['SENT', 'DISPUTED', 'CONFIRMED', 'INVOICED'].includes(s.status)
 onMounted(() => {
-  if (route.query.tab === 'ar' && canAr.value) { activeTab.value = 'ar'; loadAr() }
   if (route.query.tab === 'ar-collection' && canAr.value) { activeTab.value = 'ar-collection'; loadArCollection() }
+  else if ((route.query.tab === 'ar' || !canAp.value) && canAr.value) { activeTab.value = 'ar'; loadAr() }
   load(); rd.load()
 })
 const narrow = ref(window.innerWidth <= 768)

@@ -3,6 +3,7 @@ package com.cosmetic.scm.settlement;
 import java.time.LocalDate;
 import java.util.List;
 
+import com.cosmetic.scm.common.BizException;
 import com.cosmetic.scm.domain.FinanceSyncStatus;
 import com.cosmetic.scm.integration.FinanceIntegrationService;
 import com.cosmetic.scm.integration.FinanceIntegrationService.ApVoucherView;
@@ -17,12 +18,14 @@ import com.cosmetic.scm.settlement.SettlementService.InvoiceReq;
 import com.cosmetic.scm.settlement.SettlementService.PayReq;
 import com.cosmetic.scm.settlement.SettlementService.PreviewView;
 import com.cosmetic.scm.settlement.SettlementService.ReturnInvoiceReq;
+import com.cosmetic.scm.security.PriceAccess;
 import com.cosmetic.scm.settlement.SettlementService.StatementView;
 
 import jakarta.validation.Valid;
 
 import lombok.RequiredArgsConstructor;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -46,8 +49,9 @@ public class SettlementController {
     private final AgingAnalysisService aging;
     private final FinanceIntegrationService financeIntegration;
 
+    /** 销售也能取：只返回应收几项，应付几项是 null。 */
     @GetMapping("/summary")
-    @PreAuthorize(READ)
+    @PreAuthorize("hasAnyRole('ADMIN','PURCHASE','SALES','FINANCE')")
     public SettlementService.SettlementSummary summary() {
         return settlement.summary();
     }
@@ -138,7 +142,17 @@ public class SettlementController {
     @GetMapping("/aging")
     @PreAuthorize("hasAnyRole('ADMIN','PURCHASE','SALES','FINANCE')")
     public AgingAnalysisService.AgingReport aging(@RequestParam(defaultValue = "AP") String side) {
-        return "AR".equalsIgnoreCase(side) ? aging.arAging() : aging.apAging();
+        // 应付账龄是采购侧金额，应收账龄是销售侧金额，各给各的岗位
+        if ("AR".equalsIgnoreCase(side)) {
+            if (!SettlementService.arAllowed()) {
+                throw new BizException(HttpStatus.FORBIDDEN, "应收账龄只有销售、财务和管理员能看");
+            }
+            return aging.arAging();
+        }
+        if (!PriceAccess.allowed()) {
+            throw new BizException(HttpStatus.FORBIDDEN, "应付账龄只有采购、财务和管理员能看");
+        }
+        return aging.apAging();
     }
 
     @GetMapping("/finance-vouchers")

@@ -2195,7 +2195,7 @@ test('产品销售记录：列出法规要求的内容，缺的标出来，价�
   await expect(page.getByText('价格只有销售、财务和管理员能看')).toBeVisible()
 })
 
-test('出库后补单价：缺单价的行列出来，补上后进应收、占额度；没进对账单的可以改价，QA 看不到', async ({ page }) => {
+test('出库后补单价：缺单价的行列出来，补上后进应收、占额度；没进对账单的可以改价，QA 看不到；销售在对账结算只看到客户应收', async ({ page }) => {
   await login(page, 'sales1')
   // 总览待办：示例数据里京东和天猫各有一张没定价的出库单（前面经销商审核发货的也没定价）
   await page.goto('/')
@@ -2212,9 +2212,21 @@ test('出库后补单价：缺单价的行列出来，补上后进应收、占�
   await expect(card.locator('.el-table__row')).toHaveCount(before - 1)
   await expect(page.locator('.seg')).toContainText(before > 1 ? `缺单价（${before - 1}）` : '缺单价')
 
-  // 生成应收单前提示还没补的（对账结算页给财务和管理员）
-  await login(page, 'finance1')
-  await page.goto('/settlement?tab=ar')
+  // 销售进对账结算只看到客户应收：没有应付对账单、进项发票和应付账龄
+  await page.locator('nav').getByRole('link', { name: '对账结算' }).click()
+  await expect(page.getByRole('tab', { name: '客户应收对账' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('tab', { name: '对账单', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: '进项发票台账' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '生成对账单' })).toHaveCount(0)
+  await expect(page.locator('.kpi-card')).toHaveCount(1)
+  await expect(page.locator('.kpi-card')).toContainText('待回款客户应收')
+  await page.getByRole('tab', { name: '账龄分析' }).click()
+  await expect(page.getByRole('radio', { name: '应收账龄（客户）' })).toBeChecked()
+  await expect(page.getByText('应付账龄（供应商/受托厂）')).toHaveCount(0)
+  await expect(page.locator('.el-message--error')).toHaveCount(0)
+
+  // 生成应收单前提示还没补的
+  await page.getByRole('tab', { name: '客户应收对账' }).click()
   await page.getByRole('button', { name: '生成客户应收单' }).click()
   const arDlg = dialog(page, '生成客户应收对账单')
   await arDlg.locator('.el-select').first().click()
@@ -2223,6 +2235,7 @@ test('出库后补单价：缺单价的行列出来，补上后进应收、占�
   await arDlg.getByRole('button', { name: '取消' }).click()
 
   // 出库单上改价（财务也能改）：要写原因
+  await login(page, 'finance1')
   await page.goto('/sales')
   const tmOrder = page.locator('.el-table__row').filter({ hasText: '天猫旗舰店' }).filter({ hasText: '¥99' }).first()
   await tmOrder.getByRole('button', { name: /^改 .* 的单价$/ }).click()
