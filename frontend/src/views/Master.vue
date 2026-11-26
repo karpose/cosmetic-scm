@@ -54,6 +54,8 @@
               <template #default="{ row }">
                 <el-tag v-if="row.banned" type="danger" size="small" disable-transitions>禁用</el-tag>
                 <el-tag v-else-if="row.limitPct" type="warning" size="small" disable-transitions>限用 ≤ {{ row.limitPct }}%</el-tag>
+                <el-tag v-if="row.eyeCare" type="info" size="small" disable-transitions>眼部护肤类</el-tag>
+                <el-tag v-if="row.childCare" type="info" size="small" disable-transitions>儿童护肤类</el-tag>
                 <span class="muted small"> {{ row.inci }}</span><span v-if="row.casNo" class="muted small mono"> CAS {{ row.casNo }}</span>
               </template>
             </el-table-column>
@@ -85,7 +87,10 @@
             </el-table-column>
             <el-table-column prop="kindLabel" label="类型" width="120" />
             <el-table-column label="资质 / 许可证" min-width="200">
-              <template #default="{ row }">{{ row.licenseNo || '—' }}<div v-if="row.licenseScope" class="muted small">{{ row.licenseScope }}</div></template>
+              <template #default="{ row }">
+                {{ row.licenseNo || '—' }}<div v-if="row.licenseScope" class="muted small">{{ row.licenseScope }}</div>
+                <div v-if="row.licenseEyeCare || row.licenseChildCare" class="muted small">标注具备{{ [row.licenseEyeCare && '眼部护肤类', row.licenseChildCare && '儿童护肤类'].filter(Boolean).join('、') }}生产条件</div>
+              </template>
             </el-table-column>
             <el-table-column label="有效期至" width="110"><template #default="{ row }"><span class="mono">{{ row.licenseExpiry || '—' }}</span></template></el-table-column>
             <el-table-column label="资质状态" width="130">
@@ -179,6 +184,11 @@
           <el-form-item label="净含量（g）"><el-input-number id="it-net" v-model="item.netG" :min="0" :precision="3" :controls="false" style="width:100%" /></el-form-item>
           <el-form-item label="标签净含量（选填）"><el-input id="it-net-label" v-model="item.netLabel" maxlength="30" placeholder="按标签写，如 30mL；不填按克数" /></el-form-item>
         </div>
+        <div v-if="item.itemType === 'FG'" class="toolbar">
+          <el-checkbox id="it-eye" v-model="item.eyeCare">眼部护肤类</el-checkbox>
+          <el-checkbox id="it-child" v-model="item.childCare">儿童护肤类</el-checkbox>
+          <span class="muted small">勾了的成品，只能交给许可项目标注了相应生产条件的工厂生产</span>
+        </div>
         <el-checkbox id="it-active" v-model="item.active">启用</el-checkbox>
       </el-form>
       <template #footer>
@@ -205,6 +215,11 @@
           <el-form-item v-if="isFactory" label="批号前缀"><el-input id="pt-prefix" v-model="partner.batchPrefix" placeholder="如 A3，用于成品批号" /></el-form-item>
         </div>
         <el-form-item v-if="isFactory" label="许可项目"><el-input id="pt-scope" v-model="partner.licenseScope" /></el-form-item>
+        <div v-if="isFactory" class="toolbar">
+          <span class="muted small">许可项目标注具备：</span>
+          <el-checkbox id="pt-eye" v-model="partner.licenseEyeCare">眼部护肤类生产条件</el-checkbox>
+          <el-checkbox id="pt-child" v-model="partner.licenseChildCare">儿童护肤类生产条件</el-checkbox>
+        </div>
         <div v-if="partner.kind === 'CUSTOMER'" class="form-grid">
           <el-form-item label="渠道"><el-input id="pt-channel" v-model="partner.channel" placeholder="电商 / 经销 / 私域" /></el-form-item>
           <el-form-item label="剩余效期接收标准 %"><el-input-number id="pt-minshelf" v-model="partner.minShelfPct" :min="0" :max="100" :controls="false" style="width:100%" /></el-form-item>
@@ -319,8 +334,8 @@ const summary = ref(null)
 const canEdit = computed(() => auth.hasAny('ADMIN', 'MASTER_DATA'))
 const addLabel = computed(() => ({ items: '新增物料', partners: '新增往来单位', warehouses: '新增仓库', boms: '维护 BOM' }[tab.value]))
 
-const emptyItem = () => ({ id: null, code: '', name: '', itemType: 'RM', unit: 'kg', inci: '', casNo: '', limitPct: null, banned: false, shelfMonths: null, filingNo: '', netG: null, netLabel: '', active: true, stdCost: null, listPrice: null })
-const emptyPartner = () => ({ id: null, code: '', name: '', kind: 'SUPPLIER', licenseNo: '', licenseExpiry: null, licenseScope: '', batchPrefix: '', channel: '', minShelfPct: 0, contact: '', address: '', qualified: true, criticalSupplier: false, taxId: '', bankName: '', bankAccount: '', defaultCreditDays: null, defaultTaxRate: null, financeCode: '', creditLimit: null })
+const emptyItem = () => ({ id: null, code: '', name: '', itemType: 'RM', unit: 'kg', inci: '', casNo: '', limitPct: null, banned: false, shelfMonths: null, filingNo: '', netG: null, netLabel: '', active: true, stdCost: null, listPrice: null, eyeCare: false, childCare: false })
+const emptyPartner = () => ({ id: null, code: '', name: '', kind: 'SUPPLIER', licenseNo: '', licenseExpiry: null, licenseScope: '', batchPrefix: '', channel: '', minShelfPct: 0, contact: '', address: '', qualified: true, criticalSupplier: false, taxId: '', bankName: '', bankAccount: '', defaultCreditDays: null, defaultTaxRate: null, financeCode: '', creditLimit: null, licenseEyeCare: false, licenseChildCare: false })
 const item = reactive({ visible: false, saving: false, ...emptyItem() })
 const partner = reactive({ visible: false, saving: false, ...emptyPartner() })
 const wh = reactive({ visible: false, saving: false, code: '', name: '', kind: 'OWN', partnerId: null })
@@ -391,7 +406,8 @@ async function savePartner() {
     licenseScope: rest.licenseScope, batchPrefix: rest.batchPrefix, channel: rest.channel, minShelfPct: rest.minShelfPct,
     contact: rest.contact, address: rest.address, qualified: rest.qualified, criticalSupplier: rest.criticalSupplier,
     taxId: rest.taxId, bankName: rest.bankName, bankAccount: rest.bankAccount,
-    defaultCreditDays: rest.defaultCreditDays, defaultTaxRate: rest.defaultTaxRate, financeCode: rest.financeCode, creditLimit: rest.creditLimit
+    defaultCreditDays: rest.defaultCreditDays, defaultTaxRate: rest.defaultTaxRate, financeCode: rest.financeCode, creditLimit: rest.creditLimit,
+    licenseEyeCare: rest.licenseEyeCare, licenseChildCare: rest.licenseChildCare
   }
   partner.saving = true
   try {

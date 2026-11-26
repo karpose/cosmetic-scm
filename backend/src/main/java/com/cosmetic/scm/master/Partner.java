@@ -69,6 +69,17 @@ public class Partner {
 
     private BigDecimal creditLimit;
 
+    /** 生产许可项目标注具备眼部护肤类化妆品生产条件（受托生产企业、自有工厂）。 */
+    private boolean licenseEyeCare;
+
+    /** 生产许可项目标注具备儿童护肤类化妆品生产条件。 */
+    private boolean licenseChildCare;
+
+    /** 生产这个成品还缺哪些许可项目标注（眼部护肤类、儿童护肤类），都有返回空。 */
+    public java.util.List<String> missingConditionsFor(Item fg) {
+        return com.cosmetic.scm.domain.rules.LicenseScope.missing(fg.isEyeCare(), fg.isChildCare(), licenseEyeCare, licenseChildCare);
+    }
+
     /** 资质已过期。 */
     public boolean licenseExpired(LocalDate today) {
         return licenseExpiry != null && licenseExpiry.isBefore(today);

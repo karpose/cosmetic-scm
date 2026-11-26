@@ -44,7 +44,9 @@ public final class MasterDtos {
             @DecimalMin(value = "0", message = "标准成本不能为负") @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "标准成本最多 14 位整数、4 位小数") BigDecimal stdCost,
             @DecimalMin(value = "0", message = "指导价不能为负") @jakarta.validation.constraints.Digits(integer = 14, fraction = 4, message = "指导价最多 14 位整数、4 位小数") BigDecimal listPrice,
             @Size(max = 40) String casNo,
-            @Size(max = 30, message = "标签净含量最多 30 个字") String netLabel) {
+            @Size(max = 30, message = "标签净含量最多 30 个字") String netLabel,
+            Boolean eyeCare,
+            Boolean childCare) {
         public ItemReq(String code, String name, ItemType itemType, String unit, String inci, BigDecimal limitPct, boolean banned, Integer shelfMonths,
                        String filingNo, BigDecimal netG, Boolean active, BigDecimal stdCost, BigDecimal listPrice) {
             this(code, name, itemType, unit, inci, limitPct, banned, shelfMonths, filingNo, netG, active, stdCost, listPrice, null, null);
@@ -53,6 +55,11 @@ public final class MasterDtos {
         public ItemReq(String code, String name, ItemType itemType, String unit, String inci, BigDecimal limitPct, boolean banned, Integer shelfMonths,
                        String filingNo, BigDecimal netG, Boolean active, BigDecimal stdCost, BigDecimal listPrice, String casNo) {
             this(code, name, itemType, unit, inci, limitPct, banned, shelfMonths, filingNo, netG, active, stdCost, listPrice, casNo, null);
+        }
+
+        public ItemReq(String code, String name, ItemType itemType, String unit, String inci, BigDecimal limitPct, boolean banned, Integer shelfMonths,
+                       String filingNo, BigDecimal netG, Boolean active, BigDecimal stdCost, BigDecimal listPrice, String casNo, String netLabel) {
+            this(code, name, itemType, unit, inci, limitPct, banned, shelfMonths, filingNo, netG, active, stdCost, listPrice, casNo, netLabel, null, null);
         }
     }
 
@@ -77,7 +84,9 @@ public final class MasterDtos {
             @DecimalMin(value = "0", message = "默认税率不能为负") @jakarta.validation.constraints.DecimalMax(value = "100", message = "默认税率不能超过 100")
             @jakarta.validation.constraints.Digits(integer = 3, fraction = 2, message = "默认税率最多 2 位小数") BigDecimal defaultTaxRate,
             @Size(max = 40) String financeCode,
-            @DecimalMin(value = "0", message = "信用额度不能为负") @jakarta.validation.constraints.Digits(integer = 14, fraction = 2, message = "信用额度最多 2 位小数") BigDecimal creditLimit) {
+            @DecimalMin(value = "0", message = "信用额度不能为负") @jakarta.validation.constraints.Digits(integer = 14, fraction = 2, message = "信用额度最多 2 位小数") BigDecimal creditLimit,
+            Boolean licenseEyeCare,
+            Boolean licenseChildCare) {
         public PartnerReq(String code, String name, PartnerKind kind, String licenseNo, LocalDate licenseExpiry,
                           String licenseScope, String batchPrefix, String channel, Integer minShelfPct,
                           String contact, String address, boolean qualified, boolean criticalSupplier) {
@@ -94,6 +103,16 @@ public final class MasterDtos {
                     contact, address, qualified, criticalSupplier, taxId, bankName, bankAccount,
                     defaultCreditDays, defaultTaxRate, financeCode, null);
         }
+
+        public PartnerReq(String code, String name, PartnerKind kind, String licenseNo, LocalDate licenseExpiry,
+                          String licenseScope, String batchPrefix, String channel, Integer minShelfPct,
+                          String contact, String address, boolean qualified, boolean criticalSupplier,
+                          String taxId, String bankName, String bankAccount,
+                          Integer defaultCreditDays, BigDecimal defaultTaxRate, String financeCode, BigDecimal creditLimit) {
+            this(code, name, kind, licenseNo, licenseExpiry, licenseScope, batchPrefix, channel, minShelfPct,
+                    contact, address, qualified, criticalSupplier, taxId, bankName, bankAccount,
+                    defaultCreditDays, defaultTaxRate, financeCode, creditLimit, null, null);
+        }
     }
 
     /** licenseState: OK / EXPIRING（60 天内到期）/ EXPIRED / NONE */
@@ -104,7 +123,7 @@ public final class MasterDtos {
                               boolean qualified, boolean criticalSupplier,
                               String taxId, String bankName, String bankAccount,
                               Integer defaultCreditDays, BigDecimal defaultTaxRate, String financeCode,
-                              BigDecimal creditLimit) {
+                              BigDecimal creditLimit, boolean licenseEyeCare, boolean licenseChildCare) {
     }
 
     public record WarehouseReq(

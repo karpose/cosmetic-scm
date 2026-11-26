@@ -29,6 +29,7 @@
               <el-table-column label="合同和成品" min-width="220">
                 <template #default="{ row }">{{ row.title }}<div class="muted small">{{ row.productNames || '—' }}</div>
                   <div v-if="row.mismatches.length" class="warn small">采购分工和 BOM 有 {{ row.mismatches.length }} 处不一致</div>
+                  <div v-if="row.licenseGaps.length" class="warn small">{{ row.licenseGaps.length }} 个成品超出受托厂许可项目的标注</div>
                 </template>
               </el-table-column>
               <el-table-column label="期限" width="180">
@@ -127,6 +128,9 @@
         <p v-if="dt.row.otherTerms" class="small"><b>其他约定：</b>{{ dt.row.otherTerms }}</p>
         <el-alert v-if="dt.row.mismatches.length" type="warning" :closable="false" show-icon title="合同约定的物料采购分工和成品现行 BOM 不一致" style="margin-bottom:8px">
           <template #default><div v-for="(m, i) in dt.row.mismatches" :key="i" class="small">{{ m }}</div></template>
+        </el-alert>
+        <el-alert v-if="dt.row.licenseGaps.length" type="error" :closable="false" show-icon title="受托厂的生产许可项目没有标注这些成品要求的生产条件，不能签批" style="margin-bottom:8px">
+          <template #default><div v-for="(m, i) in dt.row.licenseGaps" :key="i" class="small">{{ m }}</div><div class="small">许可证上已有标注的，请在“主数据 → 往来单位”给受托厂勾上；没有的，请退回把这些成品移出合同。</div></template>
         </el-alert>
         <el-alert v-if="dt.row.rejectNote && dt.row.status === 'DRAFT'" type="error" :closable="false" show-icon :title="`已退回：${dt.row.rejectNote}`" style="margin-bottom:8px" />
         <p class="muted small">{{ dt.row.createdBy }} {{ fmtTime(dt.row.createdAt) }} 登记<template v-if="dt.row.submittedBy">；{{ dt.row.submittedBy }} {{ fmtTime(dt.row.submittedAt) }} 提交</template><template v-if="dt.row.approvedBy">；{{ dt.row.approvedBy }} {{ fmtTime(dt.row.approvedAt) }} 签批</template><template v-if="dt.row.terminatedBy">；{{ dt.row.terminatedBy }} {{ fmtTime(dt.row.terminatedAt) }} 终止</template><template v-if="dt.row.endReason">（{{ dt.row.endReason }}）</template></p>
