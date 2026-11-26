@@ -2167,6 +2167,131 @@ test('委托生产合同：登记、上传扫描件、QSO 逐项确认签批；�
   await expect(mo.getByText(/依据委托生产合同 HT-/)).toBeVisible()
 })
 
+test('受托生产监督：登记驻厂监督和问题，重大问题转 CAPA 后才能提交；质量安全负责人审核', async ({ page }) => {
+  await login(page, 'qa1')
+  await page.goto('/oem-supervision')
+  const rows = page.locator('main .el-table__row:visible')
+  const demoReview = rows.filter({ hasText: '调阅记录' })
+  await expect(demoReview).toContainText('待审核')
+  await expect(rows.filter({ hasText: '驻厂监督' })).toContainText('发现一般问题')
+  // 前面的用例可能已经把在做的委托单都完工了，所以只看最近一次监督和没有到期
+  await page.getByRole('tab', { name: /^受托厂/ }).click()
+  const he = rows.filter({ hasText: '禾川生物' })
+  await expect(he).toContainText(/\d{4}-\d{2}-\d{2}\d+ 次/)
+  await expect(he).not.toContainText('该去监督了')
+
+  // 从委托单页签登记驻厂监督
+  await page.getByRole('tab', { name: '委托单' }).click()
+  const mo = rows.filter({ hasText: '没有针对本单的监督' }).first()
+  const moNo = (await mo.locator('.mono').first().textContent()).trim()
+  await mo.getByRole('button', { name: '登记监督' }).click()
+  const ed = dialog(page, '登记受托生产监督')
+  await expect(ed.locator('.el-form-item').filter({ hasText: '委托单（选填）' })).toContainText(moNo)
+  await ed.locator('.el-checkbox').filter({ hasText: '生产过程' }).click()
+  await ed.locator('.el-checkbox').filter({ hasText: '检验' }).click()
+  await ed.locator('#sv-content').fill('E2E 驻厂监督配制和灌装')
+  await ed.getByRole('button', { name: '保存记录' }).click()
+  await toast(page, '已登记')
+  const dt = page.getByRole('dialog', { name: /^监督记录 JD/ })
+  await expect(dt).toContainText(moNo)
+
+  // 详情弹窗过一遍 axe（登记问题的表单也在里面）
+  await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+  const bad = await dt.evaluate(async (e) => {
+    const r = await window.axe.run(e, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+    return r.violations.map((v) => `${v.id} ×${v.nodes.length}：${v.nodes[0].target[0]}`)
+  })
+  expect(bad).toEqual([])
+
+  await dt.locator('.el-radio-button').filter({ hasText: '重大问题' }).click()
+  await dt.locator('#sv-finding').fill('E2E 灌装首件未确认')
+  await dt.getByRole('button', { name: '登记问题' }).click()
+  await toast(page, '已登记问题')
+  await expect(dt).toContainText('重大问题要转 CAPA')
+  await dt.getByRole('button', { name: '提交审核' }).click()
+  await toast(page, '问题 1 是重大问题，要转 CAPA')
+  await dt.getByRole('button', { name: '转 CAPA' }).click()
+  const cp = page.getByRole('dialog', { name: '问题 1 转 CAPA' })
+  await cp.locator('#sv-capa-desc').fill('E2E 受托方修订首件确认规程并培训')
+  await cp.getByRole('button', { name: '生成 CAPA' }).click()
+  await toast(page, '已生成 CAPA')
+  await expect(dt.getByRole('link', { name: /CAPA CA/ })).toBeVisible()
+  await dt.getByRole('button', { name: '提交审核' }).click()
+  await toast(page, '等质量安全负责人审核')
+  await page.getByRole('tab', { name: '委托单' }).click()
+  await expect(rows.filter({ hasText: moNo })).toContainText('待审核')
+
+  // 质量安全负责人审核示例的批记录调阅
+  await login(page, 'qso1')
+  await page.goto('/oem-supervision')
+  await demoReview.getByRole('button', { name: '审核' }).click()
+  await dt.locator('#sv-review-pwd').fill(DEMO)
+  await dt.getByRole('button', { name: '审核通过' }).click()
+  await toast(page, '已审核')
+  await expect(demoReview).toContainText('已审核')
+})
+
+test('贮存环境：录入温湿度先提示超限，导入记录仪 CSV 超限生成偏差，选区域看趋势图', async ({ page }) => {
+  await login(page, 'purchase1') // 有仓库角色：能录入、导入，不能设区域和作废
+  await page.goto('/storage-env')
+  await expect(page.getByRole('button', { name: '新增区域' })).toHaveCount(0)
+  const rows = page.locator('main .el-table__row:visible')
+  const wh = rows.filter({ hasText: '华东主仓常温区' })
+  await expect(wh).toContainText('温度 10–30℃，湿度 ≤75%')
+  await expect(wh).toContainText('正常')
+
+  // 记录仪导出的 CSV：英文表头、斜杠日期、带秒；昨晚 20:30 超温，21:00 恢复
+  const day = new Date(Date.now() - 86400000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' }).replace(/-/g, '/')
+  await wh.getByRole('button', { name: '导入' }).click()
+  const im = dialog(page, '导入温湿度记录：华东主仓常温区')
+  await im.locator('input[type=file]').setInputFiles({ name: 'logger.csv', mimeType: 'text/csv',
+    buffer: Buffer.from(['Time,Temperature(°C),Humidity(%RH)', `${day} 20:00:00,24.36,52`, `${day} 20:30:00,31.2℃,55%`, `${day} 21:00:00,25.0,53`].join('\r\n') + '\r\n') })
+  await expect(im.getByText('预检通过：3 条温湿度记录')).toBeVisible()
+  await expect(im.getByText('超限 1 条，新的超限 1 次，各生成一份偏差')).toBeVisible()
+  await im.getByRole('button', { name: /确认导入/ }).click()
+  await toast(page, '已导入 3 条温湿度记录')
+
+  // 手工录入：填超限的值先提示，改回正常再保存
+  await wh.getByRole('button', { name: '录入' }).click()
+  const rc = dialog(page, '录入温湿度：华东主仓常温区')
+  await rc.locator('#er-temp').fill('33.5')
+  await rc.locator('#er-rh').fill('50')
+  await expect(rc).toContainText('温度高于上限 30℃，保存后会生成偏差')
+  await rc.locator('#er-temp').fill('23')
+  await rc.locator('#er-rh').click()
+  await expect(rc).not.toContainText('保存后会生成偏差')
+  await rc.getByRole('button', { name: '保存记录' }).click()
+  await toast(page, '已保存，在范围内')
+
+  // 超限页签：新的一次已恢复，偏差待处理；详情列出主仓现有的批次
+  await page.getByRole('tab', { name: /^超限/ }).click()
+  const ex = rows.filter({ hasText: '31.2℃' })
+  await expect(ex).toContainText('已恢复')
+  await expect(ex).toContainText('处理中')
+  await ex.getByRole('button', { name: '详情' }).click()
+  const dt = page.getByRole('dialog', { name: /^温湿度超限 TH/ })
+  await expect(dt).toContainText('温度 31.2℃ 高于上限 30℃')
+  await expect(dt).toContainText('可能受影响的批次')
+  await dt.getByRole('button', { name: '关闭', exact: true }).click()
+
+  // 记录页签选区域：温度、湿度两张趋势图，键盘能逐条看
+  await page.getByRole('tab', { name: /^记录/ }).click()
+  await page.getByRole('combobox', { name: '区域' }).click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: '华东主仓常温区' }).click()
+  const charts = page.locator('.env-trend')
+  await expect(charts).toHaveCount(2)
+  await charts.first().locator('.plot').focus()
+  await page.keyboard.press('ArrowLeft')
+  await expect(charts.first().locator('.tip')).toContainText('℃')
+  await expect(rows.filter({ hasText: '31.2℃' })).toContainText('超限')
+  await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+  const bad = await page.locator('main').evaluate(async (e) => {
+    const r = await window.axe.run(e, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+    return r.violations.map((v) => `${v.id} ×${v.nodes.length}：${v.nodes[0].target[0]}`)
+  })
+  expect(bad).toEqual([])
+})
+
 test('产品销售记录：列出法规要求的内容，缺的标出来，价格只给销售看，能导出', async ({ page }) => {
   await login(page, 'sales1')
   await page.goto('/sales?tab=records')
@@ -2193,6 +2318,73 @@ test('产品销售记录：列出法规要求的内容，缺的标出来，价�
   await expect(page.locator('.rec-table')).toContainText('30mL')
   await expect(page.locator('.rec-table').getByText('含税单价')).toHaveCount(0)
   await expect(page.getByText('价格只有销售、财务和管理员能看')).toBeVisible()
+})
+
+test('出库后补单价：缺单价的行列出来，补上后进应收、占额度；没进对账单的可以改价，QA 看不到；销售在对账结算只看到客户应收', async ({ page }) => {
+  await login(page, 'sales1')
+  // 总览待办：示例数据里京东和天猫各有一张没定价的出库单（前面经销商审核发货的也没定价）
+  await page.goto('/')
+  await expect(page.getByText('出库行没有单价').first()).toBeVisible()
+  await page.goto('/sales?tab=unpriced')
+  const card = page.locator('.el-card').filter({ hasText: '补上单价前不进应收对账单' })
+  const tmRow = card.locator('.el-table__row').filter({ hasText: '天猫旗舰店' })
+  await expect(tmRow).toHaveCount(1)
+  const before = await card.locator('.el-table__row').count()
+  await expect(page.locator('.seg')).toContainText(`缺单价（${before}）`)
+  await tmRow.getByRole('spinbutton', { name: /含税单价/ }).fill('99')
+  await page.getByRole('button', { name: '保存 1 行单价' }).click()
+  await toast(page, '已补 1 行单价')
+  await expect(card.locator('.el-table__row')).toHaveCount(before - 1)
+  await expect(page.locator('.seg')).toContainText(before > 1 ? `缺单价（${before - 1}）` : '缺单价')
+
+  // 销售进对账结算只看到客户应收：没有应付对账单、进项发票和应付账龄
+  await page.locator('nav').getByRole('link', { name: '对账结算' }).click()
+  await expect(page.getByRole('tab', { name: '客户应收对账' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('tab', { name: '对账单', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: '进项发票台账' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '生成对账单' })).toHaveCount(0)
+  await expect(page.locator('.kpi-card')).toHaveCount(1)
+  await expect(page.locator('.kpi-card')).toContainText('待回款客户应收')
+  await page.getByRole('tab', { name: '账龄分析' }).click()
+  await expect(page.getByRole('radio', { name: '应收账龄（客户）' })).toBeChecked()
+  await expect(page.getByText('应付账龄（供应商/受托厂）')).toHaveCount(0)
+  await expect(page.locator('.el-message--error')).toHaveCount(0)
+
+  // 生成应收单前提示还没补的
+  await page.getByRole('tab', { name: '客户应收对账' }).click()
+  await page.getByRole('button', { name: '生成客户应收单' }).click()
+  const arDlg = dialog(page, '生成客户应收对账单')
+  await arDlg.locator('.el-select').first().click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: '京东自营入仓' }).click()
+  await expect(arDlg.locator('.el-alert')).toContainText('1 行出库没有单价')
+  await arDlg.getByRole('button', { name: '取消' }).click()
+
+  // 出库单上改价（财务也能改）：要写原因
+  await login(page, 'finance1')
+  await page.goto('/sales')
+  const tmOrder = page.locator('.el-table__row').filter({ hasText: '天猫旗舰店' }).filter({ hasText: '¥99' }).first()
+  await tmOrder.getByRole('button', { name: /^改 .* 的单价$/ }).click()
+  const rp = dialog(page, '更正出库单价')
+  await expect(rp).toContainText('现在 ¥99')
+  await rp.locator('#rp-price').fill('108')
+  await rp.getByRole('button', { name: '确认改价' }).click()
+  await toast(page, '请写明更正原因')
+  await rp.locator('#rp-reason').fill('按年度合同价更正')
+  await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+  const bad = await rp.evaluate(async (e) => {
+    const r = await window.axe.run(e, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+    return r.violations.map((v) => `${v.id} ×${v.nodes.length}：${v.nodes[0].target[0]}`)
+  })
+  expect(bad).toEqual([])
+  await rp.getByRole('button', { name: '确认改价' }).click()
+  await toast(page, '的单价已更正')
+  await expect(page.locator('.el-table__row').filter({ hasText: '天猫旗舰店' }).filter({ hasText: '¥108' }).first()).toBeVisible()
+
+  // QA 没有缺单价页签，也没有改价按钮
+  await login(page, 'qa1')
+  await page.goto('/sales?tab=unpriced')
+  await expect(page.locator('.seg').getByText('缺单价')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /^改 .* 的单价$/ })).toHaveCount(0)
 })
 
 test('受控文件培训考核：确认已读后由质量人员登记考核，没通过可以补考', async ({ page }) => {
@@ -2625,7 +2817,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/oem-supervision', '/oem-supervision?tab=factories', '/oem-supervision?tab=orders', '/storage-env', '/storage-env?tab=records', '/storage-env?tab=excursions', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/sales?tab=unpriced', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页
@@ -2729,6 +2921,8 @@ test('无障碍：常用弹窗 axe 无违规', async ({ page }) => {
   await audit('/inventory-ops', '仓间调拨')
   await audit('/production', '新建生产 / 委托单')
   await audit('/oem-contracts', '登记合同')
+  await audit('/oem-supervision', '登记监督')
+  await audit('/storage-env', '新增区域')
   await audit('/qms', '登记偏差')
 })
 

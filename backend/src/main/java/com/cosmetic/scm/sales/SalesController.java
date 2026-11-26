@@ -21,6 +21,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class SalesController {
 
+    /** 销售单价的权限，和 SalesService.SALES_PRICE_ROLES 一致。 */
+    private static final String PRICE = "hasAnyRole('ADMIN','SALES','FINANCE')";
+
     private final SalesService sales;
     private final SalesRecordService salesRecords;
 
@@ -50,5 +53,21 @@ public class SalesController {
     @PreAuthorize("hasAnyRole('ADMIN','SALES','WAREHOUSE')")
     public SoView create(@Valid @RequestBody SoReq req) {
         return sales.create(req);
+    }
+
+    /** 已出库、没有单价、没进应收对账单的行；to 是出库日期上限（生成应收单前核对用）。 */
+    @GetMapping("/unpriced-lines")
+    @PreAuthorize(PRICE)
+    public SalesService.UnpricedView unpriced(@org.springframework.web.bind.annotation.RequestParam(required = false) Long customerId,
+                                              @org.springframework.web.bind.annotation.RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to) {
+        return sales.unpriced(customerId, to);
+    }
+
+    /** 补录或更正一个客户的出库行单价。路径带客户 id：服务里第一句先锁客户行。 */
+    @PostMapping("/customers/{customerId}/line-prices")
+    @PreAuthorize(PRICE)
+    public SalesService.LinePriceResult setLinePrices(@org.springframework.web.bind.annotation.PathVariable Long customerId,
+                                                      @Valid @RequestBody SalesService.LinePriceReq req) {
+        return sales.setLinePrices(customerId, req);
     }
 }

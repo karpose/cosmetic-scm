@@ -7,10 +7,10 @@
       <div v-for="entry in history" :key="entry.id" class="entry">
         <div><span class="muted mono">{{ fmtTime(entry.returnedAt) }}</span> · {{ entry.reason }}</div>
         <div v-for="inv in entry.invoices" :key="inv.id" class="muted mono">
-          {{ inv.invoiceTypeLabel }} {{ inv.invoiceNo }} · {{ inv.invoiceDate }} · 税率 {{ fmtQty(inv.taxRate) }}% · ¥{{ fmtMoney(inv.amount) }}
+          {{ inv.invoiceTypeLabel }} {{ inv.invoiceNo }} · {{ inv.invoiceDate }} · 税率 {{ fmtQty(inv.taxRate) }}% · {{ fmtMoney(inv.amount) }}
         </div>
         <div v-if="!entry.invoices.length && entry.invoiceNo" class="muted mono">
-          {{ entry.invoiceNo }} · {{ entry.invoiceDate }} · ¥{{ fmtMoney(entry.invoiceAmount) }}
+          {{ entry.invoiceNo }} · {{ entry.invoiceDate }} · {{ fmtMoney(entry.invoiceAmount) }}
         </div>
       </div>
     </details>

@@ -19,6 +19,10 @@ public interface RetainSampleRepository extends JpaRepository<RetainSample, Long
 
     List<RetainSample> findByStatus(RetainStatus status);
 
+    /** 留样区温湿度超限时，按留样地点列出在库的留样：地点以区域名称开头（如“品质部留样室 B-01”），或等于区域编码。 */
+    @Query("select r from RetainSample r where r.status = :status and (r.location like concat(:prefix, '%') or r.location = :code)")
+    List<RetainSample> findHeldIn(@Param("status") RetainStatus status, @Param("prefix") String prefix, @Param("code") String code);
+
     /** 状态流转前先锁行：并发时第二个请求排队，读到新状态后按业务规则拒绝。只在写事务里用。 */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select x from RetainSample x where x.id = :id")

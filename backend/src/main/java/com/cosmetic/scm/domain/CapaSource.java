@@ -7,6 +7,7 @@ public enum CapaSource {
     RECALL("召回"),
     AUDIT("供应商审核"),
     SELF_CHECK("GMP 自查"),
+    SUPERVISION("受托生产监督"),
     OTHER("其他");
 
     private final String label;

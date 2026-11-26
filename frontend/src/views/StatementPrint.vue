@@ -22,9 +22,9 @@
           <th>当前状态</th><td>{{ doc.statusLabel }}</td>
         </tr>
         <tr>
-          <th>含税合计</th><td class="mono"><b>¥{{ fmtMoney(doc.totalAmount) }}</b>（含税额 ¥{{ fmtMoney(doc.taxAmount) }}）</td>
+          <th>含税合计</th><td class="mono"><b>{{ fmtMoney(doc.totalAmount) }}</b>（含税额 {{ fmtMoney(doc.taxAmount) }}）</td>
           <th>{{ isAr ? '已回款 / 待回款' : '已结 / 未结' }}</th>
-          <td class="mono">¥{{ fmtMoney(isAr ? doc.receivedAmount : doc.paidAmount) }} / ¥{{ fmtMoney(isAr ? doc.unreceived : doc.unpaid) }}</td>
+          <td class="mono">{{ fmtMoney(isAr ? doc.receivedAmount : doc.paidAmount) }} / {{ fmtMoney(isAr ? doc.unreceived : doc.unpaid) }}</td>
         </tr>
         <tr>
           <th>发票信息</th><td class="mono">{{ doc.invoiceNo ? `${doc.invoiceNo}（${doc.invoiceDate || ''}）` : '暂未登记' }}</td>
@@ -79,7 +79,7 @@
       </table>
 
       <div v-if="Number(doc.adjustment || 0) !== 0" class="adj">
-        调整金额：<b class="mono">¥{{ fmtMoney(doc.adjustment) }}</b>（原因：{{ doc.adjustmentNote || '—' }}）
+        调整金额：<b class="mono">{{ fmtMoney(doc.adjustment) }}</b>（原因：{{ doc.adjustmentNote || '—' }}）
       </div>
 
       <table class="sign">

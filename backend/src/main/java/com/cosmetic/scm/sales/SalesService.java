@@ -6,7 +6,9 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -20,6 +22,7 @@ import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 
 import com.cosmetic.scm.audit.AuditService;
@@ -40,6 +43,8 @@ import com.cosmetic.scm.master.Partner;
 import com.cosmetic.scm.master.Warehouse;
 import com.cosmetic.scm.security.CurrentUser;
 
+import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -59,7 +64,9 @@ public class SalesService {
     private final MasterLookup lookup;
     private final com.cosmetic.scm.master.PartnerRepository partners;
     private final CustomerPriceService customerPrices;
+    private final CustomerPriceRepository customerPriceRepo;
     private final com.cosmetic.scm.settlement.CustomerStatementRepository customerStatements;
+    private final com.cosmetic.scm.settlement.CustomerStatementLineRepository customerStatementLines;
     private final DocNoService docNo;
     private final AuditService audit;
     private final TimeProvider time;
@@ -67,6 +74,9 @@ public class SalesService {
     private final SalesRecordService salesRecords;
 
     private static final Set<String> SALES_PRICE_ROLES = Set.of("ROLE_ADMIN", "ROLE_SALES", "ROLE_FINANCE");
+
+    /** 缺单价页面一次最多列出的行数；行数合计按全部算。 */
+    public static final int UNPRICED_ROWS = 300;
 
     public record SoLineReq(@NotNull Long itemId, @NotNull @Positive @Qty BigDecimal qty,
                             @Positive(message = "含税单价要大于 0") @Digits(integer = 14, fraction = 4) BigDecimal unitPrice,
@@ -90,8 +100,45 @@ public class SalesService {
     public record PreviewView(String customerName, int minShelfPct, boolean fulfilled, List<AllocLineView> lines) {
     }
 
-    public record SoLineView(Long itemId, String itemCode, String itemName, BigDecimal qty,
-                             BigDecimal unitPrice, BigDecimal taxRate, BigDecimal amount) {
+    /** billed：这一行是否已进没作废的应收对账单（进了就不能再改单价）；只在页面列表、有价格权限时给出，其余为空。 */
+    public record SoLineView(Long lineId, Long itemId, String itemCode, String itemName, BigDecimal qty,
+                             BigDecimal unitPrice, BigDecimal taxRate, BigDecimal amount, Boolean billed) {
+    }
+
+    /** 补单价：unitPrice 可以是 0（赠品、样品，不收款），这时要写原因。taxRate 留空沿用这一行原来的税率，原来没有的取客户默认。 */
+    public record LinePriceItem(@NotNull(message = "请选择出库行") Long soLineId,
+                                @NotNull(message = "请填写含税单价") @DecimalMin(value = "0", message = "含税单价不能小于 0")
+                                @Digits(integer = 14, fraction = 4) BigDecimal unitPrice,
+                                @DecimalMin("0") @DecimalMax("100") @Digits(integer = 3, fraction = 2) BigDecimal taxRate) {
+    }
+
+    /** reason：改已有单价、按 0 元定价时必填。 */
+    public record LinePriceReq(@NotEmpty(message = "至少填一行单价") @Size(max = 500, message = "一次最多填 500 行")
+                               @Valid List<LinePriceItem> lines,
+                               @Size(max = 300) String reason) {
+    }
+
+    /** 补价以后这个客户的额度占用（未结应收 + 已出库未对账），unpricedLeft 是还没单价的行数。 */
+    public record LinePriceResult(Long customerId, String customerName, int updated, BigDecimal amount,
+                                  BigDecimal creditLimit, BigDecimal creditUsed, boolean overLimit, long unpricedLeft) {
+    }
+
+    /**
+     * 缺单价的出库行。suggestedPrice 是建议价（出库日有效的协议价 → 这个客户这个成品最近一次单价 → 现行协议价），
+     * 只是预填参考，保存时以页面上填的为准。
+     */
+    public record UnpricedLineView(Long lineId, Long soId, String soNo, LocalDate orderDate,
+                                   Long customerId, String customerCode, String customerName, String channel,
+                                   Long itemId, String itemCode, String itemName, String unit, BigDecimal qty,
+                                   BigDecimal defaultTaxRate, BigDecimal suggestedPrice, BigDecimal suggestedTaxRate,
+                                   String suggestedSource) {
+    }
+
+    public record UnpricedCustomer(Long customerId, String customerCode, String customerName, long lines, LocalDate oldest) {
+    }
+
+    /** total：按筛选条件的全部行数；customers：所有有缺单价行的客户（不受筛选影响）；rows 最多 UNPRICED_ROWS 行。 */
+    public record UnpricedView(long total, int cap, List<UnpricedCustomer> customers, List<UnpricedLineView> rows) {
     }
 
     public record AllocView(Long batchId, String batchNo, Long itemId, String itemName, BigDecimal qty) {
@@ -187,7 +234,8 @@ public class SalesService {
         }
         Map<Long, List<String>> gaps = withGaps ? salesRecords.gapsByOrder(list) : Map.of();
         List<Long> ids = list.stream().map(SalesOrder::getId).toList();
-        Map<Long, List<SoLine>> lm = lines.findBySoIdIn(ids).stream().collect(Collectors.groupingBy(SoLine::getSoId));
+        List<SoLine> allLines = lines.findBySoIdIn(ids);
+        Map<Long, List<SoLine>> lm = allLines.stream().collect(Collectors.groupingBy(SoLine::getSoId));
         List<SoAllocation> allocs = allocations.findBySoIdIn(ids);
         Map<Long, List<SoAllocation>> am = allocs.stream().collect(Collectors.groupingBy(SoAllocation::getSoId));
         Map<Long, Batch> bm = batches.findAllById(allocs.stream().map(SoAllocation::getBatchId).distinct().toList())
@@ -196,6 +244,8 @@ public class SalesService {
         Map<Long, Partner> pm = lookup.partnerMap();
         Map<Long, Warehouse> wm = lookup.warehouseMap();
         boolean showPrice = salesPriceAllowed();
+        Set<Long> billed = withGaps && showPrice && !allLines.isEmpty()
+                ? Set.copyOf(customerStatementLines.billedSoLineIds(allLines.stream().map(SoLine::getId).toList())) : null;
         return list.stream().map(so -> {
             Partner c = pm.get(so.getCustomerId());
             Warehouse w = wm.get(so.getWarehouseId());
@@ -204,7 +254,8 @@ public class SalesService {
                         BigDecimal up = showPrice ? l.getUnitPrice() : null;
                         BigDecimal tr = showPrice ? l.getTaxRate() : null;
                         BigDecimal amt = up != null ? l.getQty().multiply(up).setScale(2, RoundingMode.HALF_UP) : null;
-                        return new SoLineView(l.getItemId(), im.get(l.getItemId()).getCode(), im.get(l.getItemId()).getName(), l.getQty(), up, tr, amt);
+                        return new SoLineView(l.getId(), l.getItemId(), im.get(l.getItemId()).getCode(), im.get(l.getItemId()).getName(),
+                                l.getQty(), up, tr, amt, billed == null ? null : billed.contains(l.getId()));
                     })
                     .toList();
             List<AllocView> av = am.getOrDefault(so.getId(), List.of()).stream()
@@ -260,7 +311,7 @@ public class SalesService {
             SoLineReq lr = plan.lines().get(i);
             if (lr.unitPrice() != null) {
                 if (!canPrice) {
-                    throw new BizException(org.springframework.http.HttpStatus.FORBIDDEN, "没有权限录入销售单价");
+                    throw new BizException(HttpStatus.FORBIDDEN, "没有权限录入销售单价");
                 }
                 resolvedPrices[i] = lr.unitPrice();
                 resolvedRates[i] = lr.taxRate() != null ? lr.taxRate() : defaultRate;
@@ -326,17 +377,192 @@ public class SalesService {
         if (customer.getCreditLimit() == null || orderTotal.signum() <= 0) {
             return;
         }
-        BigDecimal billed = customerStatements.findByCustomerIdOrderByIdDesc(customer.getId()).stream()
+        BigDecimal[] usage = creditUsage(customer.getId());
+        BigDecimal openAr = usage[0].add(usage[1]);
+        if (openAr.add(orderTotal).compareTo(customer.getCreditLimit()) > 0) {
+            long unpriced = lines.countUnpricedUnbilled(customer.getId(), null);
+            throw new BizException("客户 " + customer.getName() + " 信用额度不足：授信 ¥" + customer.getCreditLimit().toPlainString()
+                    + "，当前未结应收 ¥" + openAr.toPlainString() + "（其中已出库未对账 ¥" + usage[1].toPlainString() + "）"
+                    + "，本次出库 ¥" + orderTotal.toPlainString() + "，请先回款核销或调整授信额度"
+                    + (unpriced > 0 ? "。另有 " + unpriced + " 行出库还没有单价，没算进去" : ""));
+        }
+    }
+
+    /** 额度占用：[未结应收对账单待收, 已出库未对账的有价出库行]，和授信概览同一口径。 */
+    private BigDecimal[] creditUsage(Long customerId) {
+        BigDecimal billed = customerStatements.findByCustomerIdOrderByIdDesc(customerId).stream()
                 .filter(s -> !"PAID".equals(s.getStatus()) && !"CANCELLED".equals(s.getStatus()))
                 .map(com.cosmetic.scm.settlement.CustomerStatement::outstandingAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal unbilled = lines.unbilledShippedAmount(customer.getId());
-        unbilled = unbilled == null ? BigDecimal.ZERO : unbilled;
-        BigDecimal openAr = billed.add(unbilled);
-        if (openAr.add(orderTotal).compareTo(customer.getCreditLimit()) > 0) {
-            throw new BizException("客户 " + customer.getName() + " 信用额度不足：授信 ¥" + customer.getCreditLimit().toPlainString()
-                    + "，当前未结应收 ¥" + openAr.toPlainString() + "（其中已出库未对账 ¥" + unbilled.toPlainString() + "）"
-                    + "，本次出库 ¥" + orderTotal.toPlainString() + "，请先回款核销或调整授信额度");
+        BigDecimal unbilled = lines.unbilledShippedAmount(customerId);
+        return new BigDecimal[] {billed, unbilled == null ? BigDecimal.ZERO : unbilled};
+    }
+
+    /** 已出库、没有单价、没进应收对账单的行，补单价用。只给有销售价格权限的角色。 */
+    @Transactional(readOnly = true)
+    public UnpricedView unpriced(Long customerId, LocalDate to) {
+        requirePriceRole();
+        Map<Long, Partner> pm = lookup.partnerMap();
+        List<UnpricedCustomer> customers = lines.countUnpricedUnbilledByCustomer().stream()
+                .map(r -> {
+                    Partner c = pm.get((Long) r[0]);
+                    return new UnpricedCustomer((Long) r[0], c == null ? null : c.getCode(), c == null ? "（已删除）" : c.getName(),
+                            ((Number) r[1]).longValue(), (LocalDate) r[2]);
+                })
+                .sorted(java.util.Comparator.comparingLong(UnpricedCustomer::lines).reversed()
+                        .thenComparing(UnpricedCustomer::customerCode, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .toList();
+        long total = lines.countUnpricedUnbilled(customerId, to);
+        if (total == 0) {
+            return new UnpricedView(0, UNPRICED_ROWS, customers, List.of());
+        }
+        List<SoLine> rows = lines.unpricedUnbilled(customerId, to, PageRequest.of(0, UNPRICED_ROWS));
+        Map<Long, SalesOrder> om = orders.findAllById(rows.stream().map(SoLine::getSoId).distinct().toList()).stream()
+                .collect(Collectors.toMap(SalesOrder::getId, Function.identity()));
+        Set<Long> cids = om.values().stream().map(SalesOrder::getCustomerId).collect(Collectors.toSet());
+        Set<Long> iids = rows.stream().map(SoLine::getItemId).collect(Collectors.toSet());
+        // 协议价：一次取这些客户启用中的，按“生效日期新的在前”分到客户 + 成品
+        Map<String, List<CustomerPrice>> agreed = new HashMap<>();
+        for (CustomerPrice cp : customerPriceRepo.findByCustomerIdInAndActiveTrueOrderByValidFromDescIdDesc(cids)) {
+            agreed.computeIfAbsent(cp.getCustomerId() + ":" + cp.getItemId(), k -> new ArrayList<>()).add(cp);
+        }
+        // 这个客户这个成品最近一次有价的出库行
+        List<SoLine> lastLines = lines.findAllById(lines.latestPricedLineIds(cids, iids));
+        Map<Long, SalesOrder> lastOrders = orders.findAllById(lastLines.stream().map(SoLine::getSoId).distinct().toList()).stream()
+                .collect(Collectors.toMap(SalesOrder::getId, Function.identity()));
+        Map<String, SoLine> lastByKey = new HashMap<>();
+        for (SoLine l : lastLines) {
+            lastByKey.put(lastOrders.get(l.getSoId()).getCustomerId() + ":" + l.getItemId(), l);
+        }
+        Map<Long, Item> im = lookup.itemMap();
+        LocalDate today = time.today();
+        List<UnpricedLineView> out = new ArrayList<>();
+        for (SoLine l : rows) {
+            SalesOrder so = om.get(l.getSoId());
+            Partner c = pm.get(so.getCustomerId());
+            Item item = im.get(l.getItemId());
+            BigDecimal defRate = l.getTaxRate() != null ? l.getTaxRate()
+                    : c != null && c.getDefaultTaxRate() != null ? c.getDefaultTaxRate() : new BigDecimal("13.00");
+            String key = so.getCustomerId() + ":" + l.getItemId();
+            List<CustomerPrice> cps = agreed.getOrDefault(key, List.of());
+            CustomerPrice atOrder = cps.stream().filter(p -> p.isEffectiveOn(so.getOrderDate())).findFirst().orElse(null);
+            SoLine last = lastByKey.get(key);
+            CustomerPrice now = cps.stream().filter(p -> p.isEffectiveOn(today)).findFirst().orElse(null);
+            BigDecimal price = null;
+            BigDecimal rate = null;
+            String source = null;
+            if (atOrder != null) {
+                price = atOrder.getUnitPrice();
+                rate = atOrder.getTaxRate();
+                source = "出库日有效的协议价";
+            } else if (last != null) {
+                price = last.getUnitPrice();
+                rate = last.getTaxRate();
+                source = "最近一次单价（" + lastOrders.get(last.getSoId()).getSoNo() + "）";
+            } else if (now != null) {
+                price = now.getUnitPrice();
+                rate = now.getTaxRate();
+                source = "现行协议价";
+            }
+            out.add(new UnpricedLineView(l.getId(), so.getId(), so.getSoNo(), so.getOrderDate(),
+                    so.getCustomerId(), c == null ? null : c.getCode(), c == null ? "（已删除）" : c.getName(), c == null ? null : c.getChannel(),
+                    l.getItemId(), item.getCode(), item.getName(), item.getUnit(), l.getQty(),
+                    defRate, price, price == null ? null : (rate != null ? rate : defRate), source));
+        }
+        return new UnpricedView(total, UNPRICED_ROWS, customers, out);
+    }
+
+    /**
+     * 补录或更正出库行单价（含税）。补上以后这一行进应收对账、占信用额度、销售记录按它显示价格。
+     * 已进没作废应收对账单的行不能改（要改先由财务作废那张对账单）。改已有单价、按 0 元定价要写原因。
+     * 可结算的出库行和信用额度都是算出来的，所以和生成应收对账单、出库一样先锁客户行，而且是事务第一句。
+     * 补价后超出授信也照样保存（货已经发出去，应收要记上），返回超额提示，之后的出库会被额度校验拦下。
+     */
+    @Transactional
+    public LinePriceResult setLinePrices(Long customerId, LinePriceReq req) {
+        requirePriceRole();
+        Partner customer = partners.lockById(customerId).orElseThrow(() -> BizException.notFound("客户"));
+        if (customer.getKind() != PartnerKind.CUSTOMER) {
+            throw new BizException(customer.getName() + " 不是客户");
+        }
+        Map<Long, LinePriceItem> byId = new LinkedHashMap<>();
+        for (LinePriceItem it : req.lines()) {
+            if (byId.put(it.soLineId(), it) != null) {
+                throw new BizException("同一出库行填了两次，请只保留一个单价");
+            }
+        }
+        Map<Long, SoLine> lineMap = lines.findAllById(byId.keySet()).stream()
+                .collect(Collectors.toMap(SoLine::getId, Function.identity()));
+        Map<Long, SalesOrder> om = orders.findAllById(lineMap.values().stream().map(SoLine::getSoId).distinct().toList()).stream()
+                .collect(Collectors.toMap(SalesOrder::getId, Function.identity()));
+        for (Long id : byId.keySet()) {
+            SoLine l = lineMap.get(id);
+            // 别的客户的出库行一律当作不存在
+            if (l == null || !customer.getId().equals(om.get(l.getSoId()).getCustomerId())) {
+                throw new BizException(HttpStatus.NOT_FOUND, "出库行不存在或不是 " + customer.getName() + " 的，请刷新后重试");
+            }
+        }
+        Map<Long, Item> im = lookup.itemMap();
+        List<String> billedRefs = new ArrayList<>();
+        for (Object[] r : customerStatementLines.activeSoLineStatementRefs(byId.keySet())) {
+            SoLine l = lineMap.get((Long) r[0]);
+            billedRefs.add(om.get(l.getSoId()).getSoNo() + " 的 " + im.get(l.getItemId()).getName() + "（" + r[1] + "）");
+        }
+        if (!billedRefs.isEmpty()) {
+            throw new BizException("这些出库行已进应收对账单，不能再改单价：" + String.join("、", billedRefs.stream().limit(5).toList())
+                    + (billedRefs.size() > 5 ? " 等 " + billedRefs.size() + " 行" : "") + "。要更正请财务先作废对账单，改好后重新生成");
+        }
+        BigDecimal defaultRate = customer.getDefaultTaxRate() != null ? customer.getDefaultTaxRate() : new BigDecimal("13.00");
+        String reason = blankToNull(req.reason());
+        boolean needReason = false;
+        int updated = 0;
+        BigDecimal amount = BigDecimal.ZERO;
+        Map<Long, List<String>> detailBySo = new LinkedHashMap<>();
+        Set<Long> correctedSo = new HashSet<>();
+        for (LinePriceItem it : byId.values()) {
+            SoLine l = lineMap.get(it.soLineId());
+            BigDecimal oldPrice = l.getUnitPrice();
+            BigDecimal oldRate = l.getTaxRate();
+            BigDecimal newRate = it.taxRate() != null ? it.taxRate() : oldRate != null ? oldRate : defaultRate;
+            if (oldPrice != null && oldPrice.compareTo(it.unitPrice()) == 0 && oldRate != null && oldRate.compareTo(newRate) == 0) {
+                continue;
+            }
+            if (oldPrice != null) {
+                needReason = true;
+                correctedSo.add(l.getSoId());
+            }
+            if (it.unitPrice().signum() == 0) {
+                needReason = true;
+            }
+            l.setUnitPrice(it.unitPrice());
+            l.setTaxRate(newRate);
+            lines.save(l);
+            updated++;
+            amount = amount.add(l.getQty().multiply(it.unitPrice()).setScale(2, RoundingMode.HALF_UP));
+            detailBySo.computeIfAbsent(l.getSoId(), k -> new ArrayList<>()).add(im.get(l.getItemId()).getName() + " × " + plain(l.getQty()) + "："
+                    + (oldPrice == null ? "未定价" : "¥" + plain(oldPrice) + "（税率 " + plain(oldRate == null ? defaultRate : oldRate) + "%）")
+                    + " → ¥" + plain(it.unitPrice()) + "（税率 " + plain(newRate) + "%）");
+        }
+        if (updated == 0) {
+            throw new BizException("单价和税率都和原来一样，没有要保存的");
+        }
+        if (needReason && reason == null) {
+            throw new BizException("改已有单价或按 0 元定价（赠品、样品）要写明原因");
+        }
+        for (Map.Entry<Long, List<String>> e : detailBySo.entrySet()) {
+            audit.logMoney(correctedSo.contains(e.getKey()) ? "更正出库单价" : "补录出库单价", om.get(e.getKey()).getSoNo(),
+                    customer.getName() + "：" + String.join("；", e.getValue()), reason);
+        }
+        BigDecimal[] usage = creditUsage(customer.getId());
+        BigDecimal used = usage[0].add(usage[1]);
+        boolean over = customer.getCreditLimit() != null && used.compareTo(customer.getCreditLimit()) > 0;
+        return new LinePriceResult(customer.getId(), customer.getName(), updated, amount, customer.getCreditLimit(), used, over,
+                lines.countUnpricedUnbilled(customer.getId(), null));
+    }
+
+    private static void requirePriceRole() {
+        if (!salesPriceAllowed()) {
+            throw new BizException(HttpStatus.FORBIDDEN, "销售单价只有销售、财务和管理员能看和改");
         }
     }
 

@@ -93,6 +93,13 @@ public class GmpEvidenceService {
     private final com.cosmetic.scm.oemcontract.OemContractProductRepository oemContractProducts;
     private final com.cosmetic.scm.master.BomRepository boms;
     private final com.cosmetic.scm.master.BomLineRepository bomLines;
+    private final com.cosmetic.scm.oemsupervision.OemSupervisionRepository oemSupervisions;
+    private final com.cosmetic.scm.oemsupervision.OemSupervisionFindingRepository oemFindings;
+    private final CapaRepository capas;
+    private final DeviationRepository deviationRepo;
+    private final com.cosmetic.scm.storage.StorageAreaRepository storageAreas;
+    private final com.cosmetic.scm.storage.EnvRecordRepository envRecords;
+    private final com.cosmetic.scm.storage.EnvExcursionRepository envExcursions;
     private final TimeProvider time;
 
     /** level：OK 没发现问题，WARN 要注意，INFO 仅供参考。 */
@@ -129,18 +136,21 @@ public class GmpEvidenceService {
         out.add(oemAudit(c));
         out.add(oemList(c));
         out.add(contracts(c));
-        out.add(oemSupervision(c));
-        out.add(oemDisqualified(c));
+        Supervisions sv = supervisions(c);
+        out.add(oemSupervision(c, sv));
+        out.add(oemDisqualified(c, sv));
+        out.add(oemRecords(c, sv));
         out.add(procedures());
         out.add(suppliedMaterials(c));
         List<Batch> released = releasedFgBatches(c);
         out.add(marketRelease(c, released));
         out.add(certificates(c));
         out.add(retainLocations(c));
-        out.add(retainPerBatch(c, released));
+        StorageData storage = storageData(c);
+        out.add(retainPerBatch(c, released, storage));
         out.add(records(c));
         out.add(salesRecords(c));
-        out.add(expiredStock(c));
+        out.add(expiredStock(c, storage));
         out.add(salesReturns(c));
         List<Complaint> cs = complaints.findByReceivedDateGreaterThanEqual(from).stream().filter(x -> !x.getReceivedDate().isAfter(to)).toList();
         out.add(complaintsCheck(c, cs));
@@ -371,23 +381,142 @@ public class GmpEvidenceService {
                 + (inForce.isEmpty() ? "。" : "，执行中合同约定的物料采购分工和现行 BOM 一致。") + "合同条款是否履行请人工核对。", limit(details));
     }
 
-    private Evidence oemSupervision(Ctx c) {
+    /** 期间内（按监督日期）提交了或审核过的受托生产监督，和它们发现的问题、转出的 CAPA。 */
+    private record Supervisions(List<com.cosmetic.scm.oemsupervision.OemSupervision> list,
+                                Map<Long, List<com.cosmetic.scm.oemsupervision.OemSupervisionFinding>> findings, Map<Long, Capa> capas) {
+
+        List<com.cosmetic.scm.oemsupervision.OemSupervisionFinding> of(Long id) {
+            return findings.getOrDefault(id, List.of());
+        }
+
+        /** 转了 CAPA、CAPA 还没验证的问题。 */
+        boolean capaOpen(com.cosmetic.scm.oemsupervision.OemSupervisionFinding f) {
+            Capa x = f.getCapaId() == null ? null : capas.get(f.getCapaId());
+            return x != null && x.getStatus() != com.cosmetic.scm.domain.CapaStatus.VERIFIED;
+        }
+    }
+
+    private Supervisions supervisions(Ctx c) {
+        List<com.cosmetic.scm.oemsupervision.OemSupervision> list = oemSupervisions.findBySupervisedOnBetweenAndStatusInOrderBySupervisedOnAscIdAsc(c.from(), c.to(),
+                com.cosmetic.scm.oemsupervision.OemSupervisionService.EFFECTIVE);
+        if (list.isEmpty()) {
+            return new Supervisions(List.of(), Map.of(), Map.of());
+        }
+        Map<Long, List<com.cosmetic.scm.oemsupervision.OemSupervisionFinding>> byId = oemFindings.findBySupervisionIdInOrderBySupervisionIdAscSeqAsc(
+                list.stream().map(com.cosmetic.scm.oemsupervision.OemSupervision::getId).toList()).stream()
+                .collect(Collectors.groupingBy(com.cosmetic.scm.oemsupervision.OemSupervisionFinding::getSupervisionId));
+        Map<Long, Capa> capaMap = capas.findAllById(byId.values().stream().flatMap(List::stream).map(com.cosmetic.scm.oemsupervision.OemSupervisionFinding::getCapaId)
+                .filter(Objects::nonNull).distinct().toList()).stream().collect(Collectors.toMap(Capa::getId, Function.identity()));
+        return new Supervisions(list, byId, capaMap);
+    }
+
+    private static String svLine(Ctx c, com.cosmetic.scm.oemsupervision.OemSupervision s, Map<Long, MfgOrder> mos) {
+        Partner f = c.partners().get(s.getFactoryId());
+        MfgOrder m = s.getMoId() == null ? null : mos.get(s.getMoId());
+        return s.getSupervisionNo() + " " + s.getSupervisedOn() + " " + (f == null ? "" : f.getName()) + " " + s.getMethod().getLabel()
+                + (m == null ? "" : "（委托单 " + m.getMoNo() + "）") + (s.getStatus() == com.cosmetic.scm.domain.SupervisionStatus.SUBMITTED ? "，待审核" : "");
+    }
+
+    /**
+     * 第 9 项：期间内有委托生产的受托厂都要有监督记录（驻厂、现场检查、调阅记录、远程视频），提交了的都要审核；
+     * 列出发现的问题和还没验证的 CAPA，以及完工的委托单里有多少张有针对本单的监督。
+     */
+    private Evidence oemSupervision(Ctx c, Supervisions sv) {
         long completed = c.orders().stream().filter(m -> m.getMoType() == MoType.OEM && m.getStatus() == MoStatus.COMPLETED && c.in(m.getCompletedAt())).count();
         Map<Long, Batch> byId = batchesOf(c.decisionsInPeriod());
         long oemReleases = c.decisionsInPeriod().stream().filter(d -> d.getStage() == QcStage.MARKET_RELEASE && d.getDecision() == Decision.RELEASED)
                 .map(d -> byId.get(d.getBatchId())).filter(b -> b != null && b.isOemReleased()).count();
-        return new Evidence(9, "INFO", "期间内委托生产完工 " + completed + " 单，上市放行时审核过受托厂出厂放行记录的 " + oemReleases + " 批。现场监督、驻厂检查的记录请人工核对。", List.of());
+        Set<Long> active = activeFactories(c);
+        Set<Long> supervised = sv.list().stream().map(com.cosmetic.scm.oemsupervision.OemSupervision::getFactoryId).collect(Collectors.toSet());
+        Set<Long> coveredMo = sv.list().stream().map(com.cosmetic.scm.oemsupervision.OemSupervision::getMoId).filter(Objects::nonNull).collect(Collectors.toSet());
+        long completedCovered = c.orders().stream().filter(m -> m.getMoType() == MoType.OEM && m.getStatus() == MoStatus.COMPLETED && c.in(m.getCompletedAt())
+                && coveredMo.contains(m.getId())).count();
+        List<String> problems = new ArrayList<>();
+        active.stream().filter(id -> !supervised.contains(id)).map(id -> c.partners().get(id)).filter(Objects::nonNull)
+                .sorted(Comparator.comparing(Partner::getCode)).forEach(p -> problems.add(p.getName() + "：期间内有委托生产，没有监督记录"));
+        long pending = sv.list().stream().filter(s -> s.getStatus() == com.cosmetic.scm.domain.SupervisionStatus.SUBMITTED).count();
+        if (pending > 0) {
+            problems.add(pending + " 份监督记录还没有质量安全负责人审核");
+        }
+        Map<Long, MfgOrder> mos = new HashMap<>();
+        c.orders().forEach(m -> mos.put(m.getId(), m));
+        List<String> details = new ArrayList<>(problems);
+        Map<com.cosmetic.scm.domain.SupervisionMethod, Long> byMethod = sv.list().stream()
+                .collect(Collectors.groupingBy(com.cosmetic.scm.oemsupervision.OemSupervision::getMethod, () -> new java.util.EnumMap<>(com.cosmetic.scm.domain.SupervisionMethod.class),
+                        Collectors.counting()));
+        int findingCount = 0;
+        int major = 0;
+        for (com.cosmetic.scm.oemsupervision.OemSupervision s : sv.list()) {
+            for (com.cosmetic.scm.oemsupervision.OemSupervisionFinding f : sv.of(s.getId())) {
+                findingCount++;
+                major += f.getSeverity() == com.cosmetic.scm.domain.FindingSeverity.MAJOR ? 1 : 0;
+                if (sv.capaOpen(f)) {
+                    Capa x = sv.capas().get(f.getCapaId());
+                    details.add(s.getSupervisionNo() + " 问题 " + f.getSeq() + "（" + f.getSeverity().getLabel() + "）：CAPA " + x.getCapaNo() + " " + x.getStatus().getLabel());
+                }
+            }
+        }
+        sv.list().stream().sorted(Comparator.comparing(com.cosmetic.scm.oemsupervision.OemSupervision::getSupervisedOn).reversed()).limit(10)
+                .forEach(s -> details.add(svLine(c, s, mos)));
+        String counts = sv.list().isEmpty() ? "" : "共 " + sv.list().size() + " 次（" + byMethod.entrySet().stream().map(e -> e.getKey().getLabel() + " " + e.getValue())
+                .collect(Collectors.joining("、")) + "），发现问题 " + findingCount + " 个" + (major > 0 ? "（重大 " + major + " 个）" : "") + "，都已当场纠正或转 CAPA";
+        String tail = "期间内委托生产完工 " + completed + " 单，其中 " + completedCovered + " 单有针对本单的监督；上市放行时审核过受托厂出厂放行记录的 " + oemReleases + " 批。";
+        if (active.isEmpty() && sv.list().isEmpty()) {
+            return new Evidence(9, "INFO", "期间内没有委托生产，也没有监督记录。", List.of());
+        }
+        if (!problems.isEmpty()) {
+            String head = problems.size() <= 3 ? String.join("；", problems) + "。" : problems.size() + " 处要注意。";
+            return new Evidence(9, "WARN", head + (counts.isEmpty() ? "" : "期间内监督" + counts + "。") + tail, limit(details));
+        }
+        return new Evidence(9, "OK", "期间内委托生产的 " + active.size() + " 家受托厂都有监督记录，都已审核：" + counts + "。" + tail, limit(details));
     }
 
-    private Evidence oemDisqualified(Ctx c) {
-        List<String> problems = c.orders().stream().filter(m -> m.getMoType() == MoType.OEM && (m.getStatus() == MoStatus.PLANNED || m.getStatus() == MoStatus.ISSUED))
+    /**
+     * 第 10 项：已停用的受托厂不能还有没完成的委托单；期间内监督发现重大问题、CAPA 还没验证、又还有在做的委托单的受托厂，要评估是否停止委托。
+     */
+    private Evidence oemDisqualified(Ctx c, Supervisions sv) {
+        List<MfgOrder> open = c.orders().stream().filter(m -> m.getMoType() == MoType.OEM && (m.getStatus() == MoStatus.PLANNED || m.getStatus() == MoStatus.ISSUED)).toList();
+        List<String> problems = new ArrayList<>(open.stream()
                 .filter(m -> {
                     Partner p = c.partners().get(m.getFactoryId());
                     return p != null && !p.isQualified();
-                }).map(m -> m.getMoNo() + "：受托厂 " + c.partners().get(m.getFactoryId()).getName() + " 已停用，委托单还没完成").toList();
+                }).map(m -> m.getMoNo() + "：受托厂 " + c.partners().get(m.getFactoryId()).getName() + " 已停用，委托单还没完成").toList());
+        Set<Long> withOpen = open.stream().map(MfgOrder::getFactoryId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, List<String>> risky = new java.util.TreeMap<>();
+        for (com.cosmetic.scm.oemsupervision.OemSupervision s : sv.list()) {
+            for (com.cosmetic.scm.oemsupervision.OemSupervisionFinding f : sv.of(s.getId())) {
+                if (f.getSeverity() == com.cosmetic.scm.domain.FindingSeverity.MAJOR && sv.capaOpen(f) && withOpen.contains(s.getFactoryId())) {
+                    risky.computeIfAbsent(s.getFactoryId(), k -> new ArrayList<>()).add(s.getSupervisionNo() + " 问题 " + f.getSeq());
+                }
+            }
+        }
+        risky.forEach((id, list) -> {
+            Partner p = c.partners().get(id);
+            problems.add((p == null ? String.valueOf(id) : p.getName()) + "：监督发现的重大问题（" + String.join("、", list)
+                    + "）整改还没验证，还有在做的委托单，请评估是否需要停止委托");
+        });
         return problems.isEmpty()
-                ? new Evidence(10, "OK", "没有已停用的受托厂还有未完成的委托单。", List.of())
-                : new Evidence(10, "WARN", problems.size() + " 张委托单的受托厂已停用。", limit(problems));
+                ? new Evidence(10, "OK", "没有已停用的受托厂还有未完成的委托单；在做委托单的受托厂没有未验证整改的重大监督问题。", List.of())
+                : new Evidence(10, "WARN", problems.size() + " 处要注意。", limit(problems));
+    }
+
+    /** 第 18 项：期间内调阅或检查受托方生产质量记录的监督（方式“调阅记录”或环节含“生产质量记录”）。 */
+    private Evidence oemRecords(Ctx c, Supervisions sv) {
+        List<com.cosmetic.scm.oemsupervision.OemSupervision> reviews = sv.list().stream()
+                .filter(s -> s.getMethod() == com.cosmetic.scm.domain.SupervisionMethod.RECORD_REVIEW
+                        || (s.getScopes() != null && List.of(s.getScopes().split(",")).contains(com.cosmetic.scm.domain.SupervisionScope.RECORDS.name())))
+                .sorted(Comparator.comparing(com.cosmetic.scm.oemsupervision.OemSupervision::getSupervisedOn).reversed()).toList();
+        Map<Long, MfgOrder> mos = new HashMap<>();
+        c.orders().forEach(m -> mos.put(m.getId(), m));
+        List<String> details = reviews.stream().map(s -> svLine(c, s, mos)).toList();
+        if (activeFactories(c).isEmpty() && reviews.isEmpty()) {
+            return new Evidence(18, "INFO", "期间内没有委托生产。委托方提供物料的，相关记录的保存安排请对照委托生产合同核对。", List.of());
+        }
+        if (reviews.isEmpty()) {
+            return new Evidence(18, "WARN", "期间内有委托生产，但没有调阅或检查受托方生产质量记录的监督记录（在“受托生产监督”里登记方式“调阅记录”，或环节勾“生产质量记录”）。",
+                    List.of());
+        }
+        return new Evidence(18, "OK", "期间内调阅或检查受托方生产质量记录 " + reviews.size() + " 次。委托方提供物料的，相关记录的保存安排请对照委托生产合同核对。", limit(details));
     }
 
     // ---- 制度和物料 ----
@@ -457,14 +586,18 @@ public class GmpEvidenceService {
         return new Evidence(15, "INFO", locations.isEmpty() ? "期间内没有新的留样。" : "期间内留样用到 " + locations.size() + " 个地点；不在住所或主要经营场所的，请核对是否已按期报告。", limit(locations));
     }
 
-    private Evidence retainPerBatch(Ctx c, List<Batch> released) {
+    private Evidence retainPerBatch(Ctx c, List<Batch> released, StorageData storage) {
         Set<Long> withSample = released.isEmpty() ? Set.of()
                 : retains.findByBatchIdIn(released.stream().map(Batch::getId).toList()).stream().map(RetainSample::getBatchId).collect(Collectors.toSet());
         List<String> problems = released.stream().filter(b -> b.getSourceType() == SourceType.MO && !withSample.contains(b.getId()))
                 .map(b -> b.getBatchNo() + "：上市放行了，没有留样记录").toList();
-        return problems.isEmpty()
-                ? new Evidence(16, "OK", "期间内上市放行的 " + released.size() + " 批都有留样记录，留样期限由系统按使用期限后 6 个月计算。留样区域和贮存条件请现场核对。", List.of())
-                : new Evidence(16, "WARN", problems.size() + " 批没有留样记录。", limit(problems));
+        StorageCheck sc = storageCheck(c, storage, true);
+        List<String> details = new ArrayList<>(problems);
+        details.addAll(sc.lines());
+        String head = problems.isEmpty()
+                ? "期间内上市放行的 " + released.size() + " 批都有留样记录，留样期限由系统按使用期限后 6 个月计算。"
+                : problems.size() + " 批没有留样记录。";
+        return new Evidence(16, problems.isEmpty() && !sc.warn() ? "OK" : "WARN", head + sc.summary(), limit(details));
     }
 
     private Evidence records(Ctx c) {
@@ -490,7 +623,7 @@ public class GmpEvidenceService {
         return new Evidence(19, "WARN", "期间内销售出库 " + r.orders() + " 单，" + r.incompleteRows() + " 行销售记录不全。", limit(details));
     }
 
-    private Evidence expiredStock(Ctx c) {
+    private Evidence expiredStock(Ctx c, StorageData storage) {
         List<Stock> on = stocks.findByQtyGreaterThan(BigDecimal.ZERO);
         Map<Long, Batch> byId = batches.findAllById(on.stream().map(Stock::getBatchId).distinct().toList()).stream()
                 .collect(Collectors.toMap(Batch::getId, Function.identity()));
@@ -500,9 +633,94 @@ public class GmpEvidenceService {
                         && b.getStatus() != BatchStatus.REJECTED)
                 .sorted(Comparator.comparing(Batch::getExpDate))
                 .map(b -> b.getBatchNo() + "：已于 " + b.getExpDate() + " 过期，还有 " + qty.get(b.getId()).stripTrailingZeros().toPlainString() + " 在库").toList();
-        return problems.isEmpty()
-                ? new Evidence(20, "OK", "没有过期的成品还在库。贮存运输条件请现场核对。", List.of())
-                : new Evidence(20, "WARN", problems.size() + " 批过期成品还在库，没有处理。", limit(problems));
+        StorageCheck sc = storageCheck(c, storage, false);
+        List<String> details = new ArrayList<>(problems);
+        details.addAll(sc.lines());
+        String head = problems.isEmpty() ? "没有过期的成品还在库。" : problems.size() + " 批过期成品还在库，没有处理。";
+        return new Evidence(20, problems.isEmpty() && !sc.warn() ? "OK" : "WARN", head + sc.summary() + "运输条件请人工核对。", limit(details));
+    }
+
+    // ---- 贮存区域温湿度（第 16 项看留样区，第 20 项看其余区域） ----
+
+    /** 期间内的按日统计（区域 → 日期 → {记录数, 超限数}）、和期间有交集的超限、它们的偏差。都是按期间或分组查的。 */
+    private record StorageData(List<com.cosmetic.scm.storage.StorageArea> areas, Map<Long, Map<LocalDate, long[]>> days,
+                               List<com.cosmetic.scm.storage.EnvExcursion> excursions, Map<Long, Deviation> deviations) {
+    }
+
+    private record StorageCheck(boolean warn, String summary, List<String> lines) {
+    }
+
+    private StorageData storageData(Ctx c) {
+        List<com.cosmetic.scm.storage.StorageArea> areas = storageAreas.findAllByOrderByCodeAsc();
+        if (areas.isEmpty()) {
+            return new StorageData(List.of(), Map.of(), List.of(), Map.of());
+        }
+        Map<Long, Map<LocalDate, long[]>> days = new HashMap<>();
+        for (Object[] r : envRecords.dayStats(c.from(), c.to())) {
+            days.computeIfAbsent((Long) r[0], k -> new HashMap<>()).put((LocalDate) r[1],
+                    new long[] {((Number) r[2]).longValue(), r[3] == null ? 0 : ((Number) r[3]).longValue()});
+        }
+        List<com.cosmetic.scm.storage.EnvExcursion> excs = envExcursions.findByVoidedFalseAndStartedAtLessThanAndLastAtGreaterThanEqual(c.end(), c.start());
+        Map<Long, Deviation> devs = excs.isEmpty() ? Map.of()
+                : deviationRepo.findAllById(excs.stream().map(com.cosmetic.scm.storage.EnvExcursion::getDeviationId).filter(Objects::nonNull).distinct().toList())
+                        .stream().collect(Collectors.toMap(Deviation::getId, Function.identity()));
+        return new StorageData(areas, days, excs, devs);
+    }
+
+    /**
+     * 每个区域：期间内的记录数、超限数；要求每天记录的（启用中）列出漏记的日子（从开始记录日期起，到昨天为止）；
+     * 超限的偏差还没关闭算要注意，关闭了算已处理。没有登记区域时不判要注意，提示现场核对。
+     */
+    private StorageCheck storageCheck(Ctx c, StorageData sd, boolean retain) {
+        List<com.cosmetic.scm.storage.StorageArea> mine = sd.areas().stream()
+                .filter(a -> (a.getKind() == com.cosmetic.scm.domain.StorageAreaKind.RETAIN) == retain)
+                .filter(a -> a.isActive() || sd.days().containsKey(a.getId())).toList();
+        String what = retain ? "留样区域" : "仓储区域";
+        if (mine.isEmpty()) {
+            return new StorageCheck(false, retain ? "留样区域还没有在“贮存环境”登记温湿度范围和记录，留样区域和贮存条件请现场核对。"
+                    : "仓库还没有在“贮存环境”登记温湿度范围和记录，贮存条件请现场核对。", List.of());
+        }
+        LocalDate lastFull = c.to().isBefore(c.today()) ? c.to() : c.today().minusDays(1);
+        List<String> lines = new ArrayList<>();
+        int gapAreas = 0;
+        int openDevs = 0;
+        int excCount = 0;
+        for (com.cosmetic.scm.storage.StorageArea a : mine) {
+            Map<LocalDate, long[]> byDay = sd.days().getOrDefault(a.getId(), Map.of());
+            long total = byDay.values().stream().mapToLong(x -> x[0]).sum();
+            long out = byDay.values().stream().mapToLong(x -> x[1]).sum();
+            List<String> parts = new ArrayList<>();
+            parts.add("范围 " + a.limits().text());
+            parts.add("期间记录 " + total + " 条" + (out > 0 ? "，超限 " + out + " 条" : ""));
+            List<com.cosmetic.scm.storage.EnvExcursion> excs = sd.excursions().stream().filter(e -> e.getAreaId().equals(a.getId())).toList();
+            excCount += excs.size();
+            List<String> pending = new ArrayList<>();
+            for (com.cosmetic.scm.storage.EnvExcursion e : excs) {
+                Deviation d = e.getDeviationId() == null ? null : sd.deviations().get(e.getDeviationId());
+                if (d != null && d.getStatus() == CaseStatus.OPEN) {
+                    pending.add(e.getExcursionNo() + "（偏差 " + d.getDeviationNo() + " 未关闭）");
+                }
+            }
+            if (!excs.isEmpty()) {
+                parts.add("超限 " + excs.size() + " 次" + (pending.isEmpty() ? "，偏差都已关闭" : "：" + String.join("、", pending)));
+            }
+            openDevs += pending.size();
+            if (a.isActive() && a.isDailyRequired()) {
+                LocalDate start = a.getMonitorFrom().isAfter(c.from()) ? a.getMonitorFrom() : c.from();
+                List<LocalDate> missing = com.cosmetic.scm.domain.rules.StorageCondition.missingDays(start, lastFull, byDay.keySet());
+                if (!missing.isEmpty()) {
+                    gapAreas++;
+                    parts.add("漏记 " + missing.size() + " 天：" + com.cosmetic.scm.domain.rules.StorageCondition.daysText(missing, 5));
+                }
+            }
+            lines.add(a.getName() + "（" + a.getCode() + "）：" + String.join("；", parts));
+        }
+        boolean warn = gapAreas > 0 || openDevs > 0;
+        String summary = warn
+                ? mine.size() + " 个" + what + "里，" + (gapAreas > 0 ? gapAreas + " 个有漏记" : "") + (gapAreas > 0 && openDevs > 0 ? "，" : "")
+                        + (openDevs > 0 ? openDevs + " 次超限的偏差还没关闭" : "") + "（见“贮存环境”）。"
+                : mine.size() + " 个" + what + "的温湿度记录没有漏记" + (excCount > 0 ? "，期间超限 " + excCount + " 次，偏差都已关闭" : "，期间没有超限") + "。";
+        return new StorageCheck(warn, summary, lines);
     }
 
     private Evidence salesReturns(Ctx c) {

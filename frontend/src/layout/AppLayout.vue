@@ -80,7 +80,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   ArrowDown, Bell, Box, Coin, Connection, Finished, DataAnalysis, DataBoard, Document, Expand, Fold, Goods, Guide, Iphone, Memo, Notebook, OfficeBuilding,
-  Operation, Postcard, RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, Files, MagicStick, Picture, Switch, Timer, TrendCharts, User, Van, WarningFilled, Checked, Avatar, DocumentChecked
+  Operation, Postcard, RefreshLeft, ShoppingCart, Shop, Stamp, Tickets, Files, MagicStick, Picture, Switch, Timer, TrendCharts, User, Van, WarningFilled, Checked, Avatar, DocumentChecked, View, Odometer
 } from '@element-plus/icons-vue'
 import { useAuth, PASSWORD_RULE, ROLE_LABELS } from '../stores/auth'
 
@@ -122,6 +122,7 @@ const groups = computed(() => {
         { path: '/specs', title: '质量标准', icon: Tickets },
         { path: '/stock', title: '库存', icon: Box },
         { path: '/inventory-ops', title: '库存作业', icon: Operation },
+        { path: '/storage-env', title: '贮存环境', icon: Odometer },
         { path: '/scan', title: '扫码作业', icon: Iphone },
         { path: '/sales', title: '销售出库', icon: Van },
         { path: '/returns', title: '销售退货', icon: RefreshLeft },
@@ -138,6 +139,7 @@ const groups = computed(() => {
         { path: '/self-checks', title: 'GMP 自查', icon: Checked },
         { path: '/qso', title: '质量安全负责人', icon: Avatar },
         { path: '/oem-contracts', title: '委托合同', icon: DocumentChecked },
+        { path: '/oem-supervision', title: '受托生产监督', icon: View },
         { path: '/compliance', title: '合规资料', icon: Stamp },
         { path: '/stability', title: '稳定性试验', icon: Timer },
         { path: '/npd', title: '新品立项', icon: MagicStick },
@@ -150,9 +152,11 @@ const groups = computed(() => {
     },
     { title: '基础', items: [{ path: '/master', title: '主数据', icon: Coin }, { path: '/formulas', title: '配方与备案', icon: Notebook }] }
   ]
-  // 价格和金额只给采购和财务
+  // 价格和金额只给采购和财务；销售进对账结算只看客户应收
   if (auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE')) {
     list[1].items.splice(3, 0, { path: '/sourcing', title: '询价比价', icon: Tickets }, { path: '/settlement', title: '对账结算', icon: Coin })
+  } else if (auth.hasAny('SALES')) {
+    list[1].items.splice(3, 0, { path: '/settlement', title: '对账结算', icon: Coin })
   }
   if (auth.hasAny('ADMIN', 'MASTER_DATA', 'QA', 'QSO')) list[3].items.push({ path: '/golive', title: '上线检查', icon: Finished })
   if (auth.hasAny('ADMIN')) {

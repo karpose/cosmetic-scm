@@ -81,6 +81,7 @@ public class DashboardService {
     private final BatchRepository batches;
     private final MfgOrderRepository mfgOrders;
     private final SalesOrderRepository salesOrders;
+    private final com.cosmetic.scm.sales.SoLineRepository soLines;
     private final InventoryService inventory;
     private final MasterService master;
     private final MasterLookup lookup;
@@ -103,6 +104,8 @@ public class DashboardService {
     private final com.cosmetic.scm.qms.GmpSelfCheckService selfChecks;
     private final com.cosmetic.scm.qms.QsoService qso;
     private final com.cosmetic.scm.oemcontract.OemContractService oemContracts;
+    private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervision;
+    private final com.cosmetic.scm.storage.StorageMonitorService storageMonitor;
     private final com.cosmetic.scm.sales.SalesRecordService salesRecords;
     private final TimeProvider time;
 
@@ -281,6 +284,22 @@ public class DashboardService {
             todos.add(new Todo("OEM_CONTRACT_MISSING", "委托单没有委托生产合同", "warn", o.fgName(), o.moNo(),
                     "受托厂 " + o.factoryName() + "，下单时没有覆盖这个成品的有效合同", "/oem-contracts?tab=orders"));
         }
+        // 受托生产监督（检查要点第 9、18 项）
+        for (com.cosmetic.scm.oemsupervision.OemSupervisionService.RecordView r : oemSupervision.pendingReview()) {
+            todos.add(new Todo("OEM_SUPERVISION_REVIEW", "受托生产监督待审核", "warn", r.factoryName(), r.supervisionNo(),
+                    r.supervisedOn() + " " + r.methodLabel() + "，" + r.conclusionLabel() + "，" + r.submittedBy() + " 提交", "/oem-supervision"));
+        }
+        for (com.cosmetic.scm.oemsupervision.OemSupervisionService.FactoryRow f : oemSupervision.dueFactories()) {
+            todos.add(new Todo("OEM_SUPERVISION_DUE", "受托厂监督到期", "warn", f.factoryName(), f.factoryCode(),
+                    f.openOrders() + " 张委托单在做，" + (f.lastSupervised() == null ? "还没有监督记录" : "最近一次监督 " + f.lastSupervised() + "，超过 "
+                            + oemSupervision.intervalDays() + " 天"), "/oem-supervision?tab=factories"));
+        }
+        // 贮存区域温湿度（检查要点第 16、20 项）：仍超限的、昨天漏记的
+        for (com.cosmetic.scm.storage.StorageMonitorService.TodoRow r : storageMonitor.todos()) {
+            boolean out = "OUT".equals(r.kind());
+            todos.add(new Todo(out ? "STORAGE_EXCURSION" : "STORAGE_RECORD_MISSING", out ? "贮存区域温湿度超限" : "温湿度漏记", out ? "bad" : "warn",
+                    r.areaName(), r.areaCode(), r.detail(), out ? "/storage-env?tab=excursions" : "/storage-env"));
+        }
         for (com.cosmetic.scm.qms.GmpSelfCheckService.CheckRow r : selfChecks.waitingApproval()) {
             todos.add(new Todo("SELF_CHECK_APPROVE", "GMP 自查待签批", "warn", r.editionLabel(), r.checkNo(), "结论：" + r.conclusionLabel() + "，" + r.submittedBy() + " 提交", "/self-checks"));
         }
@@ -404,6 +423,12 @@ public class DashboardService {
                 todos.add(new Todo("AR_COLLECT", "客户回款即将到期", "info", cname, ar.getStatementNo(),
                         "到期日 " + due, "/settlement?tab=ar"));
             }
+        }
+        // 出库行没有单价：补上之前不进应收、不占信用额度（待办不带金额）
+        for (Object[] r : soLines.countUnpricedUnbilledByCustomer()) {
+            com.cosmetic.scm.master.Partner c = lookup.partner((Long) r[0]);
+            todos.add(new Todo("SO_UNPRICED", "出库行没有单价", "warn", c.getName(), c.getCode(),
+                    r[1] + " 行出库没有单价（最早 " + r[2] + "），补上前不进应收、不占信用额度", "/sales?tab=unpriced&customerId=" + r[0]));
         }
         long channelFailed = integration.failedCount();
         if (channelFailed > 0) {

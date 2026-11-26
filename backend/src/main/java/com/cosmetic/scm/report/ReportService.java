@@ -76,6 +76,8 @@ public class ReportService {
     private final com.cosmetic.scm.plm.FilingService filingService;
     private final SupplierAuditService audits;
     private final com.cosmetic.scm.oemcontract.OemContractService oemContracts;
+    private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervision;
+    private final com.cosmetic.scm.storage.StorageMonitorService storageMonitor;
     private final RetainService retains;
     private final PurchaseService purchases;
     private final com.cosmetic.scm.settlement.SettlementService settlement;
@@ -111,6 +113,9 @@ public class ReportService {
         m.put("capas", this::capas);
         m.put("supplier-audits", this::supplierAudits);
         m.put("oem-contracts", this::oemContractsReport);
+        m.put("oem-supervision", this::oemSupervisionReport);
+        m.put("env-records", () -> envRecordsReport(from, to));
+        m.put("env-excursions", this::envExcursionsReport);
         m.put("partner-compliance", this::partnerComplianceReport);
         m.put("retains", this::retainSamples);
         m.put("equipment", this::equipmentList);
@@ -302,9 +307,10 @@ public class ReportService {
         arSettlement.creditSummary().forEach(r -> rows.add(row(
                 r.customerCode(), r.customerName(), r.channel(), r.defaultCreditDays(),
                 r.creditLimit(), r.openCount(), r.openAr(), r.overdueAr(), r.unbilledShipped(), r.availableCredit(),
-                r.utilizationPct(), r.overLimit() ? "超额" : "正常")));
+                r.utilizationPct(), r.overLimit() ? "超额" : "正常", r.unpricedLines())));
         return new Table("客户授信使用概览", List.of("客户编码", "客户名称", "渠道", "默认账期（天）",
-                "授信额度", "未结单数", "未结应收", "逾期应收", "已出库未对账", "剩余可用额度", "使用率（%）", "状态"), rows);
+                "授信额度", "未结单数", "未结应收", "逾期应收", "已出库未对账", "剩余可用额度", "使用率（%）", "状态",
+                "没有单价的出库行（未计入额度）"), rows);
     }
 
     private Table arCollectionReport() {
@@ -612,6 +618,37 @@ public class ReportService {
                 c.otherTerms(), String.join("；", c.mismatches()), c.createdBy(), c.approvedBy(), c.approvedAt(), c.terminatedAt(), c.endReason())));
         return new Table("委托生产合同", List.of("系统编号", "合同编号", "受托生产企业", "合同名称", "签订日期", "开始日期", "结束日期", "状态", "覆盖的成品",
                 "原料", "包材", "签批时确认的约定事项", "其他约定", "和 BOM 不一致", "登记人", "签批人", "签批时间", "终止时间", "终止或作废原因"), rows);
+    }
+
+    private Table oemSupervisionReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        oemSupervision.listAll().forEach(r -> rows.add(row(r.supervisionNo(), r.factoryName(), r.moNo(), r.fgName(), r.methodLabel(), r.supervisedOn(),
+                r.scopeLabels(), r.participants(), r.content(), r.conclusionLabel(),
+                r.findings().stream().map(f -> f.seq() + ". [" + f.severityLabel() + "] " + f.description() + (f.correction() == null ? "" : "；当场纠正：" + f.correction())
+                        + (f.capaNo() == null ? "" : "；CAPA " + f.capaNo() + "（" + f.capaStatusLabel() + "）")).collect(java.util.stream.Collectors.joining("；")),
+                r.statusLabel(), r.createdBy(), r.submittedBy(), r.submittedAt(), r.reviewedBy(), r.reviewedAt(), r.reviewNote(), r.cancelReason())));
+        return new Table("受托生产监督", List.of("编号", "受托生产企业", "委托单", "成品", "监督方式", "监督日期", "监督环节", "参加人员", "监督情况", "结论",
+                "发现的问题", "状态", "登记人", "提交人", "提交时间", "审核人", "审核时间", "审核意见", "作废原因"), rows);
+    }
+
+    private Table envRecordsReport(LocalDate from, LocalDate to) {
+        LocalDate t = to == null ? time.today() : to;
+        LocalDate f = from == null ? t.minusMonths(1) : from;
+        List<List<Object>> rows = new ArrayList<>();
+        storageMonitor.exportRows(f, t).forEach(r -> rows.add(row(r.areaCode(), r.areaName(), r.recordedAt(), r.temp(), r.rh(), r.limitText(),
+                r.voided() ? "已作废" : r.inRange() ? "正常" : "超限", r.problem(), r.excursionNo(), r.deviationNo(), r.sourceLabel(), r.device(), r.note(),
+                r.createdBy(), r.createdAt(), r.voidReason(), r.voidedBy(), r.voidedAt())));
+        return new Table("温湿度记录", List.of("区域编码", "区域名称", "记录时间", "温度（℃）", "相对湿度（%）", "当时的范围", "结果", "超出情况", "超限编号", "偏差编号",
+                "来源", "记录仪", "备注", "记录人", "录入时间", "作废原因", "作废人", "作废时间"), rows);
+    }
+
+    private Table envExcursionsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        storageMonitor.excursionsAll().forEach(e -> rows.add(row(e.excursionNo(), e.areaCode(), e.areaName(), e.kindLabel(), e.startedAt(), e.lastAt(),
+                e.readingCount(), e.peakText(), e.limitText(), e.deviationNo(), e.deviationStatusLabel(),
+                e.voided() ? "超限记录已作废" : e.stillOut() ? "仍超限" : "已恢复")));
+        return new Table("温湿度超限", List.of("超限编号", "区域编码", "区域名称", "区域类型", "第一条超限", "最后一条超限", "超限记录数", "超限读数",
+                "区域现在的范围", "偏差编号", "偏差状态", "现在"), rows);
     }
 
     private Table partnerComplianceReport() {

@@ -2,6 +2,7 @@ package com.cosmetic.scm.demo;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.function.Supplier;
@@ -28,6 +29,8 @@ import com.cosmetic.scm.domain.Role;
 import com.cosmetic.scm.domain.Severity;
 import com.cosmetic.scm.domain.SupplyMode;
 import com.cosmetic.scm.domain.WarehouseKind;
+import com.cosmetic.scm.domain.StorageAreaKind;
+import com.cosmetic.scm.storage.StorageMonitorService;
 import com.cosmetic.scm.integration.IntegrationService;
 import com.cosmetic.scm.inventory.InventoryService;
 import com.cosmetic.scm.master.Item;
@@ -114,6 +117,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final com.cosmetic.scm.plm.ChangeService changeService;
     private final com.cosmetic.scm.plm.ArtworkService artworkService;
     private final com.cosmetic.scm.oemcontract.OemContractService oemContractService;
+    private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervisionService;
     private final QualityService quality;
     private final ProductionService production;
     private final SalesService sales;
@@ -126,6 +130,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final FormulaService formulas;
     private final FilingService filings;
     private final DeviationService deviations;
+    private final StorageMonitorService storageMonitor;
     private final SupplierAuditService supplierAudits;
     private final MesService mes;
     private final EquipmentService equipment;
@@ -351,6 +356,21 @@ public class DemoDataLoader implements ApplicationRunner {
         as("oem1", () -> oemPortal.addProgress(mo4.id(), new OemPortalService.ProgressReq(OemStage.CONFIRMED, t.plusDays(9), "已收到品牌方发料（示例）")));
         as("oem1", () -> oemPortal.addProgress(mo4.id(), new OemPortalService.ProgressReq(OemStage.SCHEDULED, null, "排在 3 号灌装线（示例）")));
 
+        // ---------- 受托生产监督：第一批精华液驻厂监督（一个一般问题当场纠正）已审核；第二批的批记录调阅已提交，等质量安全负责人审核 ----------
+        var sv1 = as("qa1", () -> oemSupervisionService.create(new com.cosmetic.scm.oemsupervision.OemSupervisionService.SaveReq(a3.id(), mo1.id(),
+                com.cosmetic.scm.domain.SupervisionMethod.ON_SITE, t.minusDays(14), List.of(com.cosmetic.scm.domain.SupervisionScope.MATERIAL,
+                com.cosmetic.scm.domain.SupervisionScope.PROCESS, com.cosmetic.scm.domain.SupervisionScope.ENVIRONMENT), "品牌方 QA（示例）；禾川 QA 主管（示例）",
+                "核对投料物料的批号和称量记录，配制、灌装按工艺规程执行，灌装间洁净度和压差在规定范围内（示例）")));
+        as("qa1", () -> oemSupervisionService.addFinding(sv1.id(), new com.cosmetic.scm.oemsupervision.OemSupervisionService.FindingReq(
+                com.cosmetic.scm.domain.FindingSeverity.MINOR, "灌装间压差记录漏填一次（示例）", "已要求当班补记并签名确认（示例）")));
+        as("qa1", () -> oemSupervisionService.submit(sv1.id()));
+        as("qso1", () -> oemSupervisionService.confirm(sv1.id(), new com.cosmetic.scm.oemsupervision.OemSupervisionService.ConfirmReq("同意（示例）", DEMO_PASSWORD)));
+        var sv2 = as("qa1", () -> oemSupervisionService.create(new com.cosmetic.scm.oemsupervision.OemSupervisionService.SaveReq(a3.id(), mo2.id(),
+                com.cosmetic.scm.domain.SupervisionMethod.RECORD_REVIEW, t.minusDays(1), List.of(com.cosmetic.scm.domain.SupervisionScope.TESTING,
+                com.cosmetic.scm.domain.SupervisionScope.RELEASE, com.cosmetic.scm.domain.SupervisionScope.RECORDS), null,
+                "调阅第二批精华液的批生产记录、出厂检验报告和出厂放行记录，记录完整（示例）")));
+        as("qa1", () -> oemSupervisionService.submit(sv2.id()));
+
         // ---------- 经销商在门户提交的一张订货单，等销售审核 ----------
         as("dealer1", () -> dealers.submit(new DealerService.OrderReq(t.plusDays(5), "补货（示例）",
                 List.of(new DealerService.LineReq(serum.getId(), new BigDecimal("200"))))));
@@ -386,6 +406,26 @@ public class DemoDataLoader implements ApplicationRunner {
                 null, "华东主仓温湿度记录缺失一天（示例）", "记录仪电池耗尽，缺少一天的数据；前后两天均在规定范围内（示例）", "更换电池并补充人工记录（示例）", t.plusDays(14))));
         as("qa1", () -> deviations.createCapa(new DeviationService.CapaReq(CapaSource.DEVIATION, null, dv.id(), CapaType.PREVENTIVE,
                 "把记录仪电量纳入每周点检（示例）", "仓库主管（示例）", t.plusDays(21))));
+
+        // ---------- 贮存区域和温湿度记录：主仓常温区 5 天前下午超温、第二天下午恢复（生成一份偏差）；留样室都在范围内 ----------
+        var whArea = as("qa1", () -> storageMonitor.createArea(new StorageMonitorService.AreaReq("WH-MAIN-A", "华东主仓常温区（示例）", StorageAreaKind.WAREHOUSE, main.id(),
+                new BigDecimal("10"), new BigDecimal("30"), null, new BigDecimal("75"), true, t.minusDays(14), null, "范围为示例，请按产品标签的贮存条件设定")));
+        var rsArea = as("qa1", () -> storageMonitor.createArea(new StorageMonitorService.AreaReq("RS-01", "品质部留样室", StorageAreaKind.RETAIN, null,
+                new BigDecimal("10"), new BigDecimal("30"), new BigDecimal("35"), new BigDecimal("75"), true, t.minusDays(14), null, "（示例）留样地点写“品质部留样室 B-01”这类的都算这个区域")));
+        for (var area : List.of(whArea, rsArea)) {
+            List<StorageMonitorService.ImportRow> rows = new ArrayList<>();
+            for (int d = 14; d >= 1; d--) {
+                for (int hour : new int[] {9, 16}) {
+                    BigDecimal temp = new BigDecimal(hour == 9 ? "20.5" : "24.0").add(BigDecimal.valueOf(d % 3 * 8, 1));
+                    if (area == whArea && ((d == 5 && hour == 16) || (d == 4 && hour == 9))) {
+                        temp = new BigDecimal(d == 5 ? "31.6" : "30.8");
+                    }
+                    rows.add(new StorageMonitorService.ImportRow(t.minusDays(d).atTime(hour, 0), temp, BigDecimal.valueOf(480 + d % 4 * 35, 1),
+                            "TH-LOG-0" + (area == whArea ? 1 : 2) + "（示例）", null));
+                }
+            }
+            as("qa1", () -> storageMonitor.importRows(area.id(), new StorageMonitorService.ImportReq(rows, false)));
+        }
 
         // ---------- 自产面霜：有工艺路线；已计划，待发料。发料后在生产单明细里填批生产记录 ----------
         for (String[] e : new String[][] {{"EQ-EM-01", "乳化锅 A（示例）", "2 号车间", "200"}, {"EQ-FL-01", "灌装机 1（示例）", "2 号车间", "120"}, {"EQ-SC-01", "电子秤 1（示例）", "称量间", "20"}}) {
