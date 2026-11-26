@@ -195,7 +195,7 @@
             <el-option v-for="p in rd.factories.value" :key="p.id" :value="p.id" :disabled="!p.usable"
                        :label="`${p.name}（${p.kindLabel}）${p.usable ? '' : ' 资质不可用'}`" />
           </el-select>
-          <div v-if="factory" class="muted small">许可证：{{ factory.licenseNo || '—' }}{{ factory.licenseScope ? `；许可项目：${factory.licenseScope}` : '' }}。请确认成品类别在许可范围内。</div>
+          <div v-if="factory" class="muted small">许可证：{{ factory.licenseNo || '—' }}{{ factory.licenseScope ? `；许可项目：${factory.licenseScope}` : '' }}{{ factoryMarks ? `；标注具备${factoryMarks}生产条件` : '' }}。请确认成品类别在许可范围内。</div>
         </el-form-item>
         <div class="form-grid">
           <el-form-item label="成品">
@@ -206,6 +206,9 @@
           <el-form-item label="计划数量"><el-input-number id="mo-qty" v-model="create.plannedQty" :min="1" :precision="0" :controls="false" style="width:100%" /></el-form-item>
           <el-form-item label="计划日期"><el-date-picker id="mo-date" v-model="create.plannedDate" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
         </div>
+        <el-alert v-if="licenseMissing.length" type="error" :closable="false" show-icon style="margin-bottom:8px"
+                  :title="`${factory.name} 的生产许可项目没有标注具备${licenseMissing.join('、')}化妆品生产条件，不能生产这个成品`"
+                  description="许可证上已有标注的，请先在“主数据 → 往来单位”给这家工厂勾上；成品类别标错的，请改成品主数据。" />
         <template v-if="contract?.applicable">
           <el-alert v-if="!contract.covered" :type="contract.required ? 'error' : 'warning'" :closable="false" show-icon
                     :title="contract.required ? '没有覆盖这个成品的有效委托生产合同，不能下委托单' : '没有覆盖这个成品的有效委托生产合同'"
@@ -216,7 +219,7 @@
       </el-form>
       <template #footer>
         <el-button @click="create.visible = false">取消</el-button>
-        <el-button type="primary" :loading="create.saving" :disabled="contractBlocked" @click="submitCreate">保存</el-button>
+        <el-button type="primary" :loading="create.saving" :disabled="contractBlocked || licenseMissing.length > 0" @click="submitCreate">保存</el-button>
       </template>
     </el-dialog>
 
@@ -489,6 +492,15 @@ const factory = computed(() => rd.s.partners.find((p) => p.id === create.factory
 // 委托生产合同：选了受托厂和成品就核对；默认只提醒，打开开关后没有合同不能保存
 const contract = ref(null)
 const contractReq = latestOnly()
+// 眼部护肤类、儿童护肤类成品：生产企业的许可项目要标注具备相应生产条件，后端保存时也拦
+const fgOfCreate = computed(() => rd.item(create.fgItemId))
+const factoryMarks = computed(() => [factory.value?.licenseEyeCare && '眼部护肤类', factory.value?.licenseChildCare && '儿童护肤类'].filter(Boolean).join('、'))
+const licenseMissing = computed(() => {
+  const f = factory.value
+  const g = fgOfCreate.value
+  if (!f || !g) return []
+  return [g.eyeCare && !f.licenseEyeCare && '眼部护肤类', g.childCare && !f.licenseChildCare && '儿童护肤类'].filter(Boolean)
+})
 const contractBlocked = computed(() => !!contract.value?.applicable && !contract.value.covered && contract.value.required)
 watch(() => [create.visible, create.factoryId, create.fgItemId], async ([visible, factoryId, fgItemId]) => {
   const current = contractReq()

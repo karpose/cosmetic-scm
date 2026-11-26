@@ -449,6 +449,12 @@ public class ProductionService {
         if (master.bomLines(fg.getId()).isEmpty()) {
             throw new BizException(fg.getName() + " 还没有维护 BOM，不能下生产单");
         }
+        // 眼部护肤类、儿童护肤类产品：生产企业的许可项目要标注具备相应生产条件（检查要点委托生产版第 2 项）
+        List<String> missingConditions = factory.missingConditionsFor(fg);
+        if (!missingConditions.isEmpty()) {
+            throw new BizException(com.cosmetic.scm.domain.rules.LicenseScope.message(factory.getName(), fg.getName(), missingConditions,
+                    factory.getKind() == PartnerKind.OEM ? "委托生产" : "生产"));
+        }
         // 委托生产合同（检查要点第 8 项）：按下单这一刻核对，默认只在审计和总览里提醒。
         // 先锁住候选合同（共享锁，和终止互斥），锁到以后再取下单时间，按整秒记，和事后读库的判断一致
         String contractNote = "";

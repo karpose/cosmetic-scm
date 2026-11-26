@@ -64,4 +64,10 @@ public class Item {
     private BigDecimal listPrice;
 
     private boolean active = true;
+
+    /** 成品属于眼部护肤类：受托方许可项目要标注具备相应生产条件（检查要点委托生产版第 2 项）。 */
+    private boolean eyeCare;
+
+    /** 成品属于儿童护肤类：同上。 */
+    private boolean childCare;
 }

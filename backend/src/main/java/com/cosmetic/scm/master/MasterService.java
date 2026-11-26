@@ -201,6 +201,8 @@ public class MasterService {
         m.put("启用", i.isActive());
         m.put("标准成本", i.getStdCost());
         m.put("指导价", i.getListPrice());
+        m.put("眼部护肤类", i.isEyeCare());
+        m.put("儿童护肤类", i.isChildCare());
         return m;
     }
 
@@ -227,6 +229,10 @@ public class MasterService {
         item.setActive(req.active() == null || req.active());
         item.setStdCost(req.stdCost());
         item.setListPrice(req.itemType() == ItemType.FG ? req.listPrice() : null);
+        // 留空（旧客户端、没有这一列的导入）保留原值；只有成品有类别
+        boolean fg = req.itemType() == ItemType.FG;
+        item.setEyeCare(fg && (req.eyeCare() == null ? item.isEyeCare() : req.eyeCare()));
+        item.setChildCare(fg && (req.childCare() == null ? item.isChildCare() : req.childCare()));
     }
 
     // ---------- 往来单位 ----------
@@ -290,6 +296,9 @@ public class MasterService {
         p.setDefaultTaxRate(req.defaultTaxRate());
         p.setFinanceCode(blankToNull(req.financeCode()));
         p.setCreditLimit(req.kind() == PartnerKind.CUSTOMER ? req.creditLimit() : null);
+        // 许可项目标注只对生产企业有意义；留空保留原值
+        p.setLicenseEyeCare(factory && (req.licenseEyeCare() == null ? p.isLicenseEyeCare() : req.licenseEyeCare()));
+        p.setLicenseChildCare(factory && (req.licenseChildCare() == null ? p.isLicenseChildCare() : req.licenseChildCare()));
     }
 
     public PartnerView toView(Partner p, LocalDate today) {
@@ -304,7 +313,8 @@ public class MasterService {
                 p.getBatchPrefix(), p.getChannel(), p.getMinShelfPct(), p.getContact(), p.getAddress(),
                 p.isQualified(), p.isCriticalSupplier(),
                 p.getTaxId(), p.getBankName(), p.getBankAccount(),
-                p.getDefaultCreditDays(), p.getDefaultTaxRate(), p.getFinanceCode(), p.getCreditLimit());
+                p.getDefaultCreditDays(), p.getDefaultTaxRate(), p.getFinanceCode(), p.getCreditLimit(),
+                p.isLicenseEyeCare(), p.isLicenseChildCare());
     }
 
     private static Map<String, Object> partnerFields(Partner p) {
@@ -328,6 +338,8 @@ public class MasterService {
         m.put("默认税率（%）", p.getDefaultTaxRate());
         m.put("财务客商编码", p.getFinanceCode());
         m.put("信用额度", p.getCreditLimit());
+        m.put("许可标注眼部护肤类", p.isLicenseEyeCare());
+        m.put("许可标注儿童护肤类", p.isLicenseChildCare());
         return m;
     }
 

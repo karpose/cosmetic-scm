@@ -128,12 +128,13 @@ public class OemContractService {
      * state：DRAFT 草稿、PENDING 待签批、NOT_STARTED 未开始、IN_EFFECT 执行中、EXPIRED 已到期、TERMINATED 已终止、VOID 已作废。
      * expiringSoon：执行中、30 天内到期且没有续签（同一受托厂另有到期更晚的生效合同覆盖全部成品算续签）。
      * mismatches：合同约定的物料采购分工和成品现行 BOM 的供料方式不一致的地方。hasFile：有没有上传合同扫描件。
+     * licenseGaps：合同里的眼部护肤类、儿童护肤类成品，受托厂许可项目没有标注相应生产条件的（每个成品一句）。
      */
     public record ContractView(Long id, String contractNo, String extNo, Long factoryId, String factoryCode, String factoryName, String title,
                                LocalDate signedOn, LocalDate validFrom, LocalDate validTo, ContractSupply rmSupply, String rmSupplyLabel,
                                ContractSupply pkSupply, String pkSupplyLabel, List<ProductRef> products, String productNames, String otherTerms,
                                List<String> checked, ContractStatus status, String statusLabel, String state, String stateLabel, Long daysLeft,
-                               boolean expiringSoon, List<String> mismatches, boolean hasFile, String rejectNote, String createdBy, LocalDateTime createdAt,
+                               boolean expiringSoon, List<String> mismatches, List<String> licenseGaps, boolean hasFile, String rejectNote, String createdBy, LocalDateTime createdAt,
                                String submittedBy, LocalDateTime submittedAt, String approvedBy, LocalDateTime approvedAt, String terminatedBy,
                                LocalDateTime terminatedAt, String endReason) {
     }
@@ -150,9 +151,16 @@ public class OemContractService {
                              MoStatus status, String statusLabel, LocalDateTime createdAt, Long contractId, String contractNo, boolean covered) {
     }
 
-    /** 下委托单前的核对。applicable：选的是受托生产企业（自有工厂不用合同）。 */
+    /**
+     * 下委托单前的核对。applicable：选的是受托生产企业（自有工厂不用合同）。
+     * licenseMissing：成品要求、生产企业许可项目没有标注的生产条件（自有工厂也核对），有的话不能下单。
+     */
     public record CheckView(boolean applicable, boolean required, boolean covered, Long contractId, String contractNo, LocalDate validTo,
-                            List<String> mismatches) {
+                            List<String> mismatches, List<String> licenseMissing) {
+    }
+
+    /** 总览待办：还没完成的委托单、执行中或未开始的合同里，受托厂许可项目没有标注成品要求的生产条件。kind：ORDER 委托单、CONTRACT 合同。 */
+    public record LicenseGap(String kind, Long refId, String refNo, Long factoryId, String factoryName, Long fgItemId, String fgName, List<String> missing) {
     }
 
     // ---------- 查询 ----------
@@ -204,16 +212,49 @@ public class OemContractService {
         Partner f = lookup.partner(factoryId);
         Item fg = lookup.item(fgItemId);
         if (f.getKind() != PartnerKind.OEM) {
-            return new CheckView(false, requireForOrder, true, null, null, null, List.of());
+            return new CheckView(false, requireForOrder, true, null, null, null, List.of(), f.missingConditionsFor(fg));
         }
         var cover = OemContractTerms.covering(contracts, contractProducts, factoryId, fgItemId, OemContractTerms.stamp(time.now()));
         if (cover.isEmpty()) {
-            return new CheckView(true, requireForOrder, false, null, null, null, List.of());
+            return new CheckView(true, requireForOrder, false, null, null, null, List.of(), f.missingConditionsFor(fg));
         }
         OemContract c = contracts.findById(cover.get().id()).orElseThrow();
         List<String> mismatches = ContractCoverage.supplyMismatches(fg.getName(), c.getRmSupply(), c.getPkSupply(),
                 bomOf(List.of(fgItemId), lookup.itemMap()).getOrDefault(fgItemId, List.of()));
-        return new CheckView(true, requireForOrder, true, c.getId(), c.getContractNo(), c.getValidTo(), mismatches);
+        return new CheckView(true, requireForOrder, true, c.getId(), c.getContractNo(), c.getValidTo(), mismatches, f.missingConditionsFor(fg));
+    }
+
+    /** 受托厂许可项目没有标注成品要求的生产条件：还没完成的委托单（标注或类别是下单后改的）、执行中和未开始的合同。 */
+    @Transactional(readOnly = true)
+    public List<LicenseGap> licenseGaps() {
+        Map<Long, Item> im = lookup.itemMap();
+        Map<Long, Partner> pm = lookup.partnerMap();
+        List<LicenseGap> out = new ArrayList<>();
+        for (MfgOrder m : orders.findByMoTypeAndStatusIn(MoType.OEM, OPEN_ORDERS)) {
+            Partner f = pm.get(m.getFactoryId());
+            Item fg = im.get(m.getFgItemId());
+            if (f != null && fg != null && !f.missingConditionsFor(fg).isEmpty()) {
+                out.add(new LicenseGap("ORDER", m.getId(), m.getMoNo(), f.getId(), f.getName(), fg.getId(), fg.getName(), f.missingConditionsFor(fg)));
+            }
+        }
+        LocalDate today = time.today();
+        List<OemContract> live = contracts.findByStatusInOrderById(List.of(ContractStatus.ACTIVE)).stream()
+                .filter(c -> !today.isAfter(c.getValidTo())).toList();
+        Map<Long, List<Long>> productsOf = live.isEmpty() ? Map.of() : contractProducts.findByContractIdIn(live.stream().map(OemContract::getId).toList()).stream()
+                .collect(Collectors.groupingBy(OemContractProduct::getContractId, Collectors.mapping(OemContractProduct::getFgItemId, Collectors.toList())));
+        for (OemContract c : live) {
+            Partner f = pm.get(c.getFactoryId());
+            if (f == null) {
+                continue;
+            }
+            for (Long pid : productsOf.getOrDefault(c.getId(), List.of())) {
+                Item fg = im.get(pid);
+                if (fg != null && !f.missingConditionsFor(fg).isEmpty()) {
+                    out.add(new LicenseGap("CONTRACT", c.getId(), c.getContractNo(), f.getId(), f.getName(), fg.getId(), fg.getName(), f.missingConditionsFor(fg)));
+                }
+            }
+        }
+        return out;
     }
 
     // ---------- 写操作 ----------
@@ -264,7 +305,10 @@ public class OemContractService {
         return views(List.of(c)).get(0);
     }
 
-    /** 质量安全负责人签批：不是登记人或提交人，约定事项全部确认，有扫描件，受托厂在合格名录内且生产许可证有效。 */
+    /**
+     * 质量安全负责人签批：不是登记人或提交人，约定事项全部确认，有扫描件，受托厂在合格名录内且生产许可证有效，
+     * 合同里的眼部护肤类、儿童护肤类成品，受托厂许可项目标注了相应生产条件。
+     */
     @Transactional
     public ContractView approve(Long id, ApproveReq req) {
         OemContract c = lock(id);
@@ -283,6 +327,11 @@ public class OemContractService {
         }
         Partner f = lookup.partner(c.getFactoryId());
         requireFactory(f);
+        List<String> gaps = licenseGaps(f, productIds(c.getId()), lookup.itemMap());
+        if (!gaps.isEmpty()) {
+            throw new BizException(f.getName() + " 的生产许可项目没有标注相应生产条件，不能签批：" + String.join("；", gaps)
+                    + "。许可证上已有标注的，请先在主数据里给受托厂勾上；没有的，请退回把这些成品移出合同");
+        }
         c.setStatus(ContractStatus.ACTIVE);
         c.setClauses(String.join(",", CLAUSES.keySet()));
         c.setApprovedBy(signer.getUsername());
@@ -386,6 +435,21 @@ public class OemContractService {
                 .collect(Collectors.joining("、")) + "，原料" + c.getRmSupply().getLabel() + "，包材" + c.getPkSupply().getLabel();
     }
 
+    /** 每个缺标注的成品一句：“眼霜（眼部护肤类）”。 */
+    private static List<String> licenseGaps(Partner f, List<Long> productIds, Map<Long, Item> im) {
+        List<String> out = new ArrayList<>();
+        for (Long pid : productIds) {
+            Item fg = im.get(pid);
+            if (fg != null) {
+                List<String> missing = f.missingConditionsFor(fg);
+                if (!missing.isEmpty()) {
+                    out.add(fg.getName() + "（" + String.join("、", missing) + "）");
+                }
+            }
+        }
+        return out;
+    }
+
     private List<Long> productIds(Long contractId) {
         return contractProducts.findByContractId(contractId).stream().map(OemContractProduct::getFgItemId).toList();
     }
@@ -455,10 +519,12 @@ public class OemContractService {
                     .toList();
             List<String> checked = c.getClauses() == null || c.getClauses().isBlank() ? List.of() : List.of(c.getClauses().split(","));
             Partner f = pm.get(c.getFactoryId());
+            boolean live = c.getStatus() != ContractStatus.VOID && c.getStatus() != ContractStatus.TERMINATED && !"EXPIRED".equals(state);
+            List<String> gaps = live && f != null ? licenseGaps(f, refs.stream().map(ProductRef::id).toList(), im) : List.of();
             return new ContractView(c.getId(), c.getContractNo(), c.getExtNo(), c.getFactoryId(), f == null ? null : f.getCode(), f == null ? null : f.getName(),
                     c.getTitle(), c.getSignedOn(), c.getValidFrom(), c.getValidTo(), c.getRmSupply(), c.getRmSupply().getLabel(), c.getPkSupply(),
                     c.getPkSupply().getLabel(), refs, refs.stream().map(ProductRef::name).collect(Collectors.joining("、")), c.getOtherTerms(), checked,
-                    c.getStatus(), c.getStatus().getLabel(), state, stateLabel(state), daysLeft, expiring, mismatches, withFile.contains(c.getId()),
+                    c.getStatus(), c.getStatus().getLabel(), state, stateLabel(state), daysLeft, expiring, mismatches, gaps, withFile.contains(c.getId()),
                     c.getRejectNote(), c.getCreatedBy(), c.getCreatedAt(), c.getSubmittedBy(), c.getSubmittedAt(), c.getApprovedBy(), c.getApprovedAt(),
                     c.getTerminatedBy(), c.getTerminatedAt(), c.getEndReason());
         }).toList();

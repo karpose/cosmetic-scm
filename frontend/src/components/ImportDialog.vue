@@ -161,7 +161,9 @@ const SPECS = {
       { header: '指导价（元）', key: 'listPrice', conv: num('指导价'), example: '' },
       // 新列放最后：已经下载过旧模板的人，原有各列的位置不变
       { header: 'CAS 号', key: 'casNo', conv: text, example: '' },
-      { header: '标签净含量', key: 'netLabel', conv: text, example: '' }
+      { header: '标签净含量', key: 'netLabel', conv: text, example: '' },
+      { header: '眼部护肤类', key: 'eyeCare', conv: flag('眼部护肤类', false), show: yn, example: '否' },
+      { header: '儿童护肤类', key: 'childCare', conv: flag('儿童护肤类', false), show: yn, example: '否' }
     ]
   },
   opening: {
@@ -241,7 +243,10 @@ const SPECS = {
       { header: '银行账号', key: 'bankAccount', conv: text, example: '' },
       { header: '默认账期（天）', key: 'defaultCreditDays', conv: int('默认账期'), example: '30' },
       { header: '默认税率（%）', key: 'defaultTaxRate', conv: num('默认税率'), example: '13' },
-      { header: '财务客商编码', key: 'financeCode', conv: text, example: '' }
+      { header: '财务客商编码', key: 'financeCode', conv: text, example: '' },
+      // 新列放最后：生产许可项目是否标注具备眼部护肤类、儿童护肤类化妆品生产条件，只对受托生产企业和自有工厂有意义
+      { header: '许可标注眼部护肤类', key: 'licenseEyeCare', conv: flag('许可标注眼部护肤类', false), show: yn, example: '否' },
+      { header: '许可标注儿童护肤类', key: 'licenseChildCare', conv: flag('许可标注儿童护肤类', false), show: yn, example: '否' }
     ]
   }
 }

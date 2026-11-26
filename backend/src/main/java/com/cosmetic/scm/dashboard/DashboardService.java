@@ -284,6 +284,13 @@ public class DashboardService {
             todos.add(new Todo("OEM_CONTRACT_MISSING", "委托单没有委托生产合同", "warn", o.fgName(), o.moNo(),
                     "受托厂 " + o.factoryName() + "，下单时没有覆盖这个成品的有效合同", "/oem-contracts?tab=orders"));
         }
+        // 受托厂许可项目标注（检查要点第 2 项）：下单、签批时已拦，这里是之后改了成品类别或许可标注的
+        for (com.cosmetic.scm.oemcontract.OemContractService.LicenseGap g : oemContracts.licenseGaps()) {
+            boolean order = "ORDER".equals(g.kind());
+            todos.add(new Todo("OEM_LICENSE_SCOPE", "受托厂许可项目没有标注生产条件", "bad", g.fgName(), g.refNo(),
+                    (order ? "委托单" : "委托生产合同") + "，受托厂 " + g.factoryName() + " 的许可项目没有标注具备" + String.join("、", g.missing())
+                            + "生产条件，请核对许可证，必要时停止委托", order ? "/oem-contracts?tab=orders" : "/oem-contracts"));
+        }
         // 受托生产监督（检查要点第 9、18 项）
         for (com.cosmetic.scm.oemsupervision.OemSupervisionService.RecordView r : oemSupervision.pendingReview()) {
             todos.add(new Todo("OEM_SUPERVISION_REVIEW", "受托生产监督待审核", "warn", r.factoryName(), r.supervisionNo(),
