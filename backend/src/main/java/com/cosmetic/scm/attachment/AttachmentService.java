@@ -90,6 +90,7 @@ public class AttachmentService {
     private final com.cosmetic.scm.plm.ArtworkProofRepository artworkProofs;
     private final com.cosmetic.scm.qms.QsoAppointmentRepository qsoAppointments;
     private final com.cosmetic.scm.oemcontract.OemContractRepository oemContracts;
+    private final com.cosmetic.scm.oemsupervision.OemSupervisionRepository oemSupervisions;
 
     @Value("${scm.storage.max-file-mb:20}")
     private int maxFileMb;
@@ -383,6 +384,7 @@ public class AttachmentService {
             case PO_SHIPMENT_LINE -> shipmentLines;
             case QSO_APPOINTMENT -> qsoAppointments;
             case OEM_CONTRACT -> oemContracts;
+            case OEM_SUPERVISION -> oemSupervisions;
         };
     }
 

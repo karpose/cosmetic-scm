@@ -304,7 +304,7 @@ def draw(theme):
     cv.node(col[0], yC, CW, "委托生产合同", "签批生效才算依据", "entity", "prod")
     cv.node(col[2], yC, CW, "受托厂完工申报", "委托 · 出厂放行", key="prod")
     cv.chip(col[3], yC + 22, "成品批次 · 待放行")
-    cv.node(col[2], yD, CW, "受托厂", "代工厂门户", "entity", "prod")
+    cv.node(col[2], yD, CW, "受托厂", "门户 · 驻厂监督", "entity", "prod")
 
     # 补货建议 → 生产单
     cv.edge([(col[0], yA + NH), (col[0], yB)], "prod")

@@ -93,6 +93,9 @@ public class GmpEvidenceService {
     private final com.cosmetic.scm.oemcontract.OemContractProductRepository oemContractProducts;
     private final com.cosmetic.scm.master.BomRepository boms;
     private final com.cosmetic.scm.master.BomLineRepository bomLines;
+    private final com.cosmetic.scm.oemsupervision.OemSupervisionRepository oemSupervisions;
+    private final com.cosmetic.scm.oemsupervision.OemSupervisionFindingRepository oemFindings;
+    private final CapaRepository capas;
     private final TimeProvider time;
 
     /** level：OK 没发现问题，WARN 要注意，INFO 仅供参考。 */
@@ -129,8 +132,10 @@ public class GmpEvidenceService {
         out.add(oemAudit(c));
         out.add(oemList(c));
         out.add(contracts(c));
-        out.add(oemSupervision(c));
-        out.add(oemDisqualified(c));
+        Supervisions sv = supervisions(c);
+        out.add(oemSupervision(c, sv));
+        out.add(oemDisqualified(c, sv));
+        out.add(oemRecords(c, sv));
         out.add(procedures());
         out.add(suppliedMaterials(c));
         List<Batch> released = releasedFgBatches(c);
@@ -371,23 +376,142 @@ public class GmpEvidenceService {
                 + (inForce.isEmpty() ? "。" : "，执行中合同约定的物料采购分工和现行 BOM 一致。") + "合同条款是否履行请人工核对。", limit(details));
     }
 
-    private Evidence oemSupervision(Ctx c) {
+    /** 期间内（按监督日期）提交了或审核过的受托生产监督，和它们发现的问题、转出的 CAPA。 */
+    private record Supervisions(List<com.cosmetic.scm.oemsupervision.OemSupervision> list,
+                                Map<Long, List<com.cosmetic.scm.oemsupervision.OemSupervisionFinding>> findings, Map<Long, Capa> capas) {
+
+        List<com.cosmetic.scm.oemsupervision.OemSupervisionFinding> of(Long id) {
+            return findings.getOrDefault(id, List.of());
+        }
+
+        /** 转了 CAPA、CAPA 还没验证的问题。 */
+        boolean capaOpen(com.cosmetic.scm.oemsupervision.OemSupervisionFinding f) {
+            Capa x = f.getCapaId() == null ? null : capas.get(f.getCapaId());
+            return x != null && x.getStatus() != com.cosmetic.scm.domain.CapaStatus.VERIFIED;
+        }
+    }
+
+    private Supervisions supervisions(Ctx c) {
+        List<com.cosmetic.scm.oemsupervision.OemSupervision> list = oemSupervisions.findBySupervisedOnBetweenAndStatusInOrderBySupervisedOnAscIdAsc(c.from(), c.to(),
+                com.cosmetic.scm.oemsupervision.OemSupervisionService.EFFECTIVE);
+        if (list.isEmpty()) {
+            return new Supervisions(List.of(), Map.of(), Map.of());
+        }
+        Map<Long, List<com.cosmetic.scm.oemsupervision.OemSupervisionFinding>> byId = oemFindings.findBySupervisionIdInOrderBySupervisionIdAscSeqAsc(
+                list.stream().map(com.cosmetic.scm.oemsupervision.OemSupervision::getId).toList()).stream()
+                .collect(Collectors.groupingBy(com.cosmetic.scm.oemsupervision.OemSupervisionFinding::getSupervisionId));
+        Map<Long, Capa> capaMap = capas.findAllById(byId.values().stream().flatMap(List::stream).map(com.cosmetic.scm.oemsupervision.OemSupervisionFinding::getCapaId)
+                .filter(Objects::nonNull).distinct().toList()).stream().collect(Collectors.toMap(Capa::getId, Function.identity()));
+        return new Supervisions(list, byId, capaMap);
+    }
+
+    private static String svLine(Ctx c, com.cosmetic.scm.oemsupervision.OemSupervision s, Map<Long, MfgOrder> mos) {
+        Partner f = c.partners().get(s.getFactoryId());
+        MfgOrder m = s.getMoId() == null ? null : mos.get(s.getMoId());
+        return s.getSupervisionNo() + " " + s.getSupervisedOn() + " " + (f == null ? "" : f.getName()) + " " + s.getMethod().getLabel()
+                + (m == null ? "" : "（委托单 " + m.getMoNo() + "）") + (s.getStatus() == com.cosmetic.scm.domain.SupervisionStatus.SUBMITTED ? "，待审核" : "");
+    }
+
+    /**
+     * 第 9 项：期间内有委托生产的受托厂都要有监督记录（驻厂、现场检查、调阅记录、远程视频），提交了的都要审核；
+     * 列出发现的问题和还没验证的 CAPA，以及完工的委托单里有多少张有针对本单的监督。
+     */
+    private Evidence oemSupervision(Ctx c, Supervisions sv) {
         long completed = c.orders().stream().filter(m -> m.getMoType() == MoType.OEM && m.getStatus() == MoStatus.COMPLETED && c.in(m.getCompletedAt())).count();
         Map<Long, Batch> byId = batchesOf(c.decisionsInPeriod());
         long oemReleases = c.decisionsInPeriod().stream().filter(d -> d.getStage() == QcStage.MARKET_RELEASE && d.getDecision() == Decision.RELEASED)
                 .map(d -> byId.get(d.getBatchId())).filter(b -> b != null && b.isOemReleased()).count();
-        return new Evidence(9, "INFO", "期间内委托生产完工 " + completed + " 单，上市放行时审核过受托厂出厂放行记录的 " + oemReleases + " 批。现场监督、驻厂检查的记录请人工核对。", List.of());
+        Set<Long> active = activeFactories(c);
+        Set<Long> supervised = sv.list().stream().map(com.cosmetic.scm.oemsupervision.OemSupervision::getFactoryId).collect(Collectors.toSet());
+        Set<Long> coveredMo = sv.list().stream().map(com.cosmetic.scm.oemsupervision.OemSupervision::getMoId).filter(Objects::nonNull).collect(Collectors.toSet());
+        long completedCovered = c.orders().stream().filter(m -> m.getMoType() == MoType.OEM && m.getStatus() == MoStatus.COMPLETED && c.in(m.getCompletedAt())
+                && coveredMo.contains(m.getId())).count();
+        List<String> problems = new ArrayList<>();
+        active.stream().filter(id -> !supervised.contains(id)).map(id -> c.partners().get(id)).filter(Objects::nonNull)
+                .sorted(Comparator.comparing(Partner::getCode)).forEach(p -> problems.add(p.getName() + "：期间内有委托生产，没有监督记录"));
+        long pending = sv.list().stream().filter(s -> s.getStatus() == com.cosmetic.scm.domain.SupervisionStatus.SUBMITTED).count();
+        if (pending > 0) {
+            problems.add(pending + " 份监督记录还没有质量安全负责人审核");
+        }
+        Map<Long, MfgOrder> mos = new HashMap<>();
+        c.orders().forEach(m -> mos.put(m.getId(), m));
+        List<String> details = new ArrayList<>(problems);
+        Map<com.cosmetic.scm.domain.SupervisionMethod, Long> byMethod = sv.list().stream()
+                .collect(Collectors.groupingBy(com.cosmetic.scm.oemsupervision.OemSupervision::getMethod, () -> new java.util.EnumMap<>(com.cosmetic.scm.domain.SupervisionMethod.class),
+                        Collectors.counting()));
+        int findingCount = 0;
+        int major = 0;
+        for (com.cosmetic.scm.oemsupervision.OemSupervision s : sv.list()) {
+            for (com.cosmetic.scm.oemsupervision.OemSupervisionFinding f : sv.of(s.getId())) {
+                findingCount++;
+                major += f.getSeverity() == com.cosmetic.scm.domain.FindingSeverity.MAJOR ? 1 : 0;
+                if (sv.capaOpen(f)) {
+                    Capa x = sv.capas().get(f.getCapaId());
+                    details.add(s.getSupervisionNo() + " 问题 " + f.getSeq() + "（" + f.getSeverity().getLabel() + "）：CAPA " + x.getCapaNo() + " " + x.getStatus().getLabel());
+                }
+            }
+        }
+        sv.list().stream().sorted(Comparator.comparing(com.cosmetic.scm.oemsupervision.OemSupervision::getSupervisedOn).reversed()).limit(10)
+                .forEach(s -> details.add(svLine(c, s, mos)));
+        String counts = sv.list().isEmpty() ? "" : "共 " + sv.list().size() + " 次（" + byMethod.entrySet().stream().map(e -> e.getKey().getLabel() + " " + e.getValue())
+                .collect(Collectors.joining("、")) + "），发现问题 " + findingCount + " 个" + (major > 0 ? "（重大 " + major + " 个）" : "") + "，都已当场纠正或转 CAPA";
+        String tail = "期间内委托生产完工 " + completed + " 单，其中 " + completedCovered + " 单有针对本单的监督；上市放行时审核过受托厂出厂放行记录的 " + oemReleases + " 批。";
+        if (active.isEmpty() && sv.list().isEmpty()) {
+            return new Evidence(9, "INFO", "期间内没有委托生产，也没有监督记录。", List.of());
+        }
+        if (!problems.isEmpty()) {
+            String head = problems.size() <= 3 ? String.join("；", problems) + "。" : problems.size() + " 处要注意。";
+            return new Evidence(9, "WARN", head + (counts.isEmpty() ? "" : "期间内监督" + counts + "。") + tail, limit(details));
+        }
+        return new Evidence(9, "OK", "期间内委托生产的 " + active.size() + " 家受托厂都有监督记录，都已审核：" + counts + "。" + tail, limit(details));
     }
 
-    private Evidence oemDisqualified(Ctx c) {
-        List<String> problems = c.orders().stream().filter(m -> m.getMoType() == MoType.OEM && (m.getStatus() == MoStatus.PLANNED || m.getStatus() == MoStatus.ISSUED))
+    /**
+     * 第 10 项：已停用的受托厂不能还有没完成的委托单；期间内监督发现重大问题、CAPA 还没验证、又还有在做的委托单的受托厂，要评估是否停止委托。
+     */
+    private Evidence oemDisqualified(Ctx c, Supervisions sv) {
+        List<MfgOrder> open = c.orders().stream().filter(m -> m.getMoType() == MoType.OEM && (m.getStatus() == MoStatus.PLANNED || m.getStatus() == MoStatus.ISSUED)).toList();
+        List<String> problems = new ArrayList<>(open.stream()
                 .filter(m -> {
                     Partner p = c.partners().get(m.getFactoryId());
                     return p != null && !p.isQualified();
-                }).map(m -> m.getMoNo() + "：受托厂 " + c.partners().get(m.getFactoryId()).getName() + " 已停用，委托单还没完成").toList();
+                }).map(m -> m.getMoNo() + "：受托厂 " + c.partners().get(m.getFactoryId()).getName() + " 已停用，委托单还没完成").toList());
+        Set<Long> withOpen = open.stream().map(MfgOrder::getFactoryId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, List<String>> risky = new java.util.TreeMap<>();
+        for (com.cosmetic.scm.oemsupervision.OemSupervision s : sv.list()) {
+            for (com.cosmetic.scm.oemsupervision.OemSupervisionFinding f : sv.of(s.getId())) {
+                if (f.getSeverity() == com.cosmetic.scm.domain.FindingSeverity.MAJOR && sv.capaOpen(f) && withOpen.contains(s.getFactoryId())) {
+                    risky.computeIfAbsent(s.getFactoryId(), k -> new ArrayList<>()).add(s.getSupervisionNo() + " 问题 " + f.getSeq());
+                }
+            }
+        }
+        risky.forEach((id, list) -> {
+            Partner p = c.partners().get(id);
+            problems.add((p == null ? String.valueOf(id) : p.getName()) + "：监督发现的重大问题（" + String.join("、", list)
+                    + "）整改还没验证，还有在做的委托单，请评估是否需要停止委托");
+        });
         return problems.isEmpty()
-                ? new Evidence(10, "OK", "没有已停用的受托厂还有未完成的委托单。", List.of())
-                : new Evidence(10, "WARN", problems.size() + " 张委托单的受托厂已停用。", limit(problems));
+                ? new Evidence(10, "OK", "没有已停用的受托厂还有未完成的委托单；在做委托单的受托厂没有未验证整改的重大监督问题。", List.of())
+                : new Evidence(10, "WARN", problems.size() + " 处要注意。", limit(problems));
+    }
+
+    /** 第 18 项：期间内调阅或检查受托方生产质量记录的监督（方式“调阅记录”或环节含“生产质量记录”）。 */
+    private Evidence oemRecords(Ctx c, Supervisions sv) {
+        List<com.cosmetic.scm.oemsupervision.OemSupervision> reviews = sv.list().stream()
+                .filter(s -> s.getMethod() == com.cosmetic.scm.domain.SupervisionMethod.RECORD_REVIEW
+                        || (s.getScopes() != null && List.of(s.getScopes().split(",")).contains(com.cosmetic.scm.domain.SupervisionScope.RECORDS.name())))
+                .sorted(Comparator.comparing(com.cosmetic.scm.oemsupervision.OemSupervision::getSupervisedOn).reversed()).toList();
+        Map<Long, MfgOrder> mos = new HashMap<>();
+        c.orders().forEach(m -> mos.put(m.getId(), m));
+        List<String> details = reviews.stream().map(s -> svLine(c, s, mos)).toList();
+        if (activeFactories(c).isEmpty() && reviews.isEmpty()) {
+            return new Evidence(18, "INFO", "期间内没有委托生产。委托方提供物料的，相关记录的保存安排请对照委托生产合同核对。", List.of());
+        }
+        if (reviews.isEmpty()) {
+            return new Evidence(18, "WARN", "期间内有委托生产，但没有调阅或检查受托方生产质量记录的监督记录（在“受托生产监督”里登记方式“调阅记录”，或环节勾“生产质量记录”）。",
+                    List.of());
+        }
+        return new Evidence(18, "OK", "期间内调阅或检查受托方生产质量记录 " + reviews.size() + " 次。委托方提供物料的，相关记录的保存安排请对照委托生产合同核对。", limit(details));
     }
 
     // ---- 制度和物料 ----

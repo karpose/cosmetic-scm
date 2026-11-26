@@ -2167,6 +2167,70 @@ test('委托生产合同：登记、上传扫描件、QSO 逐项确认签批；�
   await expect(mo.getByText(/依据委托生产合同 HT-/)).toBeVisible()
 })
 
+test('受托生产监督：登记驻厂监督和问题，重大问题转 CAPA 后才能提交；质量安全负责人审核', async ({ page }) => {
+  await login(page, 'qa1')
+  await page.goto('/oem-supervision')
+  const rows = page.locator('main .el-table__row:visible')
+  const demoReview = rows.filter({ hasText: '调阅记录' })
+  await expect(demoReview).toContainText('待审核')
+  await expect(rows.filter({ hasText: '驻厂监督' })).toContainText('发现一般问题')
+  // 前面的用例可能已经把在做的委托单都完工了，所以只看最近一次监督和没有到期
+  await page.getByRole('tab', { name: /^受托厂/ }).click()
+  const he = rows.filter({ hasText: '禾川生物' })
+  await expect(he).toContainText(/\d{4}-\d{2}-\d{2}\d+ 次/)
+  await expect(he).not.toContainText('该去监督了')
+
+  // 从委托单页签登记驻厂监督
+  await page.getByRole('tab', { name: '委托单' }).click()
+  const mo = rows.filter({ hasText: '没有针对本单的监督' }).first()
+  const moNo = (await mo.locator('.mono').first().textContent()).trim()
+  await mo.getByRole('button', { name: '登记监督' }).click()
+  const ed = dialog(page, '登记受托生产监督')
+  await expect(ed.locator('.el-form-item').filter({ hasText: '委托单（选填）' })).toContainText(moNo)
+  await ed.locator('.el-checkbox').filter({ hasText: '生产过程' }).click()
+  await ed.locator('.el-checkbox').filter({ hasText: '检验' }).click()
+  await ed.locator('#sv-content').fill('E2E 驻厂监督配制和灌装')
+  await ed.getByRole('button', { name: '保存记录' }).click()
+  await toast(page, '已登记')
+  const dt = page.getByRole('dialog', { name: /^监督记录 JD/ })
+  await expect(dt).toContainText(moNo)
+
+  // 详情弹窗过一遍 axe（登记问题的表单也在里面）
+  await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+  const bad = await dt.evaluate(async (e) => {
+    const r = await window.axe.run(e, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+    return r.violations.map((v) => `${v.id} ×${v.nodes.length}：${v.nodes[0].target[0]}`)
+  })
+  expect(bad).toEqual([])
+
+  await dt.locator('.el-radio-button').filter({ hasText: '重大问题' }).click()
+  await dt.locator('#sv-finding').fill('E2E 灌装首件未确认')
+  await dt.getByRole('button', { name: '登记问题' }).click()
+  await toast(page, '已登记问题')
+  await expect(dt).toContainText('重大问题要转 CAPA')
+  await dt.getByRole('button', { name: '提交审核' }).click()
+  await toast(page, '问题 1 是重大问题，要转 CAPA')
+  await dt.getByRole('button', { name: '转 CAPA' }).click()
+  const cp = page.getByRole('dialog', { name: '问题 1 转 CAPA' })
+  await cp.locator('#sv-capa-desc').fill('E2E 受托方修订首件确认规程并培训')
+  await cp.getByRole('button', { name: '生成 CAPA' }).click()
+  await toast(page, '已生成 CAPA')
+  await expect(dt.getByRole('link', { name: /CAPA CA/ })).toBeVisible()
+  await dt.getByRole('button', { name: '提交审核' }).click()
+  await toast(page, '等质量安全负责人审核')
+  await page.getByRole('tab', { name: '委托单' }).click()
+  await expect(rows.filter({ hasText: moNo })).toContainText('待审核')
+
+  // 质量安全负责人审核示例的批记录调阅
+  await login(page, 'qso1')
+  await page.goto('/oem-supervision')
+  await demoReview.getByRole('button', { name: '审核' }).click()
+  await dt.locator('#sv-review-pwd').fill(DEMO)
+  await dt.getByRole('button', { name: '审核通过' }).click()
+  await toast(page, '已审核')
+  await expect(demoReview).toContainText('已审核')
+})
+
 test('产品销售记录：列出法规要求的内容，缺的标出来，价格只给销售看，能导出', async ({ page }) => {
   await login(page, 'sales1')
   await page.goto('/sales?tab=records')
@@ -2692,7 +2756,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/sales?tab=unpriced', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/oem-supervision', '/oem-supervision?tab=factories', '/oem-supervision?tab=orders', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/sales?tab=unpriced', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页
@@ -2796,6 +2860,7 @@ test('无障碍：常用弹窗 axe 无违规', async ({ page }) => {
   await audit('/inventory-ops', '仓间调拨')
   await audit('/production', '新建生产 / 委托单')
   await audit('/oem-contracts', '登记合同')
+  await audit('/oem-supervision', '登记监督')
   await audit('/qms', '登记偏差')
 })
 

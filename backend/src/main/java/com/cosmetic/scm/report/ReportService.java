@@ -76,6 +76,7 @@ public class ReportService {
     private final com.cosmetic.scm.plm.FilingService filingService;
     private final SupplierAuditService audits;
     private final com.cosmetic.scm.oemcontract.OemContractService oemContracts;
+    private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervision;
     private final RetainService retains;
     private final PurchaseService purchases;
     private final com.cosmetic.scm.settlement.SettlementService settlement;
@@ -111,6 +112,7 @@ public class ReportService {
         m.put("capas", this::capas);
         m.put("supplier-audits", this::supplierAudits);
         m.put("oem-contracts", this::oemContractsReport);
+        m.put("oem-supervision", this::oemSupervisionReport);
         m.put("partner-compliance", this::partnerComplianceReport);
         m.put("retains", this::retainSamples);
         m.put("equipment", this::equipmentList);
@@ -613,6 +615,17 @@ public class ReportService {
                 c.otherTerms(), String.join("；", c.mismatches()), c.createdBy(), c.approvedBy(), c.approvedAt(), c.terminatedAt(), c.endReason())));
         return new Table("委托生产合同", List.of("系统编号", "合同编号", "受托生产企业", "合同名称", "签订日期", "开始日期", "结束日期", "状态", "覆盖的成品",
                 "原料", "包材", "签批时确认的约定事项", "其他约定", "和 BOM 不一致", "登记人", "签批人", "签批时间", "终止时间", "终止或作废原因"), rows);
+    }
+
+    private Table oemSupervisionReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        oemSupervision.listAll().forEach(r -> rows.add(row(r.supervisionNo(), r.factoryName(), r.moNo(), r.fgName(), r.methodLabel(), r.supervisedOn(),
+                r.scopeLabels(), r.participants(), r.content(), r.conclusionLabel(),
+                r.findings().stream().map(f -> f.seq() + ". [" + f.severityLabel() + "] " + f.description() + (f.correction() == null ? "" : "；当场纠正：" + f.correction())
+                        + (f.capaNo() == null ? "" : "；CAPA " + f.capaNo() + "（" + f.capaStatusLabel() + "）")).collect(java.util.stream.Collectors.joining("；")),
+                r.statusLabel(), r.createdBy(), r.submittedBy(), r.submittedAt(), r.reviewedBy(), r.reviewedAt(), r.reviewNote(), r.cancelReason())));
+        return new Table("受托生产监督", List.of("编号", "受托生产企业", "委托单", "成品", "监督方式", "监督日期", "监督环节", "参加人员", "监督情况", "结论",
+                "发现的问题", "状态", "登记人", "提交人", "提交时间", "审核人", "审核时间", "审核意见", "作废原因"), rows);
     }
 
     private Table partnerComplianceReport() {

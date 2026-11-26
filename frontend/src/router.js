@@ -27,6 +27,7 @@ const routes = [
       { path: 'docs', name: 'docs', component: () => import('./views/Docs.vue'), meta: { title: '受控文件' } },
       { path: 'qso', name: 'qso', component: () => import('./views/Qso.vue'), meta: { title: '质量安全负责人' } },
       { path: 'oem-contracts', name: 'oem-contracts', component: () => import('./views/OemContracts.vue'), meta: { title: '委托生产合同' } },
+      { path: 'oem-supervision', name: 'oem-supervision', component: () => import('./views/OemSupervision.vue'), meta: { title: '受托生产监督' } },
       { path: 'self-checks', name: 'self-checks', component: () => import('./views/SelfChecks.vue'), meta: { title: 'GMP 自查' } },
       { path: 'changes', name: 'changes', component: () => import('./views/Changes.vue'), meta: { title: '变更控制' } },
       { path: 'npd', name: 'npd', component: () => import('./views/Npd.vue'), meta: { title: '新品立项' } },
