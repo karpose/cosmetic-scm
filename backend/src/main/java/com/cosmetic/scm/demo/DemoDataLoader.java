@@ -114,6 +114,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final com.cosmetic.scm.plm.ChangeService changeService;
     private final com.cosmetic.scm.plm.ArtworkService artworkService;
     private final com.cosmetic.scm.oemcontract.OemContractService oemContractService;
+    private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervisionService;
     private final QualityService quality;
     private final ProductionService production;
     private final SalesService sales;
@@ -350,6 +351,21 @@ public class DemoDataLoader implements ApplicationRunner {
         as("prod1", () -> production.issue(mo4.id()));
         as("oem1", () -> oemPortal.addProgress(mo4.id(), new OemPortalService.ProgressReq(OemStage.CONFIRMED, t.plusDays(9), "已收到品牌方发料（示例）")));
         as("oem1", () -> oemPortal.addProgress(mo4.id(), new OemPortalService.ProgressReq(OemStage.SCHEDULED, null, "排在 3 号灌装线（示例）")));
+
+        // ---------- 受托生产监督：第一批精华液驻厂监督（一个一般问题当场纠正）已审核；第二批的批记录调阅已提交，等质量安全负责人审核 ----------
+        var sv1 = as("qa1", () -> oemSupervisionService.create(new com.cosmetic.scm.oemsupervision.OemSupervisionService.SaveReq(a3.id(), mo1.id(),
+                com.cosmetic.scm.domain.SupervisionMethod.ON_SITE, t.minusDays(14), List.of(com.cosmetic.scm.domain.SupervisionScope.MATERIAL,
+                com.cosmetic.scm.domain.SupervisionScope.PROCESS, com.cosmetic.scm.domain.SupervisionScope.ENVIRONMENT), "品牌方 QA（示例）；禾川 QA 主管（示例）",
+                "核对投料物料的批号和称量记录，配制、灌装按工艺规程执行，灌装间洁净度和压差在规定范围内（示例）")));
+        as("qa1", () -> oemSupervisionService.addFinding(sv1.id(), new com.cosmetic.scm.oemsupervision.OemSupervisionService.FindingReq(
+                com.cosmetic.scm.domain.FindingSeverity.MINOR, "灌装间压差记录漏填一次（示例）", "已要求当班补记并签名确认（示例）")));
+        as("qa1", () -> oemSupervisionService.submit(sv1.id()));
+        as("qso1", () -> oemSupervisionService.confirm(sv1.id(), new com.cosmetic.scm.oemsupervision.OemSupervisionService.ConfirmReq("同意（示例）", DEMO_PASSWORD)));
+        var sv2 = as("qa1", () -> oemSupervisionService.create(new com.cosmetic.scm.oemsupervision.OemSupervisionService.SaveReq(a3.id(), mo2.id(),
+                com.cosmetic.scm.domain.SupervisionMethod.RECORD_REVIEW, t.minusDays(1), List.of(com.cosmetic.scm.domain.SupervisionScope.TESTING,
+                com.cosmetic.scm.domain.SupervisionScope.RELEASE, com.cosmetic.scm.domain.SupervisionScope.RECORDS), null,
+                "调阅第二批精华液的批生产记录、出厂检验报告和出厂放行记录，记录完整（示例）")));
+        as("qa1", () -> oemSupervisionService.submit(sv2.id()));
 
         // ---------- 经销商在门户提交的一张订货单，等销售审核 ----------
         as("dealer1", () -> dealers.submit(new DealerService.OrderReq(t.plusDays(5), "补货（示例）",

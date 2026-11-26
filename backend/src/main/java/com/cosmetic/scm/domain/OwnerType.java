@@ -21,7 +21,8 @@ public enum OwnerType {
     ARTWORK_PROOF("包材打样"),
     PO_SHIPMENT_LINE("送货通知明细"),
     QSO_APPOINTMENT("质量安全负责人任职"),
-    OEM_CONTRACT("委托生产合同");
+    OEM_CONTRACT("委托生产合同"),
+    OEM_SUPERVISION("受托生产监督");
 
     private final String label;
 
