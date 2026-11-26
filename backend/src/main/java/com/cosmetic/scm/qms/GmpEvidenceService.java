@@ -96,6 +96,10 @@ public class GmpEvidenceService {
     private final com.cosmetic.scm.oemsupervision.OemSupervisionRepository oemSupervisions;
     private final com.cosmetic.scm.oemsupervision.OemSupervisionFindingRepository oemFindings;
     private final CapaRepository capas;
+    private final DeviationRepository deviationRepo;
+    private final com.cosmetic.scm.storage.StorageAreaRepository storageAreas;
+    private final com.cosmetic.scm.storage.EnvRecordRepository envRecords;
+    private final com.cosmetic.scm.storage.EnvExcursionRepository envExcursions;
     private final TimeProvider time;
 
     /** level：OK 没发现问题，WARN 要注意，INFO 仅供参考。 */
@@ -142,10 +146,11 @@ public class GmpEvidenceService {
         out.add(marketRelease(c, released));
         out.add(certificates(c));
         out.add(retainLocations(c));
-        out.add(retainPerBatch(c, released));
+        StorageData storage = storageData(c);
+        out.add(retainPerBatch(c, released, storage));
         out.add(records(c));
         out.add(salesRecords(c));
-        out.add(expiredStock(c));
+        out.add(expiredStock(c, storage));
         out.add(salesReturns(c));
         List<Complaint> cs = complaints.findByReceivedDateGreaterThanEqual(from).stream().filter(x -> !x.getReceivedDate().isAfter(to)).toList();
         out.add(complaintsCheck(c, cs));
@@ -581,14 +586,18 @@ public class GmpEvidenceService {
         return new Evidence(15, "INFO", locations.isEmpty() ? "期间内没有新的留样。" : "期间内留样用到 " + locations.size() + " 个地点；不在住所或主要经营场所的，请核对是否已按期报告。", limit(locations));
     }
 
-    private Evidence retainPerBatch(Ctx c, List<Batch> released) {
+    private Evidence retainPerBatch(Ctx c, List<Batch> released, StorageData storage) {
         Set<Long> withSample = released.isEmpty() ? Set.of()
                 : retains.findByBatchIdIn(released.stream().map(Batch::getId).toList()).stream().map(RetainSample::getBatchId).collect(Collectors.toSet());
         List<String> problems = released.stream().filter(b -> b.getSourceType() == SourceType.MO && !withSample.contains(b.getId()))
                 .map(b -> b.getBatchNo() + "：上市放行了，没有留样记录").toList();
-        return problems.isEmpty()
-                ? new Evidence(16, "OK", "期间内上市放行的 " + released.size() + " 批都有留样记录，留样期限由系统按使用期限后 6 个月计算。留样区域和贮存条件请现场核对。", List.of())
-                : new Evidence(16, "WARN", problems.size() + " 批没有留样记录。", limit(problems));
+        StorageCheck sc = storageCheck(c, storage, true);
+        List<String> details = new ArrayList<>(problems);
+        details.addAll(sc.lines());
+        String head = problems.isEmpty()
+                ? "期间内上市放行的 " + released.size() + " 批都有留样记录，留样期限由系统按使用期限后 6 个月计算。"
+                : problems.size() + " 批没有留样记录。";
+        return new Evidence(16, problems.isEmpty() && !sc.warn() ? "OK" : "WARN", head + sc.summary(), limit(details));
     }
 
     private Evidence records(Ctx c) {
@@ -614,7 +623,7 @@ public class GmpEvidenceService {
         return new Evidence(19, "WARN", "期间内销售出库 " + r.orders() + " 单，" + r.incompleteRows() + " 行销售记录不全。", limit(details));
     }
 
-    private Evidence expiredStock(Ctx c) {
+    private Evidence expiredStock(Ctx c, StorageData storage) {
         List<Stock> on = stocks.findByQtyGreaterThan(BigDecimal.ZERO);
         Map<Long, Batch> byId = batches.findAllById(on.stream().map(Stock::getBatchId).distinct().toList()).stream()
                 .collect(Collectors.toMap(Batch::getId, Function.identity()));
@@ -624,9 +633,94 @@ public class GmpEvidenceService {
                         && b.getStatus() != BatchStatus.REJECTED)
                 .sorted(Comparator.comparing(Batch::getExpDate))
                 .map(b -> b.getBatchNo() + "：已于 " + b.getExpDate() + " 过期，还有 " + qty.get(b.getId()).stripTrailingZeros().toPlainString() + " 在库").toList();
-        return problems.isEmpty()
-                ? new Evidence(20, "OK", "没有过期的成品还在库。贮存运输条件请现场核对。", List.of())
-                : new Evidence(20, "WARN", problems.size() + " 批过期成品还在库，没有处理。", limit(problems));
+        StorageCheck sc = storageCheck(c, storage, false);
+        List<String> details = new ArrayList<>(problems);
+        details.addAll(sc.lines());
+        String head = problems.isEmpty() ? "没有过期的成品还在库。" : problems.size() + " 批过期成品还在库，没有处理。";
+        return new Evidence(20, problems.isEmpty() && !sc.warn() ? "OK" : "WARN", head + sc.summary() + "运输条件请人工核对。", limit(details));
+    }
+
+    // ---- 贮存区域温湿度（第 16 项看留样区，第 20 项看其余区域） ----
+
+    /** 期间内的按日统计（区域 → 日期 → {记录数, 超限数}）、和期间有交集的超限、它们的偏差。都是按期间或分组查的。 */
+    private record StorageData(List<com.cosmetic.scm.storage.StorageArea> areas, Map<Long, Map<LocalDate, long[]>> days,
+                               List<com.cosmetic.scm.storage.EnvExcursion> excursions, Map<Long, Deviation> deviations) {
+    }
+
+    private record StorageCheck(boolean warn, String summary, List<String> lines) {
+    }
+
+    private StorageData storageData(Ctx c) {
+        List<com.cosmetic.scm.storage.StorageArea> areas = storageAreas.findAllByOrderByCodeAsc();
+        if (areas.isEmpty()) {
+            return new StorageData(List.of(), Map.of(), List.of(), Map.of());
+        }
+        Map<Long, Map<LocalDate, long[]>> days = new HashMap<>();
+        for (Object[] r : envRecords.dayStats(c.from(), c.to())) {
+            days.computeIfAbsent((Long) r[0], k -> new HashMap<>()).put((LocalDate) r[1],
+                    new long[] {((Number) r[2]).longValue(), r[3] == null ? 0 : ((Number) r[3]).longValue()});
+        }
+        List<com.cosmetic.scm.storage.EnvExcursion> excs = envExcursions.findByVoidedFalseAndStartedAtLessThanAndLastAtGreaterThanEqual(c.end(), c.start());
+        Map<Long, Deviation> devs = excs.isEmpty() ? Map.of()
+                : deviationRepo.findAllById(excs.stream().map(com.cosmetic.scm.storage.EnvExcursion::getDeviationId).filter(Objects::nonNull).distinct().toList())
+                        .stream().collect(Collectors.toMap(Deviation::getId, Function.identity()));
+        return new StorageData(areas, days, excs, devs);
+    }
+
+    /**
+     * 每个区域：期间内的记录数、超限数；要求每天记录的（启用中）列出漏记的日子（从开始记录日期起，到昨天为止）；
+     * 超限的偏差还没关闭算要注意，关闭了算已处理。没有登记区域时不判要注意，提示现场核对。
+     */
+    private StorageCheck storageCheck(Ctx c, StorageData sd, boolean retain) {
+        List<com.cosmetic.scm.storage.StorageArea> mine = sd.areas().stream()
+                .filter(a -> (a.getKind() == com.cosmetic.scm.domain.StorageAreaKind.RETAIN) == retain)
+                .filter(a -> a.isActive() || sd.days().containsKey(a.getId())).toList();
+        String what = retain ? "留样区域" : "仓储区域";
+        if (mine.isEmpty()) {
+            return new StorageCheck(false, retain ? "留样区域还没有在“贮存环境”登记温湿度范围和记录，留样区域和贮存条件请现场核对。"
+                    : "仓库还没有在“贮存环境”登记温湿度范围和记录，贮存条件请现场核对。", List.of());
+        }
+        LocalDate lastFull = c.to().isBefore(c.today()) ? c.to() : c.today().minusDays(1);
+        List<String> lines = new ArrayList<>();
+        int gapAreas = 0;
+        int openDevs = 0;
+        int excCount = 0;
+        for (com.cosmetic.scm.storage.StorageArea a : mine) {
+            Map<LocalDate, long[]> byDay = sd.days().getOrDefault(a.getId(), Map.of());
+            long total = byDay.values().stream().mapToLong(x -> x[0]).sum();
+            long out = byDay.values().stream().mapToLong(x -> x[1]).sum();
+            List<String> parts = new ArrayList<>();
+            parts.add("范围 " + a.limits().text());
+            parts.add("期间记录 " + total + " 条" + (out > 0 ? "，超限 " + out + " 条" : ""));
+            List<com.cosmetic.scm.storage.EnvExcursion> excs = sd.excursions().stream().filter(e -> e.getAreaId().equals(a.getId())).toList();
+            excCount += excs.size();
+            List<String> pending = new ArrayList<>();
+            for (com.cosmetic.scm.storage.EnvExcursion e : excs) {
+                Deviation d = e.getDeviationId() == null ? null : sd.deviations().get(e.getDeviationId());
+                if (d != null && d.getStatus() == CaseStatus.OPEN) {
+                    pending.add(e.getExcursionNo() + "（偏差 " + d.getDeviationNo() + " 未关闭）");
+                }
+            }
+            if (!excs.isEmpty()) {
+                parts.add("超限 " + excs.size() + " 次" + (pending.isEmpty() ? "，偏差都已关闭" : "：" + String.join("、", pending)));
+            }
+            openDevs += pending.size();
+            if (a.isActive() && a.isDailyRequired()) {
+                LocalDate start = a.getMonitorFrom().isAfter(c.from()) ? a.getMonitorFrom() : c.from();
+                List<LocalDate> missing = com.cosmetic.scm.domain.rules.StorageCondition.missingDays(start, lastFull, byDay.keySet());
+                if (!missing.isEmpty()) {
+                    gapAreas++;
+                    parts.add("漏记 " + missing.size() + " 天：" + com.cosmetic.scm.domain.rules.StorageCondition.daysText(missing, 5));
+                }
+            }
+            lines.add(a.getName() + "（" + a.getCode() + "）：" + String.join("；", parts));
+        }
+        boolean warn = gapAreas > 0 || openDevs > 0;
+        String summary = warn
+                ? mine.size() + " 个" + what + "里，" + (gapAreas > 0 ? gapAreas + " 个有漏记" : "") + (gapAreas > 0 && openDevs > 0 ? "，" : "")
+                        + (openDevs > 0 ? openDevs + " 次超限的偏差还没关闭" : "") + "（见“贮存环境”）。"
+                : mine.size() + " 个" + what + "的温湿度记录没有漏记" + (excCount > 0 ? "，期间超限 " + excCount + " 次，偏差都已关闭" : "，期间没有超限") + "。";
+        return new StorageCheck(warn, summary, lines);
     }
 
     private Evidence salesReturns(Ctx c) {

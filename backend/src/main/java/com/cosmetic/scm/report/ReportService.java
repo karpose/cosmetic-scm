@@ -77,6 +77,7 @@ public class ReportService {
     private final SupplierAuditService audits;
     private final com.cosmetic.scm.oemcontract.OemContractService oemContracts;
     private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervision;
+    private final com.cosmetic.scm.storage.StorageMonitorService storageMonitor;
     private final RetainService retains;
     private final PurchaseService purchases;
     private final com.cosmetic.scm.settlement.SettlementService settlement;
@@ -113,6 +114,8 @@ public class ReportService {
         m.put("supplier-audits", this::supplierAudits);
         m.put("oem-contracts", this::oemContractsReport);
         m.put("oem-supervision", this::oemSupervisionReport);
+        m.put("env-records", () -> envRecordsReport(from, to));
+        m.put("env-excursions", this::envExcursionsReport);
         m.put("partner-compliance", this::partnerComplianceReport);
         m.put("retains", this::retainSamples);
         m.put("equipment", this::equipmentList);
@@ -626,6 +629,26 @@ public class ReportService {
                 r.statusLabel(), r.createdBy(), r.submittedBy(), r.submittedAt(), r.reviewedBy(), r.reviewedAt(), r.reviewNote(), r.cancelReason())));
         return new Table("受托生产监督", List.of("编号", "受托生产企业", "委托单", "成品", "监督方式", "监督日期", "监督环节", "参加人员", "监督情况", "结论",
                 "发现的问题", "状态", "登记人", "提交人", "提交时间", "审核人", "审核时间", "审核意见", "作废原因"), rows);
+    }
+
+    private Table envRecordsReport(LocalDate from, LocalDate to) {
+        LocalDate t = to == null ? time.today() : to;
+        LocalDate f = from == null ? t.minusMonths(1) : from;
+        List<List<Object>> rows = new ArrayList<>();
+        storageMonitor.exportRows(f, t).forEach(r -> rows.add(row(r.areaCode(), r.areaName(), r.recordedAt(), r.temp(), r.rh(), r.limitText(),
+                r.voided() ? "已作废" : r.inRange() ? "正常" : "超限", r.problem(), r.excursionNo(), r.deviationNo(), r.sourceLabel(), r.device(), r.note(),
+                r.createdBy(), r.createdAt(), r.voidReason(), r.voidedBy(), r.voidedAt())));
+        return new Table("温湿度记录", List.of("区域编码", "区域名称", "记录时间", "温度（℃）", "相对湿度（%）", "当时的范围", "结果", "超出情况", "超限编号", "偏差编号",
+                "来源", "记录仪", "备注", "记录人", "录入时间", "作废原因", "作废人", "作废时间"), rows);
+    }
+
+    private Table envExcursionsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        storageMonitor.excursionsAll().forEach(e -> rows.add(row(e.excursionNo(), e.areaCode(), e.areaName(), e.kindLabel(), e.startedAt(), e.lastAt(),
+                e.readingCount(), e.peakText(), e.limitText(), e.deviationNo(), e.deviationStatusLabel(),
+                e.voided() ? "超限记录已作废" : e.stillOut() ? "仍超限" : "已恢复")));
+        return new Table("温湿度超限", List.of("超限编号", "区域编码", "区域名称", "区域类型", "第一条超限", "最后一条超限", "超限记录数", "超限读数",
+                "区域现在的范围", "偏差编号", "偏差状态", "现在"), rows);
     }
 
     private Table partnerComplianceReport() {

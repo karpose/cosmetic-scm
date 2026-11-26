@@ -183,6 +183,15 @@ public class DeviationService {
         return d;
     }
 
+    /** 贮存区域温湿度超限时自动生成（一次超限一份），不挂批次：区域里的批次由调查时评估。 */
+    @Transactional
+    public Deviation createForStorage(String excursionNo, DeviationLevel level, LocalDate occurred, String title, String description) {
+        Deviation d = newDeviation(occurred, DeviationArea.WAREHOUSE, level, title, description, time.today().plusDays(15));
+        deviations.save(d);
+        audit.log("登记偏差", d.getDeviationNo(), "温湿度超限自动生成，" + excursionNo + "：" + title, description);
+        return d;
+    }
+
     private Deviation newDeviation(LocalDate occurred, DeviationArea area, DeviationLevel level, String title, String description, LocalDate due) {
         Deviation d = new Deviation();
         d.setDeviationNo(docNo.next("DV", time.today()));

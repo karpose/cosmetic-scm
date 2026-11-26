@@ -586,6 +586,33 @@ test('库存作业：调拨、盘点、报废', async ({ page }) => {
   await expect(row(page, '报废')).toBeVisible()
 })
 
+test('贮存环境：质量设区域和温湿度范围，仓库录入', async ({ page }) => {
+  await login(page, 'qa_zhang')
+  await page.goto('/storage-env')
+  await page.getByRole('button', { name: '新增区域' }).click()
+  const d = dialog(page)
+  await page.locator('#sa-code').fill('WH-A-01')
+  await page.locator('#sa-name').fill('主仓常温区')
+  await choose(page, selectOf(page, 'sa-wh'), '主仓')
+  await page.locator('#sa-tmin').fill('10')
+  await field(d, '温度范围').locator('input').nth(1).fill('30')
+  await field(d, '相对湿度范围').locator('input').nth(1).fill('75')
+  await field(d, '相对湿度范围').locator('input').nth(1).blur()
+  await d.getByRole('button', { name: '新增区域' }).click()
+  await toast(page, '已新增')
+  await expect(row(page, 'WH-A-01')).toContainText('温度 10–30℃，湿度 ≤75%')
+
+  await login(page, 'wh_qian')
+  await page.goto('/storage-env')
+  await row(page, 'WH-A-01').getByRole('button', { name: '录入' }).click()
+  await page.locator('#er-temp').fill('22.5')
+  await page.locator('#er-rh').fill('55')
+  await page.locator('#er-rh').blur()
+  await dialog(page).getByRole('button', { name: '保存记录' }).click()
+  await toast(page, '在范围内')
+  await expect(row(page, 'WH-A-01')).toContainText('22.5℃ / 55%')
+})
+
 test('扫码：批次查询，出库核对扫错当场拦下', async ({ page }) => {
   await login(page, 'wh_qian')
   await page.goto('/scan')

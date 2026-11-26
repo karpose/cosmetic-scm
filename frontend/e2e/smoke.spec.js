@@ -2231,6 +2231,67 @@ test('受托生产监督：登记驻厂监督和问题，重大问题转 CAPA �
   await expect(demoReview).toContainText('已审核')
 })
 
+test('贮存环境：录入温湿度先提示超限，导入记录仪 CSV 超限生成偏差，选区域看趋势图', async ({ page }) => {
+  await login(page, 'purchase1') // 有仓库角色：能录入、导入，不能设区域和作废
+  await page.goto('/storage-env')
+  await expect(page.getByRole('button', { name: '新增区域' })).toHaveCount(0)
+  const rows = page.locator('main .el-table__row:visible')
+  const wh = rows.filter({ hasText: '华东主仓常温区' })
+  await expect(wh).toContainText('温度 10–30℃，湿度 ≤75%')
+  await expect(wh).toContainText('正常')
+
+  // 记录仪导出的 CSV：英文表头、斜杠日期、带秒；昨晚 20:30 超温，21:00 恢复
+  const day = new Date(Date.now() - 86400000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' }).replace(/-/g, '/')
+  await wh.getByRole('button', { name: '导入' }).click()
+  const im = dialog(page, '导入温湿度记录：华东主仓常温区')
+  await im.locator('input[type=file]').setInputFiles({ name: 'logger.csv', mimeType: 'text/csv',
+    buffer: Buffer.from(['Time,Temperature(°C),Humidity(%RH)', `${day} 20:00:00,24.36,52`, `${day} 20:30:00,31.2℃,55%`, `${day} 21:00:00,25.0,53`].join('\r\n') + '\r\n') })
+  await expect(im.getByText('预检通过：3 条温湿度记录')).toBeVisible()
+  await expect(im.getByText('超限 1 条，新的超限 1 次，各生成一份偏差')).toBeVisible()
+  await im.getByRole('button', { name: /确认导入/ }).click()
+  await toast(page, '已导入 3 条温湿度记录')
+
+  // 手工录入：填超限的值先提示，改回正常再保存
+  await wh.getByRole('button', { name: '录入' }).click()
+  const rc = dialog(page, '录入温湿度：华东主仓常温区')
+  await rc.locator('#er-temp').fill('33.5')
+  await rc.locator('#er-rh').fill('50')
+  await expect(rc).toContainText('温度高于上限 30℃，保存后会生成偏差')
+  await rc.locator('#er-temp').fill('23')
+  await rc.locator('#er-rh').click()
+  await expect(rc).not.toContainText('保存后会生成偏差')
+  await rc.getByRole('button', { name: '保存记录' }).click()
+  await toast(page, '已保存，在范围内')
+
+  // 超限页签：新的一次已恢复，偏差待处理；详情列出主仓现有的批次
+  await page.getByRole('tab', { name: /^超限/ }).click()
+  const ex = rows.filter({ hasText: '31.2℃' })
+  await expect(ex).toContainText('已恢复')
+  await expect(ex).toContainText('处理中')
+  await ex.getByRole('button', { name: '详情' }).click()
+  const dt = page.getByRole('dialog', { name: /^温湿度超限 TH/ })
+  await expect(dt).toContainText('温度 31.2℃ 高于上限 30℃')
+  await expect(dt).toContainText('可能受影响的批次')
+  await dt.getByRole('button', { name: '关闭' }).click()
+
+  // 记录页签选区域：温度、湿度两张趋势图，键盘能逐条看
+  await page.getByRole('tab', { name: /^记录/ }).click()
+  await page.getByRole('combobox', { name: '区域' }).click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: '华东主仓常温区' }).click()
+  const charts = page.locator('.env-trend')
+  await expect(charts).toHaveCount(2)
+  await charts.first().locator('.plot').focus()
+  await page.keyboard.press('ArrowLeft')
+  await expect(charts.first().locator('.tip')).toContainText('℃')
+  await expect(rows.filter({ hasText: '31.2℃' })).toContainText('超限')
+  await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+  const bad = await page.locator('main').evaluate(async (e) => {
+    const r = await window.axe.run(e, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+    return r.violations.map((v) => `${v.id} ×${v.nodes.length}：${v.nodes[0].target[0]}`)
+  })
+  expect(bad).toEqual([])
+})
+
 test('产品销售记录：列出法规要求的内容，缺的标出来，价格只给销售看，能导出', async ({ page }) => {
   await login(page, 'sales1')
   await page.goto('/sales?tab=records')
@@ -2756,7 +2817,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/oem-supervision', '/oem-supervision?tab=factories', '/oem-supervision?tab=orders', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/sales?tab=unpriced', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/oem-supervision', '/oem-supervision?tab=factories', '/oem-supervision?tab=orders', '/storage-env', '/storage-env?tab=records', '/storage-env?tab=excursions', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/sales?tab=unpriced', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页
@@ -2861,6 +2922,7 @@ test('无障碍：常用弹窗 axe 无违规', async ({ page }) => {
   await audit('/production', '新建生产 / 委托单')
   await audit('/oem-contracts', '登记合同')
   await audit('/oem-supervision', '登记监督')
+  await audit('/storage-env', '新增区域')
   await audit('/qms', '登记偏差')
 })
 

@@ -26,6 +26,9 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
 
     List<Stock> findByQtyGreaterThan(BigDecimal qty);
 
+    /** 一个仓库现有的库存（温湿度超限时列出可能受影响的批次）。 */
+    List<Stock> findByWarehouseIdAndQtyGreaterThan(Long warehouseId, BigDecimal qty);
+
     List<Stock> findByBatchId(Long batchId);
 
     List<Stock> findByBatchIdIn(Collection<Long> batchIds);

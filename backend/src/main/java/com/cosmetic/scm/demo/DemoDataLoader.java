@@ -2,6 +2,7 @@ package com.cosmetic.scm.demo;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.function.Supplier;
@@ -28,6 +29,8 @@ import com.cosmetic.scm.domain.Role;
 import com.cosmetic.scm.domain.Severity;
 import com.cosmetic.scm.domain.SupplyMode;
 import com.cosmetic.scm.domain.WarehouseKind;
+import com.cosmetic.scm.domain.StorageAreaKind;
+import com.cosmetic.scm.storage.StorageMonitorService;
 import com.cosmetic.scm.integration.IntegrationService;
 import com.cosmetic.scm.inventory.InventoryService;
 import com.cosmetic.scm.master.Item;
@@ -127,6 +130,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final FormulaService formulas;
     private final FilingService filings;
     private final DeviationService deviations;
+    private final StorageMonitorService storageMonitor;
     private final SupplierAuditService supplierAudits;
     private final MesService mes;
     private final EquipmentService equipment;
@@ -402,6 +406,26 @@ public class DemoDataLoader implements ApplicationRunner {
                 null, "华东主仓温湿度记录缺失一天（示例）", "记录仪电池耗尽，缺少一天的数据；前后两天均在规定范围内（示例）", "更换电池并补充人工记录（示例）", t.plusDays(14))));
         as("qa1", () -> deviations.createCapa(new DeviationService.CapaReq(CapaSource.DEVIATION, null, dv.id(), CapaType.PREVENTIVE,
                 "把记录仪电量纳入每周点检（示例）", "仓库主管（示例）", t.plusDays(21))));
+
+        // ---------- 贮存区域和温湿度记录：主仓常温区 5 天前下午超温、第二天下午恢复（生成一份偏差）；留样室都在范围内 ----------
+        var whArea = as("qa1", () -> storageMonitor.createArea(new StorageMonitorService.AreaReq("WH-MAIN-A", "华东主仓常温区（示例）", StorageAreaKind.WAREHOUSE, main.id(),
+                new BigDecimal("10"), new BigDecimal("30"), null, new BigDecimal("75"), true, t.minusDays(14), null, "范围为示例，请按产品标签的贮存条件设定")));
+        var rsArea = as("qa1", () -> storageMonitor.createArea(new StorageMonitorService.AreaReq("RS-01", "品质部留样室", StorageAreaKind.RETAIN, null,
+                new BigDecimal("10"), new BigDecimal("30"), new BigDecimal("35"), new BigDecimal("75"), true, t.minusDays(14), null, "（示例）留样地点写“品质部留样室 B-01”这类的都算这个区域")));
+        for (var area : List.of(whArea, rsArea)) {
+            List<StorageMonitorService.ImportRow> rows = new ArrayList<>();
+            for (int d = 14; d >= 1; d--) {
+                for (int hour : new int[] {9, 16}) {
+                    BigDecimal temp = new BigDecimal(hour == 9 ? "20.5" : "24.0").add(BigDecimal.valueOf(d % 3 * 8, 1));
+                    if (area == whArea && ((d == 5 && hour == 16) || (d == 4 && hour == 9))) {
+                        temp = new BigDecimal(d == 5 ? "31.6" : "30.8");
+                    }
+                    rows.add(new StorageMonitorService.ImportRow(t.minusDays(d).atTime(hour, 0), temp, BigDecimal.valueOf(480 + d % 4 * 35, 1),
+                            "TH-LOG-0" + (area == whArea ? 1 : 2) + "（示例）", null));
+                }
+            }
+            as("qa1", () -> storageMonitor.importRows(area.id(), new StorageMonitorService.ImportReq(rows, false)));
+        }
 
         // ---------- 自产面霜：有工艺路线；已计划，待发料。发料后在生产单明细里填批生产记录 ----------
         for (String[] e : new String[][] {{"EQ-EM-01", "乳化锅 A（示例）", "2 号车间", "200"}, {"EQ-FL-01", "灌装机 1（示例）", "2 号车间", "120"}, {"EQ-SC-01", "电子秤 1（示例）", "称量间", "20"}}) {
