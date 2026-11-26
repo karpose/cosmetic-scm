@@ -2174,8 +2174,11 @@ test('受托生产监督：登记驻厂监督和问题，重大问题转 CAPA �
   const demoReview = rows.filter({ hasText: '调阅记录' })
   await expect(demoReview).toContainText('待审核')
   await expect(rows.filter({ hasText: '驻厂监督' })).toContainText('发现一般问题')
+  // 前面的用例可能已经把在做的委托单都完工了，所以只看最近一次监督和没有到期
   await page.getByRole('tab', { name: /^受托厂/ }).click()
-  await expect(rows.filter({ hasText: '禾川生物' })).toContainText('正常')
+  const he = rows.filter({ hasText: '禾川生物' })
+  await expect(he).toContainText(/\d{4}-\d{2}-\d{2}\d+ 次/)
+  await expect(he).not.toContainText('该去监督了')
 
   // 从委托单页签登记驻厂监督
   await page.getByRole('tab', { name: '委托单' }).click()
