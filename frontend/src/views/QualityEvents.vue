@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h2>投诉与召回</h2>
-        <p>投诉登记后由质量人员调查；不良反应按严重程度在 7 日 / 30 日内完成监测上报后才能关闭。召回由质量安全负责人发起：同时冻结批次，并按出库记录列出每个收货客户，逐个通知、登记回收，全部通知到位后才能关闭。</p>
+        <p>投诉登记后由质量人员调查；不良反应按严重程度在 7 日 / 30 日内完成监测上报后才能关闭。召回由质量安全负责人发起：同时冻结批次，并按出库记录列出每个收货客户，逐个通知、登记回收，全部通知到位后才能关闭。召回演练是模拟召回，定期检验能不能及时找到在外的产品。</p>
       </div>
       <div class="toolbar">
         <ExportButton v-if="tab === 'complaints'" report="complaints" />
@@ -147,6 +147,11 @@
           </el-table>
           <ListPager v-model:page="rt.page.value" v-model:size="rt.size.value" :total="rt.total.value" />
         </el-card>
+      </el-tab-pane>
+
+      <!-- ================= 召回演练 ================= -->
+      <el-tab-pane label="召回演练" name="drills" lazy>
+        <RecallDrillPane />
       </el-tab-pane>
 
       <!-- ================= 深度分析 ================= -->
@@ -399,6 +404,7 @@ import StatusTag from '../components/StatusTag.vue'
 import AttachmentList from '../components/AttachmentList.vue'
 import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
+import RecallDrillPane from '../components/RecallDrillPane.vue'
 import { useAuth } from '../stores/auth'
 import { COMPLAINT_CATEGORY, COMPLAINT_CHANNELS, SEVERITY, fmtQty, fmtTime, today } from '../utils/format'
 import { latestOnly } from '../utils/latest'
@@ -410,7 +416,7 @@ const auth = useAuth()
 const route = useRoute()
 const router = useRouter()
 const rd = useRefData()
-const tab = ref(['recalls', 'analytics', 'closure'].includes(route.query.tab) ? route.query.tab : 'complaints')
+const tab = ref(['recalls', 'drills', 'analytics', 'closure'].includes(route.query.tab) ? route.query.tab : 'complaints')
 const complaints = ref([])
 const recalls = ref([])
 const evReport = ref(null)

@@ -2231,6 +2231,77 @@ test('受托生产监督：登记驻厂监督和问题，重大问题转 CAPA �
   await expect(demoReview).toContainText('已审核')
 })
 
+test('召回演练：按出库列出要联系的对象，联系不上的没达标要转 CAPA，质量安全负责人审核', async ({ page }) => {
+  await login(page, 'qa1')
+  await page.goto('/quality-events?tab=drills')
+  const rows = page.locator('main .el-table__row:visible')
+  const demo = rows.filter({ hasText: '已审核' }).first()
+  await expect(demo).toContainText('达标')
+  const batchNo = (await demo.locator('a.batch').first().textContent()).trim()
+
+  await page.getByRole('button', { name: '发起演练' }).click()
+  const st = dialog(page, '发起召回演练')
+  await expect(st.getByRole('button', { name: '发起演练' })).toBeDisabled()
+  await st.locator('#rd-batch').fill(batchNo)
+  await st.getByRole('button', { name: '列出要联系的对象' }).click()
+  await expect(st).toContainText('收货客户')
+  await expect(st).toContainText('受托生产企业 1：禾川生物')
+  await st.locator('#rd-scenario').fill('E2E 假设消费者投诉异味')
+  await st.getByRole('button', { name: '发起演练' }).click()
+  await toast(page, '开始计时')
+  const dt = page.getByRole('dialog', { name: /^召回演练 RD/ })
+  await expect(dt).toContainText(batchNo)
+
+  // 详情弹窗过一遍 axe
+  await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+  const bad = await dt.evaluate(async (e) => {
+    const r = await window.axe.run(e, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+    return r.violations.map((v) => `${v.id} ×${v.nodes.length}：${v.nodes[0].target[0]}`)
+  })
+  expect(bad).toEqual([])
+
+  // 第一家客户联系不上，其余都联系上；仓库实盘照账面填
+  const lines = dt.locator('.el-table__row:visible')
+  const count = await lines.count()
+  for (let i = 0; i < count; i++) {
+    const line = lines.nth(i)
+    await line.getByRole('button', { name: '登记' }).click()
+    const rc = page.getByRole('dialog', { name: /^登记联系结果/ })
+    const label = await rc.locator('.el-form-item__label').allTextContents()
+    if (i === 0) {
+      await rc.locator('.el-radio-button').filter({ hasText: '联系不上' }).click()
+      await rc.locator('#rd-note').fill('E2E 电话两次未接')
+    }
+    const book = label.join(' ').match(/实盘数量（账面 ([\d.,]+)）/)
+    if (book) await rc.locator('#rd-qty').fill(book[1].replace(/,/g, ''))
+    await rc.getByRole('button', { name: '保存联系结果' }).click()
+    await toast(page, '已登记联系结果')
+    await expect(rc).toBeHidden()
+  }
+  await expect(dt).toContainText('联系不上')
+  await expect(dt).toContainText('没达标，要先转 CAPA 才能提交')
+  await dt.getByRole('button', { name: '转 CAPA' }).click()
+  const cp = page.getByRole('dialog', { name: '召回演练没达标，转 CAPA' })
+  await cp.locator('#rd-capa-desc').fill('E2E 更新客户紧急联系人名单')
+  await cp.getByRole('button', { name: '生成 CAPA' }).click()
+  await toast(page, '已生成 CAPA')
+  await dt.locator('#rd-summary').fill('E2E 第一家客户联系不上')
+  await dt.getByRole('button', { name: '提交审核' }).click()
+  await toast(page, '等质量安全负责人审核')
+  const mine = rows.filter({ hasText: '待审核' }).first()
+  await expect(mine).toContainText('没达标')
+
+  await login(page, 'qso1')
+  await page.goto('/')
+  await expect(page.locator('main')).toContainText('召回演练待审核')
+  await page.goto('/quality-events?tab=drills')
+  await rows.filter({ hasText: '待审核' }).first().getByRole('button', { name: '审核' }).click()
+  await dt.locator('#rd-review-pwd').fill(DEMO)
+  await dt.getByRole('button', { name: '审核通过' }).click()
+  await toast(page, '已审核')
+  await expect(rows.filter({ hasText: '待审核' })).toHaveCount(0)
+})
+
 test('贮存环境：录入温湿度先提示超限，导入记录仪 CSV 超限生成偏差，选区域看趋势图', async ({ page }) => {
   await login(page, 'purchase1') // 有仓库角色：能录入、导入，不能设区域和作废
   await page.goto('/storage-env')
@@ -2818,7 +2889,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
   const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/oem-supervision', '/oem-supervision?tab=factories', '/oem-supervision?tab=orders', '/storage-env', '/storage-env?tab=records', '/storage-env?tab=excursions', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/sales?tab=unpriced', '/returns',
-    '/dealer-orders', '/integration', '/trace', '/quality-events', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
+    '/dealer-orders', '/integration', '/trace', '/quality-events', '/quality-events?tab=drills', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页
   await page.emulateMedia({ colorScheme: 'dark' })

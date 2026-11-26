@@ -106,6 +106,7 @@ public class DashboardService {
     private final com.cosmetic.scm.oemcontract.OemContractService oemContracts;
     private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervision;
     private final com.cosmetic.scm.storage.StorageMonitorService storageMonitor;
+    private final com.cosmetic.scm.recall.RecallDrillService recallDrills;
     private final com.cosmetic.scm.sales.SalesRecordService salesRecords;
     private final TimeProvider time;
 
@@ -300,6 +301,14 @@ public class DashboardService {
             todos.add(new Todo(out ? "STORAGE_EXCURSION" : "STORAGE_RECORD_MISSING", out ? "贮存区域温湿度超限" : "温湿度漏记", out ? "bad" : "warn",
                     r.areaName(), r.areaCode(), r.detail(), out ? "/storage-env?tab=excursions" : "/storage-env"));
         }
+        // 召回演练（检查要点第 24 项）：待审核的、超过周期没有审核过的演练
+        for (com.cosmetic.scm.recall.RecallDrillService.DrillView d : recallDrills.pendingReview()) {
+            todos.add(new Todo("RECALL_DRILL_REVIEW", "召回演练待审核", "warn", d.itemName(), d.drillNo(),
+                    "批号 " + d.batchNo() + "，" + (d.met() ? "达标" : "没达标") + "，用时 " + d.elapsedHours() + " 小时，" + d.submittedBy() + " 提交",
+                    "/quality-events?tab=drills"));
+        }
+        recallDrills.due().ifPresent(d -> todos.add(new Todo("RECALL_DRILL_DUE", "召回演练到期", "warn", "召回演练", d.ref(),
+                d.detail() + "，请选一个已发货的成品批次做一次模拟召回", "/quality-events?tab=drills")));
         for (com.cosmetic.scm.qms.GmpSelfCheckService.CheckRow r : selfChecks.waitingApproval()) {
             todos.add(new Todo("SELF_CHECK_APPROVE", "GMP 自查待签批", "warn", r.editionLabel(), r.checkNo(), "结论：" + r.conclusionLabel() + "，" + r.submittedBy() + " 提交", "/self-checks"));
         }

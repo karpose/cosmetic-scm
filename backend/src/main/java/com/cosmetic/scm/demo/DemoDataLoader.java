@@ -118,6 +118,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final com.cosmetic.scm.plm.ArtworkService artworkService;
     private final com.cosmetic.scm.oemcontract.OemContractService oemContractService;
     private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervisionService;
+    private final com.cosmetic.scm.recall.RecallDrillService recallDrills;
     private final QualityService quality;
     private final ProductionService production;
     private final SalesService sales;
@@ -370,6 +371,18 @@ public class DemoDataLoader implements ApplicationRunner {
                 com.cosmetic.scm.domain.SupervisionScope.RELEASE, com.cosmetic.scm.domain.SupervisionScope.RECORDS), null,
                 "调阅第二批精华液的批生产记录、出厂检验报告和出厂放行记录，记录完整（示例）")));
         as("qa1", () -> oemSupervisionService.submit(sv2.id()));
+
+        // ---------- 召回演练：第一批精华液做过一次模拟召回，客户、受托厂和仓库都联系上，已审核 ----------
+        var rd = as("qa1", () -> recallDrills.start(new com.cosmetic.scm.recall.RecallDrillService.StartReq(done1.outBatchNo(),
+                "假设消费者投诉这批精华液有异味，需要确定在外数量和去向（示例）", 24)));
+        for (var l : rd.lines()) {
+            as("qa1", () -> recallDrills.record(rd.id(), l.id(), new com.cosmetic.scm.recall.RecallDrillService.RecordReq(
+                    com.cosmetic.scm.domain.DrillResult.REACHED, l.target() == com.cosmetic.scm.domain.DrillTarget.WAREHOUSE ? l.expectedQty() : null, null,
+                    l.target() == com.cosmetic.scm.domain.DrillTarget.FACTORY ? "受托厂确认可以立即停止生产（示例）" : "电话联系，对接人确认（示例）")));
+        }
+        as("qa1", () -> recallDrills.submit(rd.id(), new com.cosmetic.scm.recall.RecallDrillService.SubmitReq(
+                "所有收货客户和受托厂都能联系上，仓库实盘和账面一致（示例）")));
+        as("qso1", () -> recallDrills.review(rd.id(), new com.cosmetic.scm.recall.RecallDrillService.ReviewReq("同意（示例）", DEMO_PASSWORD)));
 
         // ---------- 经销商在门户提交的一张订货单，等销售审核 ----------
         as("dealer1", () -> dealers.submit(new DealerService.OrderReq(t.plusDays(5), "补货（示例）",

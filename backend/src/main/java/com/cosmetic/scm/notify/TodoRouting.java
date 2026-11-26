@@ -46,6 +46,8 @@ final class TodoRouting {
             Map.entry("OEM_SUPERVISION_DUE", Set.of(Role.QA, Role.QSO, Role.PRODUCTION)),
             Map.entry("STORAGE_EXCURSION", Set.of(Role.WAREHOUSE, Role.QA, Role.QSO)),
             Map.entry("STORAGE_RECORD_MISSING", Set.of(Role.WAREHOUSE, Role.QA)),
+            Map.entry("RECALL_DRILL_REVIEW", Set.of(Role.QSO)),
+            Map.entry("RECALL_DRILL_DUE", Set.of(Role.QA, Role.QSO)),
             Map.entry("DOC_ASSESS", QUALITY),
             Map.entry("DOC_COPY_RETRIEVE", QUALITY),
             Map.entry("ARTWORK_REVIEW", Set.of(Role.QSO)),
