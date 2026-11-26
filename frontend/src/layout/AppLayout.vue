@@ -150,9 +150,11 @@ const groups = computed(() => {
     },
     { title: '基础', items: [{ path: '/master', title: '主数据', icon: Coin }, { path: '/formulas', title: '配方与备案', icon: Notebook }] }
   ]
-  // 价格和金额只给采购和财务
+  // 价格和金额只给采购和财务；销售进对账结算只看客户应收
   if (auth.hasAny('ADMIN', 'PURCHASE', 'FINANCE')) {
     list[1].items.splice(3, 0, { path: '/sourcing', title: '询价比价', icon: Tickets }, { path: '/settlement', title: '对账结算', icon: Coin })
+  } else if (auth.hasAny('SALES')) {
+    list[1].items.splice(3, 0, { path: '/settlement', title: '对账结算', icon: Coin })
   }
   if (auth.hasAny('ADMIN', 'MASTER_DATA', 'QA', 'QSO')) list[3].items.push({ path: '/golive', title: '上线检查', icon: Finished })
   if (auth.hasAny('ADMIN')) {

@@ -195,11 +195,12 @@ public class ArSettlementService {
     /**
      * 授信使用：openAr 是未结对账单的待收，unbilledShipped 是已出库还没对账的金额；
      * 可用额度、使用率和是否超额按两者合计算，和出库时的额度校验（SalesService.checkCreditLimit）一致。
+     * unpricedLines 是已出库还没有单价的行数，这些行补上单价前不计入额度。
      */
     public record CustomerCreditRow(Long customerId, String customerCode, String customerName, String channel,
                                     Integer defaultCreditDays, BigDecimal creditLimit, int openCount,
                                     BigDecimal openAr, BigDecimal overdueAr, BigDecimal unbilledShipped, BigDecimal availableCredit,
-                                    BigDecimal utilizationPct, boolean overLimit) {
+                                    BigDecimal utilizationPct, boolean overLimit, long unpricedLines) {
     }
 
     public record ArCollectionRow(Long statementId, String statementNo, Long customerId,
@@ -351,7 +352,10 @@ public class ArSettlementService {
         }
 
         if (toSave.isEmpty()) {
-            throw new BizException("没有可结算的销售出库行（请确认出库行已维护销售单价或在生成时指定单价）");
+            long unpriced = soLines.countUnpricedUnbilled(customer.getId(), req.periodTo());
+            throw new BizException(unpriced > 0
+                    ? "没有可结算的销售出库行：截止日前有 " + unpriced + " 行出库没有单价，请先到“销售出库 → 缺单价”补上"
+                    : "截止日前没有可结算的销售出库行");
         }
         BigDecimal total = goods.add(adjustment);
         if (total.signum() <= 0) {
@@ -508,6 +512,10 @@ public class ArSettlementService {
                 unbilledMap.put((Long) r[0], (BigDecimal) r[1]);
             }
         }
+        Map<Long, Long> unpricedMap = new HashMap<>();
+        for (Object[] r : soLines.countUnpricedUnbilledByCustomer()) {
+            unpricedMap.put((Long) r[0], ((Number) r[1]).longValue());
+        }
         List<CustomerCreditRow> rows = new ArrayList<>();
         for (Partner c : lookup.partnerMap().values()) {
             if (c.getKind() != PartnerKind.CUSTOMER) {
@@ -524,7 +532,8 @@ public class ArSettlementService {
                     : used.multiply(BigDecimal.valueOf(100)).divide(limit, 1, RoundingMode.HALF_UP);
             boolean over = limit != null && used.compareTo(limit) > 0;
             rows.add(new CustomerCreditRow(c.getId(), c.getCode(), c.getName(), c.getChannel(),
-                    c.getDefaultCreditDays(), limit, cnt, open, overdue, unbilled, avail, util, over));
+                    c.getDefaultCreditDays(), limit, cnt, open, overdue, unbilled, avail, util, over,
+                    unpricedMap.getOrDefault(c.getId(), 0L)));
         }
         rows.sort(Comparator.comparing(CustomerCreditRow::openAr, Comparator.reverseOrder())
                 .thenComparing(CustomerCreditRow::customerCode));

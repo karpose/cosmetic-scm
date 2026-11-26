@@ -228,19 +228,29 @@ public class SettlementService {
         PAY, REFUND, OVERDUE, RECEIPT_DISPUTE
     }
 
+    /** 应付几项只给采购侧价格岗位（{@link com.cosmetic.scm.security.PriceAccess}），应收几项只给 {@link #arAllowed()}，没权限的是 null。 */
     public record SettlementSummary(
-            int apPendingApproveCount, int apDisputedCount, int apOverdueCount,
-            BigDecimal apOpenAmount, BigDecimal apOverdueAmount, int apPendingSyncCount,
+            Integer apPendingApproveCount, Integer apDisputedCount, Integer apOverdueCount,
+            BigDecimal apOpenAmount, BigDecimal apOverdueAmount, Integer apPendingSyncCount,
             Integer arOpenCount, Integer arOverdueCount, BigDecimal arOpenAmount, BigDecimal arOverdueAmount) {
+    }
+
+    /** 销售侧单价和客户应收的岗位，和 SalesService.SALES_PRICE_ROLES、ReportService.arReportAllowed 一致，改角色三处一起改。 */
+    private static final Set<String> AR_ROLES = Set.of("ROLE_ADMIN", "ROLE_SALES", "ROLE_FINANCE");
+
+    public static boolean arAllowed() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream().anyMatch(a -> AR_ROLES.contains(a.getAuthority()));
     }
 
     @Transactional(readOnly = true)
     public SettlementSummary summary() {
         LocalDate today = time.today();
+        boolean apAllowed = com.cosmetic.scm.security.PriceAccess.allowed();
         int pendingApprove = 0, disputed = 0, apOverdueCount = 0, apPendingSync = 0;
         BigDecimal apOpen = BigDecimal.ZERO, apOverdue = BigDecimal.ZERO;
         // 只读还没结清的几种状态；已付清的只数没同步凭证的张数，不整表读取
-        for (SupplierStatement s : statements.findByStatusInOrderById(
+        for (SupplierStatement s : !apAllowed ? List.<SupplierStatement>of() : statements.findByStatusInOrderById(
                 List.of(StatementStatus.INVOICED, StatementStatus.DISPUTED, StatementStatus.APPROVED))) {
             if (s.getStatus() == StatementStatus.INVOICED) {
                 pendingApprove++;
@@ -259,14 +269,13 @@ public class SettlementService {
                 apPendingSync++;
             }
         }
-        apPendingSync += (int) statements.countByStatusAndFinanceSyncStatusNot(StatementStatus.PAID,
-                com.cosmetic.scm.domain.FinanceSyncStatus.SYNCED);
-        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-        boolean arAllowed = auth != null && auth.getAuthorities().stream().anyMatch(a ->
-                "ROLE_ADMIN".equals(a.getAuthority()) || "ROLE_SALES".equals(a.getAuthority()) || "ROLE_FINANCE".equals(a.getAuthority()));
+        if (apAllowed) {
+            apPendingSync += (int) statements.countByStatusAndFinanceSyncStatusNot(StatementStatus.PAID,
+                    com.cosmetic.scm.domain.FinanceSyncStatus.SYNCED);
+        }
         Integer arOpenCount = null, arOverdueCount = null;
         BigDecimal arOpen = null, arOverdue = null;
-        if (arAllowed) {
+        if (arAllowed()) {
             int openC = 0, overdueC = 0;
             BigDecimal openA = BigDecimal.ZERO, overdueA = BigDecimal.ZERO;
             for (CustomerStatement cs : customerStatements.findByStatusInOrderById(List.of("APPROVED"))) {
@@ -283,6 +292,9 @@ public class SettlementService {
             arOverdueCount = overdueC;
             arOpen = openA;
             arOverdue = overdueA;
+        }
+        if (!apAllowed) {
+            return new SettlementSummary(null, null, null, null, null, null, arOpenCount, arOverdueCount, arOpen, arOverdue);
         }
         return new SettlementSummary(pendingApprove, disputed, apOverdueCount, apOpen, apOverdue, apPendingSync,
                 arOpenCount, arOverdueCount, arOpen, arOverdue);

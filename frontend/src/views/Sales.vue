@@ -7,7 +7,7 @@
       </div>
       <div class="toolbar">
         <ExportButton v-if="activeTab === 'records'" report="sales-records" :params="{ from: sr.from, to: sr.to }" label="导出销售记录" />
-        <ExportButton v-else :report="activeTab === 'prices' ? 'customer-prices' : 'shipments'" />
+        <ExportButton v-else-if="activeTab !== 'unpriced'" :report="activeTab === 'prices' ? 'customer-prices' : 'shipments'" />
         <el-button v-if="canCreate && activeTab === 'orders'" type="primary" @click="openCreate">新建出库单</el-button>
         <el-button v-if="canPrice && activeTab === 'prices'" type="primary" @click="openPriceCreate">新增客户协议价</el-button>
       </div>
@@ -17,7 +17,52 @@
       <el-tab-pane label="销售出库单" name="orders" />
       <el-tab-pane label="产品销售记录" name="records" />
       <el-tab-pane v-if="canPrice" label="客户协议价" name="prices" />
+      <el-tab-pane v-if="canPrice" :label="unpricedTotal ? `缺单价（${unpricedTotal}）` : '缺单价'" name="unpriced" />
     </el-tabs>
+
+    <el-card v-if="activeTab === 'unpriced'" shadow="never" body-style="padding:0 0 8px">
+      <template #header>
+        <div class="filters">
+          <el-select v-model="up.customerId" class="up-customer" aria-label="按客户筛选" placeholder="全部客户" clearable filterable @change="loadUnpriced">
+            <el-option v-for="c in up.data?.customers || []" :key="c.customerId" :value="c.customerId" :label="`${c.customerName}（${c.lines} 行）`" />
+          </el-select>
+          <span v-if="up.data" class="muted small">{{ up.customerId ? '这个客户' : '共' }} {{ up.data.total }} 行没有单价</span>
+          <el-button v-if="up.rows.some((r) => r.suggestedPrice != null)" size="small" @click="applySuggestions">空着的按建议价填入</el-button>
+        </div>
+        <p class="muted small rec-hint">出库时没填单价、客户也没有协议价的行，补上单价前不进应收对账单，也不占客户信用额度。建议价依次取出库日有效的协议价、这个客户这个成品最近一次的单价、现行协议价，只是参考，保存以填的为准。赠品、样品可以填 0，要写原因。已进应收对账单的行不在这里。</p>
+      </template>
+      <LoadError v-if="up.error" :message="up.error" :loading="up.loading" @retry="loadUnpriced" />
+      <template v-else>
+        <el-table :data="up.rows" v-loading="up.loading" empty-text="没有缺单价的出库行" scrollbar-tabindex="0">
+          <el-table-column label="出库单" :min-width="narrow ? 110 : 150">
+            <template #default="{ row }">
+              <span class="mono">{{ row.soNo }}</span>
+              <div class="muted small mono">{{ row.orderDate }}</div>
+              <div v-if="narrow" class="small">{{ row.customerName }}</div>
+              <div v-if="narrow" class="muted small">{{ row.itemName }} × <span class="mono">{{ fmtQty(row.qty) }}</span></div>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="!narrow" prop="customerName" label="客户" min-width="150" />
+          <el-table-column v-if="!narrow" label="成品" min-width="170"><template #default="{ row }">{{ row.itemName }}<div class="muted small mono">{{ row.itemCode }}</div></template></el-table-column>
+          <el-table-column v-if="!narrow" label="数量" width="100" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span> <span class="muted small">{{ row.unit }}</span></template></el-table-column>
+          <el-table-column label="含税单价" :width="narrow ? 104 : 150">
+            <template #default="{ row }">
+              <el-input-number v-model="row.price" :min="0" :precision="4" :controls="false" placeholder="单价" style="width:100%" :aria-label="`${row.soNo} ${row.itemName} 含税单价`" />
+              <div v-if="row.suggestedPrice != null" class="muted small">建议 ¥{{ fmtQty(row.suggestedPrice) }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="税率 %" :width="narrow ? 68 : 100">
+            <template #default="{ row }"><el-input-number v-model="row.rate" :min="0" :max="100" :precision="2" :controls="false" :placeholder="fmtQty(row.defaultTaxRate)" style="width:100%" :aria-label="`${row.soNo} ${row.itemName} 税率`" /></template>
+          </el-table-column>
+          <el-table-column v-if="!narrow" label="建议价来源" min-width="170"><template #default="{ row }"><span class="muted small">{{ row.suggestedSource || '没有可参考的价格' }}</span></template></el-table-column>
+        </el-table>
+        <p v-if="up.data && up.data.total > up.rows.length" class="muted small up-cap">这里只列出最近 {{ up.rows.length }} 行，补完再刷新会列出更早的。</p>
+        <div class="up-actions">
+          <el-input v-model="up.reason" maxlength="300" placeholder="原因（有填 0 元的行时必填）" aria-label="补单价原因" @keydown.enter.prevent="saveUnpriced" />
+          <el-button type="primary" :loading="up.saving" :disabled="!upFilled.length" @click="saveUnpriced">保存 {{ upFilled.length || '' }} 行单价</el-button>
+        </div>
+      </template>
+    </el-card>
 
     <template v-if="activeTab === 'records'">
       <el-card shadow="never" body-style="padding:0 0 8px">
@@ -30,7 +75,7 @@
           </div>
           <p class="muted small rec-hint">按《化妆品生产质量管理规范》第五十八条：产品名称、注册证或备案编号、使用期限（限期使用日期）、净含量、数量、销售日期、价格，以及购买者名称、地址和联系方式。购买者和产品信息是出库时记下的；价格取出库单价，出库时没定价的取对账单上的价<template v-if="sr.data && !sr.data.priceVisible">，价格只有销售、财务和管理员能看</template>。最多查一年。</p>
           <el-alert v-if="sr.data?.gapSummary.length" type="warning" :closable="false" show-icon :title="`缺的内容：${sr.data.gapSummary.join('，')}`"
-                    description="购买者地址、联系方式和成品净含量到“主数据”补；价格在对账时补；以后的出库会自动带上。" />
+                    description="购买者地址、联系方式和成品净含量到“主数据”补，以后的出库会自动带上；价格由销售或财务在“缺单价”页签补，常卖的成品先维护客户协议价。" />
         </template>
         <LoadError v-if="sr.error" :message="sr.error" :loading="sr.loading" @retry="loadRecords" />
         <el-table v-else :data="srRows" v-loading="sr.loading" empty-text="这段时间没有销售出库" class="rec-table">
@@ -40,7 +85,7 @@
           <el-table-column label="净含量" width="90"><template #default="{ row }">{{ row.netContent || '—' }}</template></el-table-column>
           <el-table-column label="数量" width="90" align="right"><template #default="{ row }"><span class="mono">{{ fmtQty(row.qty) }}</span> <span class="muted small">{{ row.unit }}</span></template></el-table-column>
           <el-table-column v-if="sr.data?.priceVisible" label="含税单价" width="120" align="right">
-            <template #default="{ row }"><template v-if="row.unitPrice != null"><span class="mono">¥{{ fmtQty(row.unitPrice) }}</span><div class="muted small">{{ row.priceSource }} · ¥{{ fmtMoney(row.amount) }}</div></template><span v-else class="muted">—</span></template>
+            <template #default="{ row }"><template v-if="row.unitPrice != null"><span class="mono">¥{{ fmtQty(row.unitPrice) }}</span><div class="muted small">{{ row.priceSource }} · {{ fmtMoney(row.amount) }}</div></template><span v-else class="muted">—</span></template>
           </el-table-column>
           <el-table-column label="购买者" min-width="220"><template #default="{ row }">{{ row.buyerName }}<div class="muted small">{{ row.buyerAddress || '没有地址' }} · {{ row.buyerContact || '没有联系方式' }}</div><div v-if="row.platformOrderNo" class="muted small mono">{{ row.platformOrderNo }}</div></template></el-table-column>
           <el-table-column label="核对" min-width="150"><template #default="{ row }"><el-tag v-if="!row.gaps.length" type="success" size="small" disable-transitions>齐全</el-tag><span v-else class="warn small">{{ row.gaps.join('、') }}</span></template></el-table-column>
@@ -110,9 +155,11 @@
         <el-table-column prop="warehouseName" label="发货仓" width="110" />
         <el-table-column label="品项" min-width="210">
           <template #default="{ row }">
-            <div v-for="l in row.lines" :key="l.itemId">
+            <div v-for="l in row.lines" :key="l.lineId">
               {{ l.itemName }} × {{ fmtQty(l.qty) }}
-              <span v-if="l.unitPrice != null" class="muted small mono"> · ¥{{ fmtQty(l.unitPrice) }}（¥{{ fmtMoney(l.amount) }}）</span>
+              <span v-if="l.unitPrice != null" class="muted small mono"> · ¥{{ fmtQty(l.unitPrice) }}（{{ fmtMoney(l.amount) }}）</span>
+              <el-button v-if="canPrice && l.unitPrice == null && l.billed === false" link type="warning" size="small" @click="gotoUnpriced(row.customerId)">补单价</el-button>
+              <el-button v-else-if="canPrice && l.unitPrice != null && l.billed === false" link size="small" :aria-label="`改 ${row.soNo} ${l.itemName} 的单价`" @click="openReprice(row, l)">改单价</el-button>
             </div>
           </template>
         </el-table-column>
@@ -183,6 +230,21 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="rp.visible" title="更正出库单价" width="460px" :close-on-click-modal="false">
+      <p class="muted small rp-hint">{{ rp.soNo }} · {{ rp.customerName }} · {{ rp.itemName }} × {{ fmtQty(rp.qty) }}，现在 ¥{{ fmtQty(rp.oldPrice) }}（税率 {{ fmtQty(rp.oldRate) }}%）。还没进应收对账单才能改，进了要请财务先作废对账单。</p>
+      <el-form label-position="top" @submit.prevent>
+        <div class="form-grid">
+          <el-form-item label="含税单价"><el-input-number id="rp-price" v-model="rp.unitPrice" :min="0" :precision="4" :controls="false" style="width:100%" @keydown.enter.prevent="submitReprice" /></el-form-item>
+          <el-form-item label="税率 %"><el-input-number id="rp-rate" v-model="rp.taxRate" :min="0" :max="100" :precision="2" :controls="false" style="width:100%" @keydown.enter.prevent="submitReprice" /></el-form-item>
+        </div>
+        <el-form-item label="更正原因"><el-input id="rp-reason" v-model="rp.reason" maxlength="300" placeholder="如：按合同价更正" @keydown.enter.prevent="submitReprice" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rp.visible = false">取消</el-button>
+        <el-button type="primary" :loading="rp.saving" @click="submitReprice">确认改价</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="cpForm.visible" title="新增客户协议价" width="480px" :close-on-click-modal="false">
       <el-form label-position="top" @submit.prevent>
         <el-form-item label="客户">
@@ -246,7 +308,91 @@ const plan = ref(null)
 const canCreate = computed(() => auth.hasAny('ADMIN', 'SALES', 'WAREHOUSE'))
 const canPrice = computed(() => auth.hasAny('ADMIN', 'SALES', 'FINANCE'))
 const route = useRoute()
-const activeTab = ref(route.query.tab === 'records' || (route.query.tab === 'prices' && canPrice.value) ? route.query.tab : 'orders')
+const activeTab = ref(route.query.tab === 'records' || (['prices', 'unpriced'].includes(route.query.tab) && canPrice.value) ? route.query.tab : 'orders')
+const narrow = window.innerWidth < 640
+// 缺单价：已出库、没有单价、没进应收对账单的行
+const up = reactive({ customerId: route.query.customerId ? Number(route.query.customerId) : null, loading: false, saving: false, error: '', data: null, rows: [], reason: '' })
+const unpricedTotal = computed(() => (up.data?.customers || []).reduce((n, c) => n + c.lines, 0))
+const upFilled = computed(() => up.rows.filter((r) => r.price != null))
+const upReq = latestOnly()
+async function loadUnpriced() {
+  const current = upReq()
+  up.loading = true
+  up.error = ''
+  try {
+    const d = await http.get('/sales-orders/unpriced-lines', { params: { customerId: up.customerId || undefined } })
+    if (current()) {
+      up.data = d
+      up.rows = d.rows.map((r) => ({ ...r, price: null, rate: null }))
+    }
+  } catch (e) {
+    if (current()) up.error = e.message
+  } finally {
+    if (current()) up.loading = false
+  }
+}
+function applySuggestions() {
+  for (const r of up.rows) {
+    if (r.price == null && r.suggestedPrice != null) {
+      r.price = Number(r.suggestedPrice)
+      if (r.rate == null && r.suggestedTaxRate != null) r.rate = Number(r.suggestedTaxRate)
+    }
+  }
+}
+async function saveUnpriced() {
+  const filled = upFilled.value
+  if (!filled.length || up.saving) return
+  if (filled.some((r) => Number(r.price) === 0) && !up.reason.trim()) return ElMessage.warning('有填 0 元（赠品、样品）的行，请写明原因')
+  const byCustomer = new Map()
+  for (const r of filled) {
+    if (!byCustomer.has(r.customerId)) byCustomer.set(r.customerId, [])
+    byCustomer.get(r.customerId).push({ soLineId: r.lineId, unitPrice: r.price, taxRate: r.rate ?? null })
+  }
+  up.saving = true
+  const done = []
+  try {
+    // 按客户分批保存：每个客户在后端锁住后整批写入
+    for (const [cid, lines] of byCustomer) {
+      done.push(await http.post(`/sales-orders/customers/${cid}/line-prices`, { lines, reason: up.reason.trim() || null }))
+    }
+  } catch {
+    // 错误已由 api.js 提示，已保存的客户照常刷新
+  } finally {
+    up.saving = false
+  }
+  if (done.length) {
+    ElMessage.success(`已补 ${done.reduce((n, d) => n + d.updated, 0)} 行单价，这些行会进应收对账并占信用额度`)
+    const over = done.filter((d) => d.overLimit)
+    if (over.length) ElMessage.warning({ message: `${over.map((d) => d.customerName).join('、')} 补价后已超出信用额度，回款或调整授信前，新的出库会被拦下`, duration: 8000 })
+    up.reason = ''
+    load()
+  }
+  loadUnpriced()
+}
+function gotoUnpriced(customerId) {
+  up.customerId = customerId
+  activeTab.value = 'unpriced'
+  loadUnpriced()
+}
+// 更正已有单价（没进应收对账单的行）
+const rp = reactive({ visible: false, saving: false, customerId: null, lineId: null, soNo: '', customerName: '', itemName: '', qty: null, oldPrice: null, oldRate: null, unitPrice: null, taxRate: null, reason: '' })
+function openReprice(so, l) {
+  Object.assign(rp, { visible: true, saving: false, customerId: so.customerId, lineId: l.lineId, soNo: so.soNo, customerName: so.customerName, itemName: l.itemName, qty: l.qty,
+    oldPrice: l.unitPrice, oldRate: l.taxRate, unitPrice: Number(l.unitPrice), taxRate: l.taxRate != null ? Number(l.taxRate) : null, reason: '' })
+}
+async function submitReprice() {
+  if (rp.saving) return
+  if (rp.unitPrice == null) return ElMessage.warning('请填写含税单价')
+  if (!rp.reason.trim()) return ElMessage.warning('请写明更正原因')
+  rp.saving = true
+  try {
+    const res = await http.post(`/sales-orders/customers/${rp.customerId}/line-prices`, { lines: [{ soLineId: rp.lineId, unitPrice: rp.unitPrice, taxRate: rp.taxRate ?? null }], reason: rp.reason.trim() })
+    ElMessage.success(`${rp.soNo} 的单价已更正`)
+    if (res.overLimit) ElMessage.warning({ message: `${res.customerName} 改价后已超出信用额度，回款或调整授信前，新的出库会被拦下`, duration: 8000 })
+    rp.visible = false
+    load()
+  } finally { rp.saving = false }
+}
 // 产品销售记录
 const sr = reactive({ range: [daysFromToday(-29), today()], onlyGaps: false, loading: false, error: '', data: null, get from() { return this.range[0] }, get to() { return this.range[1] } })
 const srRows = computed(() => (sr.data?.rows || []).filter((r) => !sr.onlyGaps || r.gaps.length))
@@ -273,6 +419,7 @@ async function loadCp() {
 function onTabChange(name) {
   if (name === 'prices') loadCp()
   if (name === 'records') loadRecords()
+  if (name === 'unpriced') loadUnpriced()
 }
 async function openPriceCreate() {
   await rd.ready()
@@ -361,6 +508,8 @@ async function submit() {
 
 onMounted(() => {
   if (activeTab.value !== 'orders') onTabChange(activeTab.value)
+  // 页签上的缺单价行数
+  else if (canPrice.value) http.get('/sales-orders/unpriced-lines', { params: { to: '1900-01-01' }, silent: true }).then((d) => { if (!up.data) up.data = { ...d, rows: [] } }).catch(() => {})
   return Promise.all([load(), rd.load()])
 })
 </script>
@@ -378,5 +527,11 @@ onMounted(() => {
 .pick { margin-right: 10px; }
 .warn { color: var(--el-color-danger); }
 .rec-hint { margin: 8px 0 0; line-height: 1.6; }
+.up-cap { margin: 8px 16px 0; }
+.filters .up-customer.el-select { width: 260px; }
+@media (max-width: 768px) { .filters .up-customer.el-select { width: 100%; } }
+.up-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; padding: 12px 16px 4px; flex-wrap: wrap; }
+.up-actions .el-input { max-width: 320px; }
+.rp-hint { margin: 0 0 12px; line-height: 1.6; }
 @media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>
