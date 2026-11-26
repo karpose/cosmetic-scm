@@ -2272,7 +2272,7 @@ test('贮存环境：录入温湿度先提示超限，导入记录仪 CSV 超限
   const dt = page.getByRole('dialog', { name: /^温湿度超限 TH/ })
   await expect(dt).toContainText('温度 31.2℃ 高于上限 30℃')
   await expect(dt).toContainText('可能受影响的批次')
-  await dt.getByRole('button', { name: '关闭' }).click()
+  await dt.getByRole('button', { name: '关闭', exact: true }).click()
 
   // 记录页签选区域：温度、湿度两张趋势图，键盘能逐条看
   await page.getByRole('tab', { name: /^记录/ }).click()
