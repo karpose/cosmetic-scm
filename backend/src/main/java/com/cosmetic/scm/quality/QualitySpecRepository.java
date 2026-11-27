@@ -23,6 +23,9 @@ public interface QualitySpecRepository extends JpaRepository<QualitySpec, Long> 
 
     List<QualitySpec> findByStatusIn(Collection<SpecStatus> statuses);
 
+    /** 这些物料的全部版本（供料验收标准、GMP 自查按版本核对）。 */
+    List<QualitySpec> findByItemIdIn(Collection<Long> itemIds);
+
     @Query("select coalesce(max(s.versionNo), 0) from QualitySpec s where s.itemId = :itemId")
     int maxVersion(@Param("itemId") Long itemId);
 

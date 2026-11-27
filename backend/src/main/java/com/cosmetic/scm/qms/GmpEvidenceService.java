@@ -102,6 +102,9 @@ public class GmpEvidenceService {
     private final com.cosmetic.scm.storage.EnvExcursionRepository envExcursions;
     private final com.cosmetic.scm.recall.RecallDrillRepository recallDrills;
     private final com.cosmetic.scm.sales.SoAllocationRepository soAllocations;
+    private final com.cosmetic.scm.plm.FormulaLineRepository formulaLines;
+    private final com.cosmetic.scm.quality.QualitySpecRepository qualitySpecs;
+    private final com.cosmetic.scm.oemsupply.OemSpecAckRepository oemSpecAcks;
     private final TimeProvider time;
 
     /** 召回演练的周期（月），和总览到期提醒一致。 */
@@ -559,6 +562,10 @@ public class GmpEvidenceService {
                 : "在用受控文件 " + active.size() + " 份；各项制度（注册备案、健康、培训、自查、放行、留样、销售记录、贮存运输、退货、投诉、召回、不良反应）是否齐全请人工核对。", details);
     }
 
+    /**
+     * 第 12 项：期间内委托单里品牌供料的物料，要有期间结束时生效的质量标准（验收标准），受托厂确认收到了这一版（或更新的版本），
+     * 原料登记了 INCI 名称（成分）。物料检验放行的批数照旧列出。
+     */
     private Evidence suppliedMaterials(Ctx c) {
         Map<Long, Batch> byId = batchesOf(c.decisionsInPeriod());
         List<QualityDecision> material = c.decisionsInPeriod().stream().filter(d -> d.getStage() == QcStage.MATERIAL_QC).toList();
@@ -566,7 +573,50 @@ public class GmpEvidenceService {
         long rejected = material.size() - released;
         long rm = material.stream().map(d -> byId.get(d.getBatchId())).filter(Objects::nonNull)
                 .map(b -> c.items().get(b.getItemId())).filter(i -> i != null && i.getItemType() == ItemType.RM).count();
-        return new Evidence(12, "INFO", "期间内物料检验放行 " + released + " 批、拒收 " + rejected + " 批（其中原料 " + rm + " 批）。不向受托方提供物料的可判不适用。", List.of());
+        String qc = "期间内物料检验放行 " + released + " 批、拒收 " + rejected + " 批（其中原料 " + rm + " 批）。";
+        List<com.cosmetic.scm.oemsupply.SuppliedMaterials.Need> needs = com.cosmetic.scm.oemsupply.SuppliedMaterials.of(c.orders(), formulaLines, boms, bomLines);
+        if (needs.isEmpty()) {
+            return new Evidence(12, "INFO", "期间内的委托单没有品牌供料的物料，不向受托方提供物料的可判不适用。" + qc, List.of());
+        }
+        Set<Long> itemIds = needs.stream().map(com.cosmetic.scm.oemsupply.SuppliedMaterials.Need::itemId).collect(Collectors.toSet());
+        Set<Long> factoryIds = needs.stream().map(com.cosmetic.scm.oemsupply.SuppliedMaterials.Need::factoryId).collect(Collectors.toSet());
+        Map<Long, com.cosmetic.scm.quality.QualitySpec> required = com.cosmetic.scm.oemsupply.SuppliedMaterials.effectiveAt(qualitySpecs.findByItemIdIn(itemIds), c.end());
+        Map<String, List<Integer>> acked = oemSpecAcks.findByFactoryIdInAndItemIdIn(factoryIds, itemIds).stream()
+                .filter(a -> a.getCreatedAt().isBefore(c.end()))
+                .collect(Collectors.groupingBy(a -> com.cosmetic.scm.oemsupply.SuppliedMaterials.key(a.getFactoryId(), a.getItemId()),
+                        Collectors.mapping(com.cosmetic.scm.oemsupply.OemSpecAck::getSpecVersion, Collectors.toList())));
+        List<String> problems = new ArrayList<>();
+        Set<Long> noSpecReported = new java.util.HashSet<>();
+        Set<Long> compositionReported = new java.util.HashSet<>();
+        for (com.cosmetic.scm.oemsupply.SuppliedMaterials.Need n : needs) {
+            Item i = c.items().get(n.itemId());
+            Partner f = c.partners().get(n.factoryId());
+            if (i == null || f == null) {
+                continue;
+            }
+            com.cosmetic.scm.quality.QualitySpec spec = required.get(n.itemId());
+            List<Integer> versions = acked.getOrDefault(com.cosmetic.scm.oemsupply.SuppliedMaterials.key(n.factoryId(), n.itemId()), List.of());
+            com.cosmetic.scm.domain.rules.SupplySpecRule.State st = com.cosmetic.scm.domain.rules.SupplySpecRule.state(spec == null ? null : spec.getVersionNo(), versions);
+            String orders = n.orders().stream().map(MfgOrder::getMoNo).limit(3).collect(Collectors.joining("、")) + (n.orders().size() > 3 ? " 等" : "");
+            if (st == com.cosmetic.scm.domain.rules.SupplySpecRule.State.NO_SPEC) {
+                if (noSpecReported.add(n.itemId())) {
+                    problems.add(i.getName() + "：品牌供料（" + f.getName() + " " + orders + "），没有生效的质量标准，没有可提供的验收标准");
+                }
+            } else if (st.awaitingAck()) {
+                problems.add(f.getName() + "：" + i.getName() + " 第 " + spec.getVersionNo() + " 版验收标准没有确认收到"
+                        + (st == com.cosmetic.scm.domain.rules.SupplySpecRule.State.OUTDATED ? "（确认的是第 " + versions.stream().max(Integer::compare).orElse(0) + " 版）" : "")
+                        + "，委托单 " + orders);
+            }
+            if (com.cosmetic.scm.domain.rules.SupplySpecRule.compositionMissing(i.getItemType() == ItemType.RM, i.getInci()) && compositionReported.add(n.itemId())) {
+                problems.add(i.getName() + "：原料没有登记 INCI 名称，提供给受托方的原料成分不明确");
+            }
+        }
+        String scope = "期间内委托生产用到品牌供料 " + itemIds.size() + " 种（" + factoryIds.size() + " 家受托厂）";
+        if (problems.isEmpty()) {
+            return new Evidence(12, "OK", scope + "，都有生效的质量标准，受托厂都确认收到了期间结束时的现行版本，原料都登记了 INCI 名称。" + qc
+                    + "供应商遴选、进货查验的执行情况请对照采购和检验放行记录核对。", List.of());
+        }
+        return new Evidence(12, "WARN", scope + "，" + problems.size() + " 处要注意。" + qc, limit(problems));
     }
 
     // ---- 放行、合格证明、留样 ----

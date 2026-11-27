@@ -32,30 +32,89 @@
       </div>
     </div>
 
-    <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
-    <el-card v-else shadow="never" body-style="padding:0 0 8px">
-      <template #header>
-        <div class="filters">
-          <el-input v-model="pg.keyword.value" placeholder="搜索编号、物料" clearable />
-          <el-checkbox v-model="currentOnly">只看生效和待签批</el-checkbox>
-        </div>
-      </template>
-      <el-table :data="pg.paged.value" v-loading="loader.loading.value" empty-text="还没有质量标准">
-        <el-table-column label="编号" width="160"><template #default="{ row }"><a href="#" class="mono" @click.prevent="openDetail(row)">{{ row.specNo }}</a><div class="muted small">V{{ row.versionNo }}</div></template></el-table-column>
-        <el-table-column label="物料" min-width="200"><template #default="{ row }">{{ row.itemName }}<div class="muted small"><span class="mono">{{ row.itemCode }}</span> · {{ row.itemTypeLabel }}</div></template></el-table-column>
-        <el-table-column label="项目" min-width="220"><template #default="{ row }"><span class="small">{{ row.lines.map((l) => l.name).join('、') }}</span><div v-if="coaCount(row)" class="muted small">{{ coaCount(row) }} 项可采用供方报告</div></template></el-table-column>
-        <el-table-column label="修改原因" min-width="160"><template #default="{ row }"><span class="small">{{ row.changeNote }}</span></template></el-table-column>
-        <el-table-column label="状态" width="140"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /><div v-if="row.approvedBy" class="muted small">{{ row.approvedBy }} 签批</div></template></el-table-column>
-        <el-table-column label="" width="150" :fixed="narrow ? false : 'right'">
-          <template #default="{ row }">
-            <el-button size="small" text @click="openDetail(row)">详情</el-button>
-            <el-button v-if="canCreate && row.status === 'EFFECTIVE'" size="small" text @click="openCreate(row)">修订</el-button>
+    <el-tabs v-model="tab" class="seg" style="margin-top:12px">
+      <el-tab-pane label="质量标准" name="specs">
+        <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
+        <el-card v-else shadow="never" body-style="padding:0 0 8px">
+          <template #header>
+            <div class="filters">
+              <el-input v-model="pg.keyword.value" placeholder="搜索编号、物料" clearable />
+              <el-checkbox v-model="currentOnly">只看生效和待签批</el-checkbox>
+            </div>
           </template>
-        </el-table-column>
-      </el-table>
-      <ListCapHint :count="specs.length" />
-      <ListPager v-model:page="pg.page.value" v-model:size="pg.size.value" :total="pg.total.value" />
-    </el-card>
+          <el-table :data="pg.paged.value" v-loading="loader.loading.value" empty-text="还没有质量标准">
+            <el-table-column label="编号" width="160"><template #default="{ row }"><a href="#" class="mono" @click.prevent="openDetail(row)">{{ row.specNo }}</a><div class="muted small">V{{ row.versionNo }}</div></template></el-table-column>
+            <el-table-column label="物料" min-width="200"><template #default="{ row }">{{ row.itemName }}<div class="muted small"><span class="mono">{{ row.itemCode }}</span> · {{ row.itemTypeLabel }}</div></template></el-table-column>
+            <el-table-column label="项目" min-width="220"><template #default="{ row }"><span class="small">{{ row.lines.map((l) => l.name).join('、') }}</span><div v-if="coaCount(row)" class="muted small">{{ coaCount(row) }} 项可采用供方报告</div></template></el-table-column>
+            <el-table-column label="修改原因" min-width="160"><template #default="{ row }"><span class="small">{{ row.changeNote }}</span></template></el-table-column>
+            <el-table-column label="状态" width="140"><template #default="{ row }"><StatusTag :status="row.status" :label="row.statusLabel" /><div v-if="row.approvedBy" class="muted small">{{ row.approvedBy }} 签批</div></template></el-table-column>
+            <el-table-column label="" width="150" :fixed="narrow ? false : 'right'">
+              <template #default="{ row }">
+                <el-button size="small" text @click="openDetail(row)">详情</el-button>
+                <el-button v-if="canCreate && row.status === 'EFFECTIVE'" size="small" text @click="openCreate(row)">修订</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <ListCapHint :count="specs.length" />
+          <ListPager v-model:page="pg.page.value" v-model:size="pg.size.value" :total="pg.total.value" />
+        </el-card>
+      </el-tab-pane>
+      <el-tab-pane :label="`提供给受托厂${oem && oem.awaiting ? `（${oem.awaiting} 项待确认）` : ''}`" name="oem">
+        <p class="muted small sub-note">在做的委托单（已计划、已发料）里品牌供料的原料和包材。现行质量标准就是提供给受托厂的物料验收标准，原料同时写明成分（INCI 名称、CAS 号）。受托厂在代工厂门户逐版确认收到；不用门户的，由质量部门登记线下交接。标准换版后要重新确认。只提醒，不拦发料和放行。对应检查要点委托生产版第 12 项。</p>
+        <LoadError v-if="oemLoader.error.value" :message="oemLoader.error.value" :loading="oemLoader.loading.value" @retry="loadOem" />
+        <template v-else>
+          <el-card shadow="never" body-style="padding:0 0 8px">
+            <template #header>
+              <div class="filters">
+                <el-input v-model="op.keyword.value" placeholder="搜索受托厂、物料" clearable />
+                <el-checkbox v-model="oemPendingOnly">只看要处理的</el-checkbox>
+                <span v-if="oem" class="muted small">{{ oem.factories }} 家受托厂 · 已确认 {{ oem.acked }} · 待确认 {{ oem.awaiting }} · 没有标准 {{ oem.noSpec }}<template v-if="oem.compositionMissing"> · {{ oem.compositionMissing }} 种原料没有 INCI 名称</template></span>
+                <ExportButton report="oem-supply-specs" label="导出" />
+              </div>
+            </template>
+            <el-table :data="op.paged.value" v-loading="oemLoader.loading.value" empty-text="在做的委托单没有品牌供料的物料" scrollbar-tabindex="0">
+              <el-table-column label="物料" min-width="200">
+                <template #default="{ row }">{{ row.itemName }}<div class="muted small"><span class="mono">{{ row.itemCode }}</span> · {{ row.itemTypeLabel }}<template v-if="narrow"> · {{ row.factoryName }}</template></div></template>
+              </el-table-column>
+              <el-table-column v-if="!narrow" label="受托生产企业" min-width="140"><template #default="{ row }">{{ row.factoryName }}</template></el-table-column>
+              <el-table-column label="成分" min-width="160">
+                <template #default="{ row }">
+                  <span v-if="row.inci" class="small">{{ row.inci }}</span>
+                  <span v-else-if="row.compositionMissing" class="late small">原料没有登记 INCI 名称</span>
+                  <span v-else class="muted small">—</span>
+                  <div v-if="row.casNo" class="muted small mono">CAS {{ row.casNo }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="现行标准" min-width="130">
+                <template #default="{ row }"><span v-if="row.specNo" class="mono">{{ row.specNo }}</span><span v-else class="late small">没有生效的标准</span><div v-if="row.specVersion" class="muted small">V{{ row.specVersion }}</div></template>
+              </el-table-column>
+              <el-table-column label="受托厂确认" min-width="190">
+                <template #default="{ row }">
+                  <el-tag :type="ACK_TAG[row.state]" size="small" disable-transitions>{{ row.stateLabel }}</el-tag>
+                  <div v-if="row.lastAck" class="muted small">V{{ row.lastAck.specVersion }} {{ row.lastAck.methodLabel }} · {{ row.lastAck.receiver }} · {{ fmtTime(row.lastAck.createdAt) }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="在做的委托单" min-width="130"><template #default="{ row }"><span class="mono small">{{ row.moNos.join('、') }}</span></template></el-table-column>
+              <el-table-column v-if="canRecordAck" label="" width="130">
+                <template #default="{ row }">
+                  <el-button v-if="row.specId && row.state !== 'ACKED'" size="small" text @click="openAck(row)">登记线下交接</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <ListPager v-model:page="op.page.value" v-model:size="op.size.value" :total="op.total.value" />
+          </el-card>
+          <el-card v-if="oem && oem.recentAcks.length" shadow="never" style="margin-top:12px">
+            <template #header><div class="sub-head" style="margin-top:0"><b>最近的确认记录</b><ExportButton report="oem-spec-acks" label="导出全部记录" /></div></template>
+            <el-table :data="oem.recentAcks" size="small" scrollbar-tabindex="0">
+              <el-table-column label="时间" width="150"><template #default="{ row }">{{ fmtTime(row.createdAt) }}</template></el-table-column>
+              <el-table-column label="受托厂和物料" min-width="200"><template #default="{ row }">{{ row.factoryName }}<div class="muted small">{{ row.itemName }} · <span class="mono">{{ row.specNo }}</span> V{{ row.specVersion }}</div></template></el-table-column>
+              <el-table-column label="方式" min-width="160"><template #default="{ row }">{{ row.methodLabel }}<div class="muted small">接收人 {{ row.receiver }}<template v-if="row.note"> · {{ row.note }}</template></div></template></el-table-column>
+              <el-table-column v-if="!narrow" prop="createdBy" label="操作账号" width="110" />
+            </el-table>
+          </el-card>
+        </template>
+      </el-tab-pane>
+    </el-tabs>
 
     <el-dialog v-model="cr.visible" :title="cr.from ? `修订标准：${cr.from.itemName}` : '新建质量标准'" width="720px" :close-on-click-modal="false">
       <el-form label-position="top" @submit.prevent>
@@ -125,11 +184,25 @@
         <el-button @click="dt.visible = false">关闭</el-button>
       </template>
     </el-dialog>
+    <el-dialog v-model="ak.visible" :title="`登记线下交接：${ak.row?.itemName || ''}`" width="520px" :close-on-click-modal="false">
+      <template v-if="ak.row">
+        <p class="summary-line small">把 <b>{{ ak.row.specNo }}</b> 第 {{ ak.row.specVersion }} 版验收标准（纸质版、邮件等）交给了 <b>{{ ak.row.factoryName }}</b>。受托厂能用代工厂门户的，请让对方在门户里确认，不用在这里登记。</p>
+        <el-form label-position="top" @submit.prevent>
+          <el-form-item label="受托厂的接收人"><el-input id="oa-receiver" v-model="ak.receiver" maxlength="64" placeholder="如：禾川 QA 张三" @keydown.enter.prevent="submitAck" /></el-form-item>
+          <el-form-item label="备注（选填）"><el-input id="oa-note" v-model="ak.note" maxlength="300" placeholder="如：纸质版签收，签收单已存档" /></el-form-item>
+        </el-form>
+      </template>
+      <template #footer>
+        <el-button @click="ak.visible = false">取消</el-button>
+        <el-button type="primary" :loading="ak.saving" @click="submitAck">登记交接</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../api'
 import AttachmentList from '../components/AttachmentList.vue'
@@ -146,10 +219,14 @@ import { useRefData } from '../utils/refdata'
 import { textMatch, usePaged } from '../utils/table'
 
 const TYPE = { RM: '原料', PK: '包材', FG: '成品' }
+const ACK_TAG = { ACKED: 'success', UNACKED: 'warning', OUTDATED: 'warning', NO_SPEC: 'danger' }
 const auth = useAuth()
 const rd = useRefData()
 const canCreate = computed(() => auth.hasAny('MASTER_DATA', 'QA', 'QSO'))
 const isQso = computed(() => auth.hasAny('QSO'))
+const canRecordAck = computed(() => auth.hasAny('QA', 'QSO'))
+const route = useRoute()
+const tab = ref(route.query.tab === 'oem' ? 'oem' : 'specs')
 const specs = ref([])
 const summary = ref(null)
 const currentOnly = ref(true)
@@ -164,8 +241,36 @@ const pg = usePaged(shown, { match: textMatch('specNo', 'itemName', 'itemCode') 
 const itemOptions = computed(() => rd.s.items.filter((i) => i.active))
 const narrow = ref(window.innerWidth <= 768)
 const onResize = () => { narrow.value = window.innerWidth <= 768 }
-onMounted(() => { load(); rd.load(); window.addEventListener('resize', onResize) })
+onMounted(() => { load(); rd.load(); if (tab.value === 'oem') loadOem(); window.addEventListener('resize', onResize) })
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
+
+// 提供给受托厂：切到这个页签时才读
+const oem = ref(null)
+const oemPendingOnly = ref(false)
+const oemLoader = useLoader(async () => { oem.value = await http.get('/oem-supply') })
+const loadOem = () => oemLoader.run()
+watch(tab, (t) => { if (t === 'oem' && !oem.value) loadOem() })
+const op = usePaged(computed(() => oem.value?.rows || []), {
+  match: textMatch('factoryName', 'itemName', 'itemCode', 'specNo'),
+  extra: (r) => !oemPendingOnly.value || r.state !== 'ACKED' || r.compositionMissing,
+})
+const ak = reactive({ visible: false, saving: false, row: null, receiver: '', note: '' })
+function openAck(row) {
+  Object.assign(ak, { visible: true, saving: false, row, receiver: '', note: '' })
+}
+async function submitAck() {
+  if (ak.saving) return
+  if (!ak.receiver.trim()) return ElMessage.warning('请填写受托厂的接收人')
+  ak.saving = true
+  try {
+    await http.post(`/oem-supply/specs/${ak.row.specId}/acks`, { factoryId: ak.row.factoryId, receiver: ak.receiver, note: ak.note })
+    ElMessage.success('已登记线下交接')
+    ak.visible = false
+    loadOem()
+  } finally {
+    ak.saving = false
+  }
+}
 
 const blankLine = () => ({ name: '', method: '', unit: '', minValue: undefined, maxValue: undefined, criteria: '', coaAllowed: false })
 const copyLine = (l) => ({ name: l.name, method: l.method || '', unit: l.unit || '', minValue: l.minValue != null ? Number(l.minValue) : undefined, maxValue: l.maxValue != null ? Number(l.maxValue) : undefined, criteria: l.criteria || '', coaAllowed: !!l.coaAllowed })

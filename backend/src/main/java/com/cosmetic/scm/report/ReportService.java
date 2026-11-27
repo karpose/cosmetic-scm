@@ -79,6 +79,7 @@ public class ReportService {
     private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervision;
     private final com.cosmetic.scm.storage.StorageMonitorService storageMonitor;
     private final com.cosmetic.scm.recall.RecallDrillService recallDrills;
+    private final com.cosmetic.scm.oemsupply.OemSupplyService oemSupply;
     private final RetainService retains;
     private final PurchaseService purchases;
     private final com.cosmetic.scm.settlement.SettlementService settlement;
@@ -116,6 +117,8 @@ public class ReportService {
         m.put("oem-contracts", this::oemContractsReport);
         m.put("oem-supervision", this::oemSupervisionReport);
         m.put("recall-drills", this::recallDrillsReport);
+        m.put("oem-supply-specs", this::oemSupplySpecsReport);
+        m.put("oem-spec-acks", () -> oemSpecAcksReport(from, to));
         m.put("env-records", () -> envRecordsReport(from, to));
         m.put("env-excursions", this::envExcursionsReport);
         m.put("partner-compliance", this::partnerComplianceReport);
@@ -646,6 +649,23 @@ public class ReportService {
         return new Table("召回演练", List.of("编号", "成品编码", "成品", "批号", "模拟情景", "发起人", "发起时间", "目标用时（小时）", "最后联系完", "用时（小时）",
                 "已登记 / 对象", "在外数量定位率（%）", "结论", "没达标的原因", "联系结果", "数量平衡", "CAPA", "演练总结", "状态", "提交人", "提交时间",
                 "审核人", "审核时间", "审核意见", "作废原因"), rows);
+    }
+
+    private Table oemSupplySpecsReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        oemSupply.exportRows().forEach(r -> rows.add(row(r.factoryName(), r.itemCode(), r.itemName(), r.itemType(), r.inci(), r.casNo(), r.specNo(), r.specVersion(),
+                r.state(), r.lastAck(), r.moNos())));
+        return new Table("品牌供料验收标准", List.of("受托生产企业", "物料编码", "物料", "类型", "INCI 名称", "CAS 号", "现行标准", "版本", "受托厂确认", "最近一次确认",
+                "在做的委托单"), rows);
+    }
+
+    private Table oemSpecAcksReport(LocalDate from, LocalDate to) {
+        LocalDate t = to == null ? time.today() : to;
+        LocalDate f = from == null ? t.minusYears(1) : from;
+        List<List<Object>> rows = new ArrayList<>();
+        oemSupply.ackRecords(f, t).forEach(a -> rows.add(row(a.createdAt(), a.factoryName(), a.itemCode(), a.itemName(), a.specNo(), "V" + a.specVersion(),
+                a.methodLabel(), a.receiver(), a.note(), a.createdBy())));
+        return new Table("验收标准确认记录", List.of("确认时间", "受托生产企业", "物料编码", "物料", "标准编号", "版本", "方式", "受托厂接收人", "备注", "操作账号"), rows);
     }
 
     private Table envRecordsReport(LocalDate from, LocalDate to) {

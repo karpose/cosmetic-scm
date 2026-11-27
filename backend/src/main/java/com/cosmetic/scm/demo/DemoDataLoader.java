@@ -112,6 +112,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final com.cosmetic.scm.plm.ComplianceService complianceService;
     private final com.cosmetic.scm.plm.StabilityService stabilityService;
     private final com.cosmetic.scm.quality.QualitySpecService qualitySpecService;
+    private final com.cosmetic.scm.oemsupply.OemSupplyService oemSupplyService;
     private final com.cosmetic.scm.plm.NpdService npdService;
     private final com.cosmetic.scm.plm.DocControlService docControlService;
     private final com.cosmetic.scm.plm.ChangeService changeService;
@@ -314,6 +315,15 @@ public class DemoDataLoader implements ApplicationRunner {
                 new com.cosmetic.scm.quality.QualitySpecService.LineReq("含量", "（示例）", "%", new BigDecimal("98"), null, null, true)),
                 "每批随机取 1 桶，取样 50 g（示例）", null)));
         as("qso1", () -> qualitySpecService.approve(squSpec.id(), new com.cosmetic.scm.quality.QualitySpecService.ApproveReq(DEMO_PASSWORD)));
+        // 品牌供料的包材验收标准：精华瓶、精华彩盒已生效，禾川在门户确认了精华瓶，彩盒还没确认（检查要点第 12 项）
+        var btlSpec = as("qa1", () -> qualitySpecService.create(new com.cosmetic.scm.quality.QualitySpecService.CreateReq(btl.getId(), "首版（示例）", List.of(
+                new com.cosmetic.scm.quality.QualitySpecService.LineReq("外观", "目测（示例）", null, null, null, "无裂纹、无毛刺（示例）", false),
+                new com.cosmetic.scm.quality.QualitySpecService.LineReq("满口容量", "（示例）", "mL", new BigDecimal("30"), new BigDecimal("33"), null, false)),
+                "每批随机取 20 件（示例）", null)));
+        as("qso1", () -> qualitySpecService.approve(btlSpec.id(), new com.cosmetic.scm.quality.QualitySpecService.ApproveReq(DEMO_PASSWORD)));
+        var boxSpec = as("qa1", () -> qualitySpecService.create(new com.cosmetic.scm.quality.QualitySpecService.CreateReq(box2.getId(), "首版（示例）", List.of(
+                new com.cosmetic.scm.quality.QualitySpecService.LineReq("印刷内容", "对照签样（示例）", null, null, null, "与签样一致（示例）", false)), null, null)));
+        as("qso1", () -> qualitySpecService.approve(boxSpec.id(), new com.cosmetic.scm.quality.QualitySpecService.ApproveReq(DEMO_PASSWORD)));
         as("qa1", () -> qualitySpecService.create(new com.cosmetic.scm.quality.QualitySpecService.CreateReq(cream.getId(), "首版（示例）", List.of(
                 new com.cosmetic.scm.quality.QualitySpecService.LineReq("外观", "目测（示例）", null, null, null, "膏体细腻（示例）", false),
                 new com.cosmetic.scm.quality.QualitySpecService.LineReq("pH", "（示例）", null, new BigDecimal("5"), new BigDecimal("7"), null, false)), null, null)));
@@ -356,6 +366,7 @@ public class DemoDataLoader implements ApplicationRunner {
         as("prod1", () -> production.issue(mo4.id()));
         as("oem1", () -> oemPortal.addProgress(mo4.id(), new OemPortalService.ProgressReq(OemStage.CONFIRMED, t.plusDays(9), "已收到品牌方发料（示例）")));
         as("oem1", () -> oemPortal.addProgress(mo4.id(), new OemPortalService.ProgressReq(OemStage.SCHEDULED, null, "排在 3 号灌装线（示例）")));
+        as("oem1", () -> oemSupplyService.ack(btlSpec.id(), new com.cosmetic.scm.oemsupply.OemSupplyService.PortalAckReq("已发给来料检验（示例）")));
 
         // ---------- 受托生产监督：第一批精华液驻厂监督（一个一般问题当场纠正）已审核；第二批的批记录调阅已提交，等质量安全负责人审核 ----------
         var sv1 = as("qa1", () -> oemSupervisionService.create(new com.cosmetic.scm.oemsupervision.OemSupervisionService.SaveReq(a3.id(), mo1.id(),
