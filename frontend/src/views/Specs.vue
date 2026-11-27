@@ -60,7 +60,8 @@
         </el-card>
       </el-tab-pane>
       <el-tab-pane :label="`提供给受托厂${oem && oem.awaiting ? `（${oem.awaiting} 项待确认）` : ''}`" name="oem">
-        <p class="muted small sub-note">在做的委托单（已计划、已发料）里品牌供料的原料和包材。现行质量标准就是提供给受托厂的物料验收标准，原料同时写明成分（INCI 名称、CAS 号）。受托厂在代工厂门户逐版确认收到；不用门户的，由质量部门登记线下交接。标准换版后要重新确认。只提醒，不拦发料和放行。对应检查要点委托生产版第 12 项。</p>
+        <p class="muted small sub-note">在做的委托单（已计划、已发料）里品牌供料的原料和包材。现行质量标准就是提供给受托厂的物料验收标准，原料同时写明成分（INCI 名称、CAS 号）。受托厂在代工厂门户逐版确认收到；不用门户的，由质量部门登记线下交接。标准换版后要重新确认。对应检查要点委托生产版第 12 项。</p>
+        <p v-if="oem" class="muted small sub-note">{{ oem.requireAckForIssue ? '已开启：受托厂没确认现行验收标准（或物料没有标准）的委托单不能发料。' : '没确认的只在总览提醒，不拦发料；需要时可以开启“确认后才能发料”。' }}不拦放行。</p>
         <LoadError v-if="oemLoader.error.value" :message="oemLoader.error.value" :loading="oemLoader.loading.value" @retry="loadOem" />
         <template v-else>
           <el-card shadow="never" body-style="padding:0 0 8px">

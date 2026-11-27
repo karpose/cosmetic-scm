@@ -94,10 +94,16 @@ public class ProductionService {
     private final com.cosmetic.scm.settlement.SupplierStatementLineRepository statementLines;
     private final com.cosmetic.scm.oemcontract.OemContractRepository oemContracts;
     private final com.cosmetic.scm.oemcontract.OemContractProductRepository oemContractProducts;
+    private final com.cosmetic.scm.quality.QualitySpecRepository qualitySpecs;
+    private final com.cosmetic.scm.oemsupply.OemSpecAckRepository oemSpecAcks;
 
     /** 打开后，委托单必须有覆盖这个成品的有效委托生产合同（默认只提醒）。 */
     @org.springframework.beans.factory.annotation.Value("${scm.oem.require-contract-for-order:false}")
     private boolean requireContract;
+
+    /** 打开后，委托单首次发料前，受托厂要确认过每个品牌供料物料的现行验收标准（默认只提醒，检查要点第 12 项）。 */
+    @org.springframework.beans.factory.annotation.Value("${scm.oem.require-spec-ack-for-issue:false}")
+    private boolean requireSpecAck;
 
     public record CreateMoReq(@NotNull Long factoryId, @NotNull Long fgItemId,
                               @NotNull @Positive @Qty BigDecimal plannedQty, LocalDate plannedDate) {
@@ -493,16 +499,36 @@ public class ProductionService {
     }
 
     /** 品牌供料部分按 FEFO 从自有仓发料；若委外厂配置了寄存仓，则同步入寄存仓形成委外寄售料账。任何一种物料不足，整单不发。 */
+    /** 开关打开时：品牌供料的物料都要有现行质量标准，受托厂确认过这一版，否则不能发料。 */
+    private void requireSpecAcks(MfgOrder mo, List<Requirement> reqs) {
+        List<Long> brand = reqs.stream().filter(r -> r.mode() == SupplyMode.BRAND).map(r -> r.item().getId()).distinct().toList();
+        Map<Long, com.cosmetic.scm.domain.rules.SupplySpecRule.State> gaps = com.cosmetic.scm.oemsupply.SuppliedMaterials.unconfirmed(mo.getFactoryId(), brand,
+                qualitySpecs, oemSpecAcks);
+        if (gaps.isEmpty()) {
+            return;
+        }
+        String list = gaps.entrySet().stream().map(e -> lookup.item(e.getKey()).getName() + switch (e.getValue()) {
+            case NO_SPEC -> " 没有生效的质量标准";
+            case OUTDATED -> " 受托厂确认的是旧版";
+            default -> " 受托厂还没确认验收标准";
+        }).collect(java.util.stream.Collectors.joining("；"));
+        throw new BizException("已开启“受托厂确认验收标准后才能发料”，" + mo.getMoNo() + " 还不能发料：" + list + "。请在“质量标准 → 提供给受托厂”处理");
+    }
+
     @Transactional
     public MoView issue(Long moId) {
         MfgOrder mo = lock(moId);
         if (mo.getStatus() != MoStatus.PLANNED) {
             throw new BizException(mo.getMoNo() + " 当前状态为" + mo.getStatus().getLabel() + "，不能发料");
         }
+        List<Requirement> reqs = requirements(mo);
+        if (requireSpecAck && mo.getMoType() == MoType.OEM) {
+            requireSpecAcks(mo, reqs);
+        }
         List<Long> own = ownWarehouseIds();
         List<String> shortages = new ArrayList<>();
         Map<Requirement, FefoAllocator.Result> plan = new LinkedHashMap<>();
-        for (Requirement r : requirements(mo)) {
+        for (Requirement r : reqs) {
             if (r.mode() != SupplyMode.BRAND) {
                 continue;
             }

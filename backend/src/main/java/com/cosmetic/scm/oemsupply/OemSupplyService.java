@@ -49,7 +49,7 @@ import lombok.RequiredArgsConstructor;
  * 委托方提供物料验收标准（《化妆品生产质量管理规范》第五十四条第二款；检查要点委托生产版第 12 项）。
  * 在做的委托单（已计划、已发料）里品牌供料的原料、包材，把现行质量标准和原料成分（INCI、CAS 号）提供给受托厂，
  * 受托厂在门户逐版确认收到，不用门户的由质量部门登记线下交接。换版后要重新确认。
- * 只提醒、不拦发料和放行。确认记录只增不改。写操作先锁标准行（事务第一句），所以路径带标准 id。
+ * 默认只提醒；打开 scm.oem.require-spec-ack-for-issue 后，委托单首次发料前要都确认过（`ProductionService.issue`）。不拦放行。确认记录只增不改。写操作先锁标准行（事务第一句），所以路径带标准 id。
  */
 @Service
 @RequiredArgsConstructor
@@ -70,6 +70,9 @@ public class OemSupplyService {
     private final TimeProvider time;
     private final CurrentUser currentUser;
 
+    @org.springframework.beans.factory.annotation.Value("${scm.oem.require-spec-ack-for-issue:false}")
+    private boolean requireAckForIssue;
+
     public record OfflineReq(@NotNull(message = "请选择受托生产企业") Long factoryId,
                              @NotBlank(message = "请填写受托厂的接收人") @Size(max = 64, message = "接收人最多 64 个字") String receiver,
                              @Size(max = 300, message = "备注最多 300 个字") String note) {
@@ -88,7 +91,9 @@ public class OemSupplyService {
                       AckView lastAck, List<String> moNos) {
     }
 
-    public record Overview(List<Row> rows, long factories, long noSpec, long awaiting, long acked, long compositionMissing, List<AckView> recentAcks) {
+    /** requireAckForIssue：开关 scm.oem.require-spec-ack-for-issue，打开后受托厂没确认就不能发料。 */
+    public record Overview(List<Row> rows, long factories, long noSpec, long awaiting, long acked, long compositionMissing, List<AckView> recentAcks,
+                           boolean requireAckForIssue) {
     }
 
     public record SpecLineView(int lineNo, String name, String method, String limitText, String criteria) {
@@ -114,7 +119,7 @@ public class OemSupplyService {
         long awaiting = rows.stream().filter(r -> r.state().awaitingAck()).count();
         long acked = rows.stream().filter(r -> r.state() == SupplySpecRule.State.ACKED).count();
         long comp = rows.stream().filter(Row::compositionMissing).map(Row::itemId).distinct().count();
-        return new Overview(rows, factories.size(), noSpec, awaiting, acked, comp, ackViews(acks.findTop100ByOrderByIdDesc()));
+        return new Overview(rows, factories.size(), noSpec, awaiting, acked, comp, ackViews(acks.findTop100ByOrderByIdDesc()), requireAckForIssue);
     }
 
     /** 总览待办：在做的委托单里有现行标准、受托厂还没确认这一版的。没有标准的不进待办（在页面和自查第 12 项里列出）。 */

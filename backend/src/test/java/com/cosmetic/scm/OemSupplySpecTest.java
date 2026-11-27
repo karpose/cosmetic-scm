@@ -107,6 +107,14 @@ class OemSupplySpecTest {
         return byNo;
     }
 
+    @Autowired com.cosmetic.scm.production.ProductionService production;
+    @Autowired com.cosmetic.scm.oemsupply.OemSupplyService oemSupply;
+
+    private void requireAck(boolean on) {
+        org.springframework.test.util.ReflectionTestUtils.setField((Object) org.springframework.test.util.AopTestUtils.getTargetObject(production), "requireSpecAck", on);
+        org.springframework.test.util.ReflectionTestUtils.setField((Object) org.springframework.test.util.AopTestUtils.getTargetObject(oemSupply), "requireAckForIssue", on);
+    }
+
     private long auditCount(String action) {
         return audits.findAllByOrderByIdDesc(PageRequest.of(0, 500)).stream().filter(a -> action.equals(a.getAction())).count();
     }
@@ -183,6 +191,23 @@ class OemSupplySpecTest {
         assertThat(read(qso, "/api/dashboard").get("todos").toString()).doesNotContain("受托厂没确认物料验收标准");
         String details = evidence(qa).get(12).get("details").toString();
         assertThat(details).doesNotContain("精华彩盒").doesNotContain("精华瓶").contains("透明质酸钠：品牌供料");
+
+        // 开关打开后：首次发料前，品牌供料的物料都要有标准、受托厂确认过现行版本（烟酰胺、透明质酸钠还没有标准）
+        long serum = itemId(qa, "FG-SER-001");
+        String prod = login("prod1", PWD);
+        long mo = ok(call(prod, "/api/mfg-orders", Map.of("factoryId", a3, "fgItemId", serum, "plannedQty", 10))).get("id").asLong();
+        requireAck(true);
+        try {
+            call(prod, "/api/mfg-orders/" + mo + "/issue", Map.of()).andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message", containsString("烟酰胺 没有生效的质量标准")))
+                    .andExpect(jsonPath("$.message", containsString("透明质酸钠 没有生效的质量标准")))
+                    .andExpect(jsonPath("$.message", org.hamcrest.Matchers.not(containsString("精华瓶"))));
+            assertThat(read(qa, "/api/oem-supply").get("requireAckForIssue").asBoolean()).isTrue();
+        } finally {
+            requireAck(false);
+        }
+        assertThat(read(qa, "/api/oem-supply").get("requireAckForIssue").asBoolean()).isFalse();
+        ok(call(prod, "/api/mfg-orders/" + mo + "/issue", Map.of()));
 
         // 导出
         mvc.perform(get("/api/reports/oem-supply-specs").header("Authorization", "Bearer " + qa)).andExpect(status().isOk());

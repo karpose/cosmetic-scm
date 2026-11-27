@@ -17,6 +17,7 @@ import com.cosmetic.scm.domain.MoStatus;
 import com.cosmetic.scm.domain.MoType;
 import com.cosmetic.scm.domain.SpecStatus;
 import com.cosmetic.scm.domain.SupplyMode;
+import com.cosmetic.scm.domain.rules.SupplySpecRule;
 import com.cosmetic.scm.master.Bom;
 import com.cosmetic.scm.master.BomLine;
 import com.cosmetic.scm.master.BomLineRepository;
@@ -25,6 +26,7 @@ import com.cosmetic.scm.plm.FormulaLine;
 import com.cosmetic.scm.plm.FormulaLineRepository;
 import com.cosmetic.scm.production.MfgOrder;
 import com.cosmetic.scm.quality.QualitySpec;
+import com.cosmetic.scm.quality.QualitySpecRepository;
 
 /**
  * 委托单里品牌供料的物料：已发料的单按锁定的配方版本读，没发料的按当前 BOM。
@@ -90,6 +92,28 @@ public final class SuppliedMaterials {
                 continue;
             }
             out.merge(s.getItemId(), s, (a, b) -> a.getVersionNo() >= b.getVersionNo() ? a : b);
+        }
+        return out;
+    }
+
+    /**
+     * 这家受托厂对这些物料还没确认现行验收标准的（没有标准的也算），物料 id → 状态，按传入顺序。
+     * 开关 scm.oem.require-spec-ack-for-issue 打开后，委托单首次发料前用它核对。
+     */
+    public static Map<Long, SupplySpecRule.State> unconfirmed(Long factoryId, Collection<Long> itemIds, QualitySpecRepository specs, OemSpecAckRepository acks) {
+        if (itemIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, QualitySpec> cur = current(specs.findByItemIdIn(itemIds));
+        Map<Long, List<Integer>> acked = acks.findByFactoryIdInAndItemIdIn(List.of(factoryId), itemIds).stream()
+                .collect(Collectors.groupingBy(OemSpecAck::getItemId, Collectors.mapping(OemSpecAck::getSpecVersion, Collectors.toList())));
+        Map<Long, SupplySpecRule.State> out = new LinkedHashMap<>();
+        for (Long id : itemIds) {
+            QualitySpec s = cur.get(id);
+            SupplySpecRule.State st = SupplySpecRule.state(s == null ? null : s.getVersionNo(), acked.getOrDefault(id, List.of()));
+            if (st != SupplySpecRule.State.ACKED) {
+                out.put(id, st);
+            }
         }
         return out;
     }
