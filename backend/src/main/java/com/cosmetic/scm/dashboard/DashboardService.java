@@ -106,6 +106,7 @@ public class DashboardService {
     private final com.cosmetic.scm.oemcontract.OemContractService oemContracts;
     private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervision;
     private final com.cosmetic.scm.storage.StorageMonitorService storageMonitor;
+    private final com.cosmetic.scm.oemsupply.OemSupplyService oemSupply;
     private final com.cosmetic.scm.recall.RecallDrillService recallDrills;
     private final com.cosmetic.scm.sales.SalesRecordService salesRecords;
     private final TimeProvider time;
@@ -301,6 +302,12 @@ public class DashboardService {
             todos.add(new Todo("OEM_SUPERVISION_DUE", "受托厂监督到期", "warn", f.factoryName(), f.factoryCode(),
                     f.openOrders() + " 张委托单在做，" + (f.lastSupervised() == null ? "还没有监督记录" : "最近一次监督 " + f.lastSupervised() + "，超过 "
                             + oemSupervision.intervalDays() + " 天"), "/oem-supervision?tab=factories"));
+        }
+        // 品牌供料的验收标准（检查要点第 12 项）：有现行标准、受托厂还没确认这一版的
+        for (com.cosmetic.scm.oemsupply.OemSupplyService.Row r : oemSupply.awaitingAck()) {
+            todos.add(new Todo("OEM_SPEC_ACK", "受托厂没确认物料验收标准", "warn", r.itemName(), r.specNo(),
+                    "受托厂 " + r.factoryName() + "，现行第 " + r.specVersion() + " 版" + (r.state() == com.cosmetic.scm.domain.rules.SupplySpecRule.State.OUTDATED
+                            ? "，确认的还是第 " + r.lastAck().specVersion() + " 版" : "") + "，委托单 " + String.join("、", r.moNos()), "/specs?tab=oem"));
         }
         // 贮存区域温湿度（检查要点第 16、20 项）：仍超限的、昨天漏记的
         for (com.cosmetic.scm.storage.StorageMonitorService.TodoRow r : storageMonitor.todos()) {

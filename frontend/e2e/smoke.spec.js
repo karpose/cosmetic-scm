@@ -2302,6 +2302,61 @@ test('召回演练：按出库列出要联系的对象，联系不上的没达�
   await expect(rows.filter({ hasText: '待审核' })).toHaveCount(0)
 })
 
+test('委托方提供物料验收标准：受托厂在门户确认品牌供料的验收标准，质量部可以登记线下交接', async ({ page }) => {
+  // 前面的用例会完成或取消示例委托单，这里自己下一张（精华液：精华瓶、彩盒、烟酰胺、透明质酸钠是品牌供料）
+  await login(page, 'admin', 'Admin@123456')
+  await page.evaluate(async () => {
+    const h = { Authorization: `Bearer ${localStorage.getItem('scm_token')}`, 'Content-Type': 'application/json' }
+    const get = (u) => fetch(`/api${u}`, { headers: h }).then((r) => r.json())
+    const oem = (await get('/partners')).find((p) => p.code === 'OEM-A3')
+    const fg = (await get('/items')).find((i) => i.code === 'FG-SER-001')
+    await fetch('/api/mfg-orders', { method: 'POST', headers: h, body: JSON.stringify({ factoryId: oem.id, fgItemId: fg.id, plannedQty: 100 }) })
+  })
+  const axe = async (el) => {
+    await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+    return el.evaluate(async (e) => {
+      const r = await window.axe.run(e, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+      return r.violations.map((v) => `${v.id} ×${v.nodes.length}：${v.nodes[0].target[0]}`)
+    })
+  }
+
+  await login(page, 'qa1')
+  await page.goto('/specs?tab=oem')
+  const rows = page.locator('main .el-table__row:visible')
+  await expect(rows.filter({ hasText: 'PK-BTL-001' }).first()).toContainText('已确认')
+  await expect(rows.filter({ hasText: 'PK-BTL-001' }).first()).toContainText('门户确认')
+  await expect(rows.filter({ hasText: 'RM-NIA-001' }).first()).toContainText('没有生效的标准')
+  await expect(rows.filter({ hasText: 'RM-NIA-001' }).first()).toContainText('Niacinamide')
+  const box = rows.filter({ hasText: 'PK-BOX-002' }).first()
+  await expect(box).toContainText('待受托厂确认')
+  // 线下交接的弹窗过一遍 axe，先不登记，让受托厂在门户确认
+  await box.getByRole('button', { name: '登记线下交接' }).click()
+  const d = page.getByRole('dialog', { name: /^登记线下交接/ })
+  await expect(d).toContainText('禾川生物')
+  expect(await axe(d)).toEqual([])
+  await d.getByRole('button', { name: '登记交接' }).click()
+  await toast(page, '请填写受托厂的接收人')
+  await d.getByRole('button', { name: '取消' }).click()
+
+  await login(page, 'oem1')
+  await page.getByRole('tab', { name: /物料验收标准/ }).click()
+  const card = page.locator('.order').filter({ hasText: '精华彩盒 v2' })
+  await expect(card).toContainText('印刷内容')
+  await expect(card).toContainText('待受托厂确认')
+  await expect(page.locator('.order').filter({ hasText: '烟酰胺' })).toContainText('品牌方还没有提供标准')
+  await expect(page.locator('.order').filter({ hasText: '烟酰胺' })).toContainText('Niacinamide')
+  expect(await axe(page.locator('main'))).toEqual([])
+  await card.getByRole('button', { name: '确认收到第 1 版' }).click()
+  await toast(page, '已确认收到 精华彩盒 v2')
+  await expect(card).toContainText('已确认')
+  await expect(card.getByRole('button', { name: /确认收到/ })).toHaveCount(0)
+
+  await login(page, 'qa1')
+  await page.goto('/specs?tab=oem')
+  await expect(rows.filter({ hasText: 'PK-BOX-002' }).first()).toContainText('门户确认')
+  await expect(rows.filter({ hasText: 'PK-BOX-002' }).first().getByRole('button', { name: '登记线下交接' })).toHaveCount(0)
+})
+
 test('贮存环境：录入温湿度先提示超限，导入记录仪 CSV 超限生成偏差，选区域看趋势图', async ({ page }) => {
   await login(page, 'purchase1') // 有仓库角色：能录入、导入，不能设区域和作废
   await page.goto('/storage-env')
@@ -2888,7 +2943,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/oem-supervision', '/oem-supervision?tab=factories', '/oem-supervision?tab=orders', '/storage-env', '/storage-env?tab=records', '/storage-env?tab=excursions', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/sales?tab=unpriced', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/specs?tab=oem', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/oem-supervision', '/oem-supervision?tab=factories', '/oem-supervision?tab=orders', '/storage-env', '/storage-env?tab=records', '/storage-env?tab=excursions', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/sales?tab=unpriced', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/quality-events?tab=drills', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页

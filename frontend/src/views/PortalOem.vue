@@ -6,7 +6,7 @@
         <p>{{ auth.user?.partnerName }}：这里列出品牌方委托给本厂的生产单。请及时回传接单、排产和生产进度；生产完成、出厂检验合格后提交完工申报，品牌方核对后入库。</p>
       </div>
       <div class="toolbar">
-        <el-input v-if="tab !== 'statements'" v-model="keyword" size="default" placeholder="搜索委托单号、成品名称" clearable style="width:220px" />
+        <el-input v-if="tab === 'active' || tab === 'done'" v-model="keyword" size="default" placeholder="搜索委托单号、成品名称" clearable style="width:220px" />
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
       </div>
     </div>
@@ -38,9 +38,45 @@
       <el-tab-pane :label="`进行中（${active.length}）`" name="active" />
       <el-tab-pane :label="`已结束（${finished.length}）`" name="done" />
       <el-tab-pane :label="`委外对账（${statements.length}）`" name="statements" />
+      <el-tab-pane :label="`物料验收标准${specsToAck ? `（${specsToAck} 份待确认）` : `（${specs.length}）`}`" name="specs" />
     </el-tabs>
 
     <LoadError v-if="loader.error.value" :message="loader.error.value" :loading="loader.loading.value" @retry="load" />
+    <template v-else-if="tab === 'specs'">
+      <p class="muted small">品牌方提供给本厂的原料、包材（品牌供料）的验收标准和原料成分，按在做的委托单列出。请按标准做来料验收，收到后点“确认收到”；品牌方修订标准后要重新确认。</p>
+      <el-empty v-if="!specs.length && !loader.loading.value" description="在做的委托单没有品牌方提供的物料" />
+      <div v-else class="cards">
+        <section v-for="m in specs" :key="m.itemId" class="order glass">
+          <header class="oh">
+            <div>
+              <div class="mono muted small">{{ m.itemCode }} · {{ m.itemTypeLabel }} · 委托单 {{ m.moNos.join('、') }}</div>
+              <h3>{{ m.itemName }}</h3>
+              <div v-if="m.inci || m.casNo" class="small">成分：{{ m.inci || '—' }}<span v-if="m.casNo" class="mono muted">（CAS {{ m.casNo }}）</span></div>
+              <div v-else-if="m.compositionMissing" class="small muted">成分：品牌方还没有登记，请向品牌方索取</div>
+            </div>
+            <div class="tags">
+              <span v-if="m.specNo" class="mono muted small">{{ m.specNo }} 第 {{ m.specVersion }} 版</span>
+              <el-tag :type="ACK_TAG[m.state]" size="small" disable-transitions>{{ m.state === 'NO_SPEC' ? '品牌方还没有提供标准' : m.stateLabel }}</el-tag>
+            </div>
+          </header>
+          <template v-if="m.specId">
+            <el-table :data="m.lines" size="small" scrollbar-tabindex="0">
+              <el-table-column prop="name" label="项目" min-width="110" />
+              <el-table-column label="方法" min-width="110"><template #default="{ row }">{{ row.method || '—' }}</template></el-table-column>
+              <el-table-column label="限度" min-width="110"><template #default="{ row }">{{ row.limitText || '—' }}</template></el-table-column>
+              <el-table-column label="判定标准" min-width="140"><template #default="{ row }">{{ row.criteria || '—' }}</template></el-table-column>
+            </el-table>
+            <p v-if="m.samplingPlan" class="small" style="margin:0">取样要求：{{ m.samplingPlan }}</p>
+            <footer class="toolbar">
+              <el-button v-if="m.state !== 'ACKED'" type="primary" size="small" :loading="ackingId === m.specId" @click="ackSpec(m)">确认收到第 {{ m.specVersion }} 版</el-button>
+              <span v-else class="muted small">{{ m.ackedBy }} 于 {{ fmtTime(m.ackedAt) }} 确认收到</span>
+              <span v-if="m.state === 'OUTDATED'" class="muted small">品牌方已修订标准，之前确认的是旧版</span>
+            </footer>
+          </template>
+          <p v-else class="muted small" style="margin:0">品牌方还没有为这个物料制定验收标准，有疑问请联系品牌方质量部。</p>
+        </section>
+      </div>
+    </template>
     <template v-else-if="tab === 'statements'">
       <el-empty v-if="!statements.length && !loader.loading.value" description="还没有委外加工费对账单" />
       <div v-else class="cards">
@@ -207,12 +243,15 @@ import { useLoader } from '../utils/loader'
 const auth = useAuth()
 const orders = ref([])
 const statements = ref([])
+const specs = ref([])
+const ACK_TAG = { ACKED: 'success', UNACKED: 'warning', OUTDATED: 'warning', NO_SPEC: 'info' }
 const tab = ref('active')
 const keyword = ref('')
 const loader = useLoader(async () => {
-  const [o, s] = await Promise.all([http.get('/portal/oem/orders'), http.get('/portal/oem/statements')])
+  const [o, s, m] = await Promise.all([http.get('/portal/oem/orders'), http.get('/portal/oem/statements'), http.get('/portal/oem/material-specs')])
   orders.value = o
   statements.value = s
+  specs.value = m
 })
 const load = () => loader.run()
 
@@ -228,6 +267,18 @@ const shown = computed(() => {
   const q = keyword.value.trim().toLowerCase()
   return q ? base.filter((o) => (o.moNo || '').toLowerCase().includes(q) || (o.fgName || '').toLowerCase().includes(q)) : base
 })
+const specsToAck = computed(() => specs.value.filter((m) => m.specId && m.state !== 'ACKED').length)
+const ackingId = ref(null)
+async function ackSpec(m) {
+  if (ackingId.value) return
+  ackingId.value = m.specId
+  try {
+    specs.value = await http.post(`/portal/oem/material-specs/${m.specId}/ack`, {})
+    ElMessage.success(`已确认收到 ${m.itemName} 第 ${m.specVersion} 版验收标准`)
+  } finally {
+    ackingId.value = null
+  }
+}
 const canReport = (o) => o.status === 'ISSUED' && latestReport(o)?.status !== 'SUBMITTED'
 const startOfToday = startOfBusinessDay()
 

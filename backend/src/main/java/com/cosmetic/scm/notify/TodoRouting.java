@@ -44,6 +44,7 @@ final class TodoRouting {
             Map.entry("OEM_CONTRACT_MISSING", Set.of(Role.PRODUCTION, Role.PURCHASE, Role.QSO)),
             Map.entry("OEM_LICENSE_SCOPE", Set.of(Role.PRODUCTION, Role.PURCHASE, Role.QSO)),
             Map.entry("OEM_SUPERVISION_REVIEW", Set.of(Role.QSO)),
+            Map.entry("OEM_SPEC_ACK", Set.of(Role.QA, Role.QSO)),
             Map.entry("OEM_SUPERVISION_DUE", Set.of(Role.QA, Role.QSO, Role.PRODUCTION)),
             Map.entry("STORAGE_EXCURSION", Set.of(Role.WAREHOUSE, Role.QA, Role.QSO)),
             Map.entry("STORAGE_RECORD_MISSING", Set.of(Role.WAREHOUSE, Role.QA)),
