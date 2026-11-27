@@ -78,6 +78,7 @@ public class ReportService {
     private final com.cosmetic.scm.oemcontract.OemContractService oemContracts;
     private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervision;
     private final com.cosmetic.scm.storage.StorageMonitorService storageMonitor;
+    private final com.cosmetic.scm.transport.TransportService transportService;
     private final com.cosmetic.scm.recall.RecallDrillService recallDrills;
     private final com.cosmetic.scm.oemsupply.OemSupplyService oemSupply;
     private final RetainService retains;
@@ -121,6 +122,7 @@ public class ReportService {
         m.put("oem-spec-acks", () -> oemSpecAcksReport(from, to));
         m.put("env-records", () -> envRecordsReport(from, to));
         m.put("env-excursions", this::envExcursionsReport);
+        m.put("transport-records", () -> transportRecordsReport(from, to));
         m.put("partner-compliance", this::partnerComplianceReport);
         m.put("retains", this::retainSamples);
         m.put("equipment", this::equipmentList);
@@ -677,6 +679,22 @@ public class ReportService {
                 r.createdBy(), r.createdAt(), r.voidReason(), r.voidedBy(), r.voidedAt())));
         return new Table("温湿度记录", List.of("区域编码", "区域名称", "记录时间", "温度（℃）", "相对湿度（%）", "当时的范围", "结果", "超出情况", "超限编号", "偏差编号",
                 "来源", "记录仪", "备注", "记录人", "录入时间", "作废原因", "作废人", "作废时间"), rows);
+    }
+
+    private Table transportRecordsReport(LocalDate from, LocalDate to) {
+        LocalDate t = to == null ? time.today() : to;
+        LocalDate f = from == null ? t.minusMonths(1) : from;
+        List<List<Object>> rows = new ArrayList<>();
+        transportService.exportRows(f, t).forEach(r -> rows.add(row(r.recordNo(), r.directionLabel(), r.modeLabel(), r.carrier(), r.waybillNo(), r.shippedAt(),
+                r.deliveredAt(), r.docs().stream().map(d -> d.docNo()).collect(java.util.stream.Collectors.joining("、")),
+                r.docs().stream().map(d -> d.partyName()).filter(java.util.Objects::nonNull).distinct().collect(java.util.stream.Collectors.joining("、")),
+                r.docs().stream().map(d -> d.itemsText()).filter(x -> x != null && !x.isBlank()).collect(java.util.stream.Collectors.joining("；")),
+                r.docs().stream().map(d -> d.batchesText()).filter(x -> x != null && !x.isBlank()).distinct().collect(java.util.stream.Collectors.joining("、")),
+                r.reqText(), r.readingText(), r.device(), r.damaged() ? "是：" + r.damageNote() : "否",
+                r.voided() ? "已作废" : r.conforming() ? "符合" : "不符合", r.problem(), r.deviationNo(), r.deviationStatusLabel(), r.note(), r.createdBy(), r.createdAt(),
+                r.voidReason(), r.voidedBy(), r.voidedAt())));
+        return new Table("运输记录", List.of("记录编号", "方向", "运输方式", "承运单位", "运单号", "发运时间", "到达时间", "单据", "收货方 / 受托厂", "产品和数量", "批次",
+                "运输条件（登记时）", "途中温度", "记录仪", "到货异常", "结果", "不符合情况", "偏差编号", "偏差状态", "备注", "登记人", "登记时间", "作废原因", "作废人", "作废时间"), rows);
     }
 
     private Table envExcursionsReport() {

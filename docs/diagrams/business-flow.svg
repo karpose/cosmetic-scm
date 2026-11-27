@@ -184,7 +184,7 @@
 <rect x="320.0" y="1230" width="230" height="52" rx="8" fill="#FFFFFF" stroke="#6A45E8" stroke-width="1.5"/>
 <text x="435" y="1253.0" text-anchor="middle" font-size="15" font-weight="600" fill="#1F2937">偏差 · CAPA</text><text x="435" y="1270.0" text-anchor="middle" font-size="12" fill="#5B6573">重大偏差未关不能放行</text>
 <rect x="590.0" y="1230" width="230" height="52" rx="8" fill="#FFFFFF" stroke="#6A45E8" stroke-width="1.5"/>
-<text x="705" y="1253.0" text-anchor="middle" font-size="15" font-weight="600" fill="#1F2937">留样台账 · 贮存环境</text><text x="705" y="1270.0" text-anchor="middle" font-size="12" fill="#5B6573">效期 + 6 个月 · 温湿度超限转偏差</text>
+<text x="705" y="1253.0" text-anchor="middle" font-size="15" font-weight="600" fill="#1F2937">留样台账 · 贮存和运输</text><text x="705" y="1270.0" text-anchor="middle" font-size="12" fill="#5B6573">效期 + 6 个月 · 超温转偏差</text>
 <rect x="860.0" y="1230" width="230" height="52" rx="8" fill="#FFFFFF" stroke="#6A45E8" stroke-width="1.5"/>
 <text x="975" y="1253.0" text-anchor="middle" font-size="15" font-weight="600" fill="#1F2937">稳定性试验</text><text x="975" y="1270.0" text-anchor="middle" font-size="12" fill="#5B6573">签批结论作保质期依据</text>
 <rect x="1130.0" y="1230" width="230" height="52" rx="8" fill="#FFFFFF" stroke="#6A45E8" stroke-width="1.5"/>

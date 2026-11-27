@@ -122,7 +122,7 @@ const groups = computed(() => {
         { path: '/specs', title: '质量标准', icon: Tickets },
         { path: '/stock', title: '库存', icon: Box },
         { path: '/inventory-ops', title: '库存作业', icon: Operation },
-        { path: '/storage-env', title: '贮存环境', icon: Odometer },
+        { path: '/storage-env', title: '贮存和运输', icon: Odometer },
         { path: '/scan', title: '扫码作业', icon: Iphone },
         { path: '/sales', title: '销售出库', icon: Van },
         { path: '/returns', title: '销售退货', icon: RefreshLeft },

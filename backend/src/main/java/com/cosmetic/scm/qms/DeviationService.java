@@ -192,6 +192,16 @@ public class DeviationService {
         return d;
     }
 
+    /** 运输条件不符合（温度超出、要求记录却没记录、到货异常）时自动生成；只涉及一个批次时挂在批次上。 */
+    @Transactional
+    public Deviation createForTransport(String recordNo, DeviationLevel level, LocalDate occurred, Long batchId, String title, String description) {
+        Deviation d = newDeviation(occurred, DeviationArea.TRANSPORT, level, title, description, time.today().plusDays(15));
+        d.setBatchId(batchId);
+        deviations.save(d);
+        audit.log("登记偏差", d.getDeviationNo(), "运输条件不符合自动生成，" + recordNo + "：" + title, description);
+        return d;
+    }
+
     private Deviation newDeviation(LocalDate occurred, DeviationArea area, DeviationLevel level, String title, String description, LocalDate due) {
         Deviation d = new Deviation();
         d.setDeviationNo(docNo.next("DV", time.today()));

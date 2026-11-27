@@ -31,6 +31,7 @@ import com.cosmetic.scm.domain.SupplyMode;
 import com.cosmetic.scm.domain.WarehouseKind;
 import com.cosmetic.scm.domain.StorageAreaKind;
 import com.cosmetic.scm.storage.StorageMonitorService;
+import com.cosmetic.scm.transport.TransportService;
 import com.cosmetic.scm.integration.IntegrationService;
 import com.cosmetic.scm.inventory.InventoryService;
 import com.cosmetic.scm.master.Item;
@@ -133,6 +134,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final FilingService filings;
     private final DeviationService deviations;
     private final StorageMonitorService storageMonitor;
+    private final TransportService transport;
     private final SupplierAuditService supplierAudits;
     private final MesService mes;
     private final EquipmentService equipment;
@@ -234,7 +236,7 @@ public class DemoDataLoader implements ApplicationRunner {
         Long fg1 = inventory.batchByNo(done1.outBatchNo()).getId();
         as("qso1", () -> quality.marketRelease(fg1, new ReleaseReq(Decision.RELEASED, "QC-" + done1.outBatchNo(),
                 "受托厂放行记录及出厂检验报告已审核（示例）", true, true, true, true, 6, "品质部留样室 B-01", DEMO_PASSWORD), qso));
-        as("sales1", () -> sales.create(new SoReq(jd.id(), main.id(), List.of(new SoLineReq(serum.getId(), new BigDecimal("2000"))))));
+        var soJd = as("sales1", () -> sales.create(new SoReq(jd.id(), main.id(), List.of(new SoLineReq(serum.getId(), new BigDecimal("2000"))))));
         as("sales1", () -> sales.create(new SoReq(tm.id(), main.id(), List.of(new SoLineReq(serum.getId(), new BigDecimal("1000"))))));
 
         // ---------- 第二批精华液：完工待上市放行 ----------
@@ -450,6 +452,19 @@ public class DemoDataLoader implements ApplicationRunner {
             }
             as("qa1", () -> storageMonitor.importRows(area.id(), new StorageMonitorService.ImportReq(rows, false)));
         }
+
+        // ---------- 运输条件和运输记录：精华液 5–30℃（示例）；第一批精华液从禾川到仓、京东那单顺丰发运都登记了，在范围内。
+        // 天猫那单、后两批完工的精华液还没登记（出库、完工 3 天内登记，之后进总览待办） ----------
+        as("qa1", () -> transport.createRequirement(new TransportService.ReqReq(serum.getId(), new BigDecimal("5"), new BigDecimal("30"), true,
+                "避免阳光直射，防冻（示例，请按产品标签的贮存条件设定）", t.minusDays(30), null)));
+        as("prod1", () -> transport.create(new TransportService.CreateReq(com.cosmetic.scm.domain.TransportDirection.INBOUND, List.of(mo1.id()),
+                com.cosmetic.scm.domain.TransportMode.VEHICLE, "禾川生物自有货车（示例）", null, t.minusDays(13).atTime(9, 0), t.minusDays(13).atTime(15, 30),
+                true, new BigDecimal("16.5"), new BigDecimal("23.0"), "TH-CAR-01（示例）", false, null, null)));
+        java.time.LocalDateTime shipJd = time.now().minusHours(2);
+        java.time.LocalDateTime shipAt = shipJd.toLocalDate().isBefore(t) ? t.atStartOfDay() : shipJd;
+        as("sales1", () -> transport.create(new TransportService.CreateReq(com.cosmetic.scm.domain.TransportDirection.OUTBOUND, List.of(soJd.id()),
+                com.cosmetic.scm.domain.TransportMode.EXPRESS, "顺丰速运（示例）", "SF1000000001（示例）", shipAt, null,
+                true, new BigDecimal("18.5"), new BigDecimal("24.0"), "顺丰温度标签（示例）", false, null, null)));
 
         // ---------- 自产面霜：有工艺路线；已计划，待发料。发料后在生产单明细里填批生产记录 ----------
         for (String[] e : new String[][] {{"EQ-EM-01", "乳化锅 A（示例）", "2 号车间", "200"}, {"EQ-FL-01", "灌装机 1（示例）", "2 号车间", "120"}, {"EQ-SC-01", "电子秤 1（示例）", "称量间", "20"}}) {
