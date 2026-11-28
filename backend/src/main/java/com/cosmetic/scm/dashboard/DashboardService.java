@@ -106,6 +106,7 @@ public class DashboardService {
     private final com.cosmetic.scm.oemcontract.OemContractService oemContracts;
     private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervision;
     private final com.cosmetic.scm.storage.StorageMonitorService storageMonitor;
+    private final com.cosmetic.scm.transport.TransportService transport;
     private final com.cosmetic.scm.oemsupply.OemSupplyService oemSupply;
     private final com.cosmetic.scm.recall.RecallDrillService recallDrills;
     private final com.cosmetic.scm.sales.SalesRecordService salesRecords;
@@ -314,6 +315,12 @@ public class DashboardService {
             boolean out = "OUT".equals(r.kind());
             todos.add(new Todo(out ? "STORAGE_EXCURSION" : "STORAGE_RECORD_MISSING", out ? "贮存区域温湿度超限" : "温湿度漏记", out ? "bad" : "warn",
                     r.areaName(), r.areaCode(), r.detail(), out ? "/storage-env?tab=excursions" : "/storage-env"));
+        }
+        // 运输条件（检查要点第 20 项）：设了运输条件的成品出库或完工超过期限没登记运输记录、运输不符合且偏差没关
+        for (com.cosmetic.scm.transport.TransportService.TodoRow r : transport.todos()) {
+            boolean bad = "NONCONFORM".equals(r.kind());
+            todos.add(new Todo(bad ? "TRANSPORT_NONCONFORM" : "TRANSPORT_RECORD_MISSING", bad ? "运输条件不符合" : "运输记录未登记", bad ? "bad" : "warn",
+                    r.title(), r.ref(), r.detail(), "/storage-env?tab=transport"));
         }
         // 召回演练（检查要点第 24 项）：待审核的、超过周期没有审核过的演练
         for (com.cosmetic.scm.recall.RecallDrillService.DrillView d : recallDrills.pendingReview()) {

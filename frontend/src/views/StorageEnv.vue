@@ -2,14 +2,14 @@
   <div class="page">
     <div class="page-head">
       <div>
-        <h2>贮存环境</h2>
-        <p>仓库各区域和留样室的温湿度范围和记录，对应检查要点委托生产版第 16 项（留样区域贮存条件）和第 20 项（贮存和运输）。范围由质量部门按产品要求设定，系统不内置；超出范围的记录自动生成偏差，同一区域偏差还没关闭、相隔 {{ mergeHours }} 小时以内的超限算一次。</p>
+        <h2>贮存和运输</h2>
+        <p>仓库各区域和留样室的温湿度范围和记录、成品的运输条件和运输记录，对应检查要点委托生产版序号 16（留样区域贮存条件）和序号 20（贮存和运输，GMP 第五十九条）。范围由质量部门按产品要求设定，系统不内置；超出范围的记录自动生成偏差，同一区域偏差还没关闭、相隔 {{ mergeHours }} 小时以内的超限算一次。</p>
       </div>
       <div class="toolbar">
         <el-button :loading="loader.loading.value" @click="load">刷新</el-button>
         <ExportButton v-if="tab === 'excursions'" report="env-excursions" />
-        <ExportButton v-else report="env-records" :params="{ from: range[0], to: range[1] }" :label="`导出 ${range[0]} 至 ${range[1]} 的记录`" />
-        <el-button v-if="canArea" type="primary" @click="openArea()">新增区域</el-button>
+        <ExportButton v-else-if="tab !== 'transport'" report="env-records" :params="{ from: range[0], to: range[1] }" :label="`导出 ${range[0]} 至 ${range[1]} 的记录`" />
+        <el-button v-if="canArea && tab !== 'transport'" type="primary" @click="openArea()">新增区域</el-button>
       </div>
     </div>
 
@@ -143,6 +143,10 @@
           <ListCapHint :count="excursions.length" />
         </el-card>
       </el-tab-pane>
+
+      <el-tab-pane label="运输" name="transport">
+        <TransportPane ref="transportPane" />
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 新增 / 修改区域 -->
@@ -259,6 +263,7 @@ import EnvTrendChart from '../components/EnvTrendChart.vue'
 import ExportButton from '../components/ExportButton.vue'
 import ImportDialog from '../components/ImportDialog.vue'
 import ListCapHint from '../components/ListCapHint.vue'
+import TransportPane from '../components/TransportPane.vue'
 import LoadError from '../components/LoadError.vue'
 import { useAuth } from '../stores/auth'
 import { useRefData } from '../utils/refdata'
@@ -266,7 +271,7 @@ import { useLoader } from '../utils/loader'
 import { latestOnly } from '../utils/latest'
 import { daysFromToday, fmtTime, today } from '../utils/format'
 
-const TABS = ['areas', 'records', 'excursions']
+const TABS = ['areas', 'records', 'excursions', 'transport']
 const KINDS = [{ code: 'WAREHOUSE', label: '仓储区' }, { code: 'RETAIN', label: '留样区' }, { code: 'OTHER', label: '其他' }]
 const auth = useAuth()
 const route = useRoute()
@@ -291,9 +296,11 @@ const loader = useLoader(async () => {
   areas.value = a
   excursions.value = e
 })
+const transportPane = ref(null)
 async function load() {
   await loader.run()
   loadRecords()
+  transportPane.value?.load()
 }
 onMounted(() => { load(); window.addEventListener('resize', onResize) })
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))

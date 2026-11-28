@@ -105,7 +105,14 @@ public class GmpEvidenceService {
     private final com.cosmetic.scm.plm.FormulaLineRepository formulaLines;
     private final com.cosmetic.scm.quality.QualitySpecRepository qualitySpecs;
     private final com.cosmetic.scm.oemsupply.OemSpecAckRepository oemSpecAcks;
+    private final com.cosmetic.scm.transport.TransportReqRepository transportReqs;
+    private final com.cosmetic.scm.transport.TransportRecordRepository transportRecords;
+    private final com.cosmetic.scm.transport.TransportDocRepository transportDocs;
     private final TimeProvider time;
+
+    /** 出库、完工后多少天内登记运输记录，和总览待办一致。 */
+    @org.springframework.beans.factory.annotation.Value("${scm.transport.record-grace-days:3}")
+    private int transportGraceDays;
 
     /** 召回演练的周期（月），和总览到期提醒一致。 */
     @org.springframework.beans.factory.annotation.Value("${scm.recall.drill-interval-months:12}")
@@ -714,10 +721,70 @@ public class GmpEvidenceService {
                 .sorted(Comparator.comparing(Batch::getExpDate))
                 .map(b -> b.getBatchNo() + "：已于 " + b.getExpDate() + " 过期，还有 " + qty.get(b.getId()).stripTrailingZeros().toPlainString() + " 在库").toList();
         StorageCheck sc = storageCheck(c, storage, false);
+        StorageCheck tc = transportCheck(c);
         List<String> details = new ArrayList<>(problems);
+        details.addAll(tc.lines());
         details.addAll(sc.lines());
         String head = problems.isEmpty() ? "没有过期的成品还在库。" : problems.size() + " 批过期成品还在库，没有处理。";
-        return new Evidence(20, problems.isEmpty() && !sc.warn() ? "OK" : "WARN", head + sc.summary() + "运输条件请人工核对。", limit(details));
+        return new Evidence(20, problems.isEmpty() && !sc.warn() && !tc.warn() ? "OK" : "WARN", head + sc.summary() + tc.summary(), limit(details));
+    }
+
+    /**
+     * 第 20 项的运输部分：设了运输条件的成品，期间内销售出库、委托生产完工入库的要有运输记录（登记期限内的不算缺），
+     * 不符合条件的运输记录生成的偏差要关闭。没有给成品设运输条件的，运输条件请人工核对。
+     */
+    private StorageCheck transportCheck(Ctx c) {
+        List<com.cosmetic.scm.transport.TransportReq> active = transportReqs.findByActiveTrue();
+        List<com.cosmetic.scm.transport.TransportRecord> recs = transportRecords.findByShippedAtGreaterThanEqualAndShippedAtLessThanOrderByShippedAtAscIdAsc(c.start(), c.end())
+                .stream().filter(r -> !r.isVoided()).toList();
+        List<com.cosmetic.scm.transport.TransportRecord> bad = recs.stream().filter(r -> !r.isConforming()).toList();
+        Map<Long, Deviation> devs = bad.isEmpty() ? Map.of()
+                : deviationRepo.findAllById(bad.stream().map(com.cosmetic.scm.transport.TransportRecord::getDeviationId).filter(Objects::nonNull).toList()).stream()
+                        .collect(Collectors.toMap(Deviation::getId, Function.identity()));
+        List<String> lines = new ArrayList<>();
+        int openDevs = 0;
+        for (com.cosmetic.scm.transport.TransportRecord r : bad) {
+            Deviation d = r.getDeviationId() == null ? null : devs.get(r.getDeviationId());
+            boolean open = d != null && d.getStatus() == CaseStatus.OPEN;
+            openDevs += open ? 1 : 0;
+            lines.add(r.getRecordNo() + "（" + r.getDirection().getLabel() + "，" + r.getShippedAt().toLocalDate() + " 发运）：" + r.getProblem()
+                    + (d == null ? "" : "，偏差 " + d.getDeviationNo() + (open ? " 未关闭" : " 已关闭")));
+        }
+        String badText = bad.isEmpty() ? "" : "，不符合 " + bad.size() + " 条" + (openDevs > 0 ? "，其中 " + openDevs + " 条的偏差还没关闭" : "，偏差都已关闭");
+        if (active.isEmpty()) {
+            return new StorageCheck(openDevs > 0, "成品还没有设运输条件（“贮存和运输 → 运输”）" + (recs.isEmpty() ? "" : "，期间内运输记录 " + recs.size() + " 条" + badText)
+                    + "，运输条件是否符合产品标签的要求请人工核对。", lines);
+        }
+        LocalDate cutoff = c.today().minusDays(transportGraceDays);
+        LocalDate missTo = c.to().isBefore(cutoff) ? c.to() : cutoff;
+        long requiredSo = transportDocs.countRequiredSos(c.from(), c.to());
+        long missingSo = 0;
+        if (!missTo.isBefore(c.from())) {
+            Map<Long, com.cosmetic.scm.master.Warehouse> whs = lookup.warehouseMap();
+            for (Object[] g : transportDocs.missingSoGroups(c.from(), missTo, com.cosmetic.scm.domain.TransportDocType.SO)) {
+                long n = ((Number) g[2]).longValue();
+                missingSo += n;
+                com.cosmetic.scm.master.Warehouse w = g[0] == null ? null : whs.get((Long) g[0]);
+                lines.add(g[1] + " " + (w == null ? "" : w.getName() + " ") + "出库的 " + n + " 张单据有设了运输条件的成品，没有运输记录");
+            }
+        }
+        Map<Long, com.cosmetic.scm.transport.TransportReq> byItem = active.stream()
+                .collect(Collectors.toMap(com.cosmetic.scm.transport.TransportReq::getItemId, Function.identity()));
+        List<MfgOrder> requiredMo = transportDocs.requiredOemOrders(c.start(), c.end(), MoType.OEM, MoStatus.COMPLETED).stream()
+                .filter(m -> !byItem.get(m.getFgItemId()).getEffectiveFrom().isAfter(m.getCompletedAt().toLocalDate())).toList();
+        Set<Long> recordedMo = requiredMo.isEmpty() ? Set.of()
+                : transportDocs.findByDocTypeAndDocIdInAndDupKeyIsNotNull(com.cosmetic.scm.domain.TransportDocType.MO, requiredMo.stream().map(MfgOrder::getId).toList())
+                        .stream().map(com.cosmetic.scm.transport.TransportDoc::getDocId).collect(Collectors.toSet());
+        List<MfgOrder> missingMo = requiredMo.stream().filter(m -> !recordedMo.contains(m.getId()) && !m.getCompletedAt().toLocalDate().isAfter(cutoff)).toList();
+        missingMo.forEach(m -> {
+            Partner p = c.partners().get(m.getFactoryId());
+            lines.add(m.getMoNo() + " " + name(c, m.getFgItemId()) + "（" + (p == null ? "" : p.getName()) + "）" + m.getCompletedAt().toLocalDate() + " 完工入库，没有到仓运输记录");
+        });
+        long missing = missingSo + missingMo.size();
+        String summary = "设了运输条件的成品 " + active.size() + " 个，期间内要登记运输的销售出库 " + requiredSo + " 单、受托厂成品到仓 " + requiredMo.size() + " 单"
+                + (missing > 0 ? "，" + missing + " 单超过 " + transportGraceDays + " 天没有运输记录" : requiredSo + requiredMo.size() > 0 ? "，都有运输记录" : "")
+                + "；运输记录 " + recs.size() + " 条" + (bad.isEmpty() ? recs.isEmpty() ? "" : "，都符合运输条件" : badText) + "（见“贮存和运输 → 运输”）。";
+        return new StorageCheck(missing > 0 || openDevs > 0, summary, lines);
     }
 
     // ---- 贮存区域温湿度（第 16 项看留样区，第 20 项看其余区域） ----

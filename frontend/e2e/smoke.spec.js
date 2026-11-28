@@ -2418,6 +2418,60 @@ test('贮存环境：录入温湿度先提示超限，导入记录仪 CSV 超限
   expect(bad).toEqual([])
 })
 
+test('贮存和运输：成品有运输条件，销售登记发运，途中超温生成偏差，质量部门作废后可以重登', async ({ page }) => {
+  await login(page, 'sales1') // 销售能登记运输记录，不能设运输条件、不能作废
+  await page.goto('/storage-env?tab=transport')
+  await expect(page.getByRole('heading', { name: '贮存和运输' })).toBeVisible()
+  const pane = page.locator('#pane-transport')
+  await expect(pane.getByRole('button', { name: '设定运输条件' })).toHaveCount(0)
+  const rows = pane.locator('.el-table__row:visible')
+  await expect(rows.filter({ hasText: '烟酰胺精华液 30ml' }).first()).toContainText('5–30℃，记录途中温度')
+  // 示例：京东那单顺丰发运、第一批从禾川到仓都登记了
+  await expect(rows.filter({ hasText: '顺丰速运（示例）' })).toContainText('符合')
+  await expect(rows.filter({ hasText: '禾川生物自有货车（示例）' })).toContainText('受托厂成品到仓')
+
+  // 待登记：今天华东主仓的出库单（天猫那单），点登记带出设了运输条件的单据
+  await rows.filter({ hasText: '销售发运 · 华东主仓' }).first().getByRole('button', { name: '登记' }).click()
+  const d = dialog(page, '登记运输记录')
+  await expect(d).toContainText('天猫旗舰店（示例）')
+  await expect(d).toContainText('运输条件：5–30℃，记录途中温度')
+  await expect(d).toContainText('选中的产品要求记录途中温度，保存后会生成偏差')
+  await d.locator('#tr-carrier').fill('中通快递（E2E）')
+  await d.locator('.el-form-item').filter({ hasText: '途中记录了温度' }).locator('.el-switch').click()
+  await expect(d).not.toContainText('保存后会生成偏差')
+  await d.locator('#tr-low').fill('20')
+  await d.getByRole('spinbutton', { name: '途中最高温度' }).fill('33')
+  await d.getByRole('button', { name: '保存运输记录' }).click()
+  await toast(page, '不符合：最高温度 33℃ 高于上限 30℃')
+  const rec = rows.filter({ hasText: '中通快递（E2E）' })
+  await expect(rec).toContainText('不符合')
+  await expect(rec).toContainText('偏差 DV')
+  await rec.getByRole('button', { name: '详情' }).click()
+  const dt = page.getByRole('dialog', { name: /^运输记录 YS/ })
+  await expect(dt).toContainText('天猫旗舰店（示例）')
+  await expect(dt).toContainText('20–33℃')
+  await dt.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(rec.getByRole('button', { name: '作废' })).toHaveCount(0)
+
+  // 总览有不符合的待办；质量部门作废后这张出库单回到待登记
+  await login(page, 'qa1')
+  await page.goto('/')
+  await expect(page.getByText('运输条件不符合').first()).toBeVisible()
+  await page.goto('/storage-env?tab=transport')
+  await rows.filter({ hasText: '中通快递（E2E）' }).getByRole('button', { name: '作废' }).click()
+  await page.locator('.el-message-box input').fill('E2E：温度抄错了')
+  await page.locator('.el-message-box').getByRole('button', { name: '作废' }).click()
+  await toast(page, '已作废')
+  await expect(rows.filter({ hasText: '中通快递（E2E）' })).toContainText('已作废')
+  await expect(rows.filter({ hasText: '销售发运 · 华东主仓' }).first()).toBeVisible()
+  await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+  const bad = await page.locator('main').evaluate(async (e) => {
+    const r = await window.axe.run(e, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+    return r.violations.map((v) => `${v.id} ×${v.nodes.length}：${v.nodes[0].target[0]}`)
+  })
+  expect(bad).toEqual([])
+})
+
 test('产品销售记录：列出法规要求的内容，缺的标出来，价格只给销售看，能导出', async ({ page }) => {
   await login(page, 'sales1')
   await page.goto('/sales?tab=records')
@@ -2943,7 +2997,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await page.evaluate(() => localStorage.clear())
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
-  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/specs?tab=oem', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/oem-supervision', '/oem-supervision?tab=factories', '/oem-supervision?tab=orders', '/storage-env', '/storage-env?tab=records', '/storage-env?tab=excursions', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/sales?tab=unpriced', '/returns',
+  const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/specs?tab=oem', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/oem-supervision', '/oem-supervision?tab=factories', '/oem-supervision?tab=orders', '/storage-env', '/storage-env?tab=records', '/storage-env?tab=excursions', '/storage-env?tab=transport', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/sales?tab=unpriced', '/returns',
     '/dealer-orders', '/integration', '/trace', '/quality-events', '/quality-events?tab=drills', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页
@@ -3049,6 +3103,7 @@ test('无障碍：常用弹窗 axe 无违规', async ({ page }) => {
   await audit('/oem-contracts', '登记合同')
   await audit('/oem-supervision', '登记监督')
   await audit('/storage-env', '新增区域')
+  await audit('/storage-env?tab=transport', '登记运输记录')
   await audit('/qms', '登记偏差')
 })
 

@@ -271,7 +271,7 @@ class StorageMonitorTest {
         Map<Integer, JsonNode> ev = new HashMap<>();
         read(qa, "/api/qms/self-checks/" + checkId + "/evidence").forEach(e -> ev.put(e.get("itemNo").asInt(), e));
         assertThat(ev.get(20).get("level").asText()).isEqualTo("WARN");
-        assertThat(ev.get(20).get("summary").asText()).contains("1 个有漏记").contains("次超限的偏差还没关闭").contains("运输条件请人工核对");
+        assertThat(ev.get(20).get("summary").asText()).contains("1 个有漏记").contains("次超限的偏差还没关闭").contains("设了运输条件的成品 1 个");
         assertThat(ev.get(20).get("details").toString()).contains("阴凉库（T-GAP）").contains("漏记 2 天").contains(e1 + "（偏差 " + dv1 + " 未关闭）")
                 .contains("华东主仓常温区（示例）");
         assertThat(ev.get(16).get("summary").asText()).contains("1 个留样区域的温湿度记录没有漏记，期间没有超限");

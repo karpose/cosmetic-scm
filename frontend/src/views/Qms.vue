@@ -485,7 +485,7 @@ import { useLoader } from '../utils/loader'
 import { textMatch, usePaged } from '../utils/table'
 
 const EXPORTS = { deviations: 'deviations', capas: 'capas', closure: 'qms-closure', audits: 'supplier-audits', retains: 'retains', equipment: 'equipment' }
-const AREA = { PRODUCTION: '生产', QC: '检验', WAREHOUSE: '仓储', SUPPLIER: '供应商 / 受托厂', OTHER: '其他' }
+const AREA = { PRODUCTION: '生产', QC: '检验', WAREHOUSE: '仓储', SUPPLIER: '供应商 / 受托厂', TRANSPORT: '运输', OTHER: '其他' }
 const LEVEL = { MINOR: '微小偏差', MAJOR: '重大偏差', CRITICAL: '严重偏差' }
 const LEVEL_TAG = { MINOR: 'info', MAJOR: 'warning', CRITICAL: 'danger' }
 const CAPA_TAG = { OPEN: 'OPEN', DONE: 'PARTIAL', VERIFIED: 'RELEASED' }
