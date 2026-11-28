@@ -657,7 +657,7 @@ public class StorageMonitorService {
                 affected.add(new AffectedRow(b == null ? "—" : b.getBatchNo(), i == null ? "" : i.getCode(), i == null ? "" : i.getName(),
                         s.getRemainingQty() + " 件留样", "保存至 " + s.getRetainUntil()));
             }
-            note = "留样地点以“" + a.getName() + "”开头或等于“" + a.getCode() + "”、现在还在库的留样。";
+            note = "留样地点和存放位置（如“品质部留样室 B-01”）以“" + a.getName() + "”开头或存放位置等于“" + a.getCode() + "”、现在还在库的留样。";
         } else if (a.getWarehouseId() != null) {
             List<Stock> on = stocks.findByWarehouseIdAndQtyGreaterThan(a.getWarehouseId(), BigDecimal.ZERO);
             Map<Long, Batch> bs = batches.findAllById(on.stream().map(Stock::getBatchId).distinct().toList()).stream()

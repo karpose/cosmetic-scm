@@ -36,6 +36,9 @@ public class RetainSample {
 
     private String location;
 
+    /** 留样地点（V58 迁移起）；以前的留样为空，由质量部门指定。 */
+    private Long siteId;
+
     private LocalDate retainUntil;
 
     @Enumerated(EnumType.STRING)

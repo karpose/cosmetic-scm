@@ -72,6 +72,7 @@ public class QualityService {
     private final DeviationRepository deviations;
     private final com.cosmetic.scm.supplierreturn.SupplierReturnRepository supplierReturns;
     private final RetainSampleRepository retainSamples;
+    private final com.cosmetic.scm.qms.RetainSiteRepository retainSites;
     private final ProductFilingRepository filings;
     private final MasterLookup lookup;
     private final AuditService audit;
@@ -96,7 +97,14 @@ public class QualityService {
                              boolean consistentWithFiling,
                              @Min(0) Integer retainQty,
                              @Size(max = 100) String retainLocation,
-                             @NotBlank(message = "请输入签批密码") String password) {
+                             @NotBlank(message = "请输入签批密码") String password,
+                             Long retainSiteId) {
+
+        /** 不选留样地点：只登记了一个在用地点时用它，没有登记地点时留空。 */
+        public ReleaseReq(Decision decision, String reportNo, String note, boolean oemReleaseReviewed, boolean inspectionPassed,
+                          boolean recordsComplete, boolean consistentWithFiling, Integer retainQty, String retainLocation, String password) {
+            this(decision, reportNo, note, oemReleaseReviewed, inspectionPassed, recordsComplete, consistentWithFiling, retainQty, retainLocation, password, null);
+        }
     }
 
     public record FreezeReq(@NotEmpty List<String> batchNos,
@@ -285,6 +293,7 @@ public class QualityService {
                 .map(m -> m.getMoType() == MoType.OEM).orElse(false);
 
         QualityDecision d = newDecision(b, QcStage.MARKET_RELEASE, req.decision(), req.reportNo(), req.note(), signer);
+        com.cosmetic.scm.qms.RetainSite site = null;
         if (req.decision() == Decision.RELEASED) {
             List<String> missing = new ArrayList<>();
             if (oem && !(req.oemReleaseReviewed() && b.isOemReleased())) {
@@ -331,6 +340,8 @@ public class QualityService {
             if (ShelfLife.isExpired(b.getExpDate(), time.today())) {
                 throw new BizException("批次已过有效期，不能放行");
             }
+            // 留样地点（检查要点第 15 项）：批次已锁，再锁地点，和修改地点地址互斥
+            site = com.cosmetic.scm.qms.RetainSites.pick(retainSites, req.retainSiteId());
             d.setChecklist((oem ? "受托厂放行已审核；" : "") + "出厂检验合格；批记录完整；与备案一致");
             d.setRetainQty(req.retainQty());
             d.setRetainLocation(req.retainLocation().trim());
@@ -341,6 +352,7 @@ public class QualityService {
             sample.setQty(d.getRetainQty());
             sample.setRemainingQty(d.getRetainQty());
             sample.setLocation(d.getRetainLocation());
+            sample.setSiteId(site == null ? null : site.getId());
             sample.setRetainUntil(d.getRetainUntil());
             sample.setStatus(RetainStatus.HELD);
             sample.setCreatedBy(signer.getDisplayName());
@@ -352,7 +364,7 @@ public class QualityService {
         batches.save(b);
         decisions.save(d);
         String detail = item.getName() + (d.getReportNo() == null ? "" : "，报告 " + d.getReportNo())
-                + (d.getRetainQty() == null ? "" : "，留样 " + d.getRetainQty() + " 件存于 " + d.getRetainLocation()
+                + (d.getRetainQty() == null ? "" : "，留样 " + d.getRetainQty() + " 件存于 " + (site == null ? "" : site.getName() + " ") + d.getRetainLocation()
                 + "，保存至 " + d.getRetainUntil());
         audit.log(req.decision() == Decision.RELEASED ? "成品上市放行" : "成品不予放行", b.getBatchNo(), detail, req.note().trim());
         return single(b);

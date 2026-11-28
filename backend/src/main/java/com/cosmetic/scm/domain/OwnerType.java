@@ -23,7 +23,8 @@ public enum OwnerType {
     QSO_APPOINTMENT("质量安全负责人任职"),
     OEM_CONTRACT("委托生产合同"),
     OEM_SUPERVISION("受托生产监督"),
-    TRANSPORT_RECORD("运输记录");
+    TRANSPORT_RECORD("运输记录"),
+    RETAIN_SITE("留样地点");
 
     private final String label;
 

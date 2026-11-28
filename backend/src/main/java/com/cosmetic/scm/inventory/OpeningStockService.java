@@ -72,6 +72,7 @@ public class OpeningStockService {
     private final InventoryService inventory;
     private final QualityDecisionRepository decisions;
     private final RetainSampleRepository retains;
+    private final com.cosmetic.scm.qms.RetainSiteRepository retainSites;
     private final MasterLookup lookup;
     private final DocNoService docNo;
     private final Validator validator;
@@ -226,6 +227,9 @@ public class OpeningStockService {
     private void apply(Map<String, Plan> plans, AppUser signer) {
         LocalDate today = time.today();
         String docNoValue = docNo.next("OB", today);
+        // 只登记了一个在用的留样地点时，期初的留样记到这个地点；有多个或没有的留空，之后在留样台账里指定
+        boolean anyFgRelease = plans.values().stream().anyMatch(p -> p.first.status() == BatchStatus.RELEASED && p.item.getItemType() == ItemType.FG);
+        com.cosmetic.scm.qms.RetainSite site = anyFgRelease ? com.cosmetic.scm.qms.RetainSites.defaultOrNull(retainSites) : null;
         Map<BatchStatus, Integer> counts = new HashMap<>();
         for (Map.Entry<String, Plan> e : plans.entrySet()) {
             Plan p = e.getValue();
@@ -236,7 +240,7 @@ public class OpeningStockService {
                 inventory.change(b, s.getKey(), s.getValue(), TxnType.OPENING, docNoValue);
             }
             if (r.status() == BatchStatus.RELEASED) {
-                recordRelease(b, p, r, signer);
+                recordRelease(b, p, r, signer, site);
             }
             counts.merge(r.status(), 1, Integer::sum);
         }
@@ -244,7 +248,7 @@ public class OpeningStockService {
                 .map(c -> c.getKey().getLabel() + " " + c.getValue()).collect(Collectors.joining("，")) + "，签批人 " + signer.getDisplayName());
     }
 
-    private void recordRelease(Batch b, Plan p, OpeningRow r, AppUser signer) {
+    private void recordRelease(Batch b, Plan p, OpeningRow r, AppUser signer, com.cosmetic.scm.qms.RetainSite site) {
         boolean fg = p.item.getItemType() == ItemType.FG;
         QualityDecision d = new QualityDecision();
         d.setBatchId(b.getId());
@@ -265,6 +269,7 @@ public class OpeningStockService {
             s.setQty(r.retainQty());
             s.setRemainingQty(r.retainQty());
             s.setLocation(r.retainLocation().trim());
+            s.setSiteId(site == null ? null : site.getId());
             s.setRetainUntil(d.getRetainUntil());
             s.setStatus(RetainStatus.HELD);
             s.setCreatedBy(signer.getDisplayName());

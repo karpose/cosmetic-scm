@@ -50,6 +50,8 @@ final class TodoRouting {
             Map.entry("STORAGE_RECORD_MISSING", Set.of(Role.WAREHOUSE, Role.QA)),
             Map.entry("TRANSPORT_NONCONFORM", Set.of(Role.WAREHOUSE, Role.QA, Role.QSO)),
             Map.entry("TRANSPORT_RECORD_MISSING", Set.of(Role.WAREHOUSE, Role.SALES, Role.PRODUCTION, Role.QA)),
+            Map.entry("RETAIN_SITE_REPORT", Set.of(Role.QA, Role.QSO)),
+            Map.entry("RETAIN_SITE_UNASSIGNED", Set.of(Role.QA)),
             Map.entry("RECALL_DRILL_REVIEW", Set.of(Role.QSO)),
             Map.entry("RECALL_DRILL_DUE", Set.of(Role.QA, Role.QSO)),
             Map.entry("DOC_ASSESS", QUALITY),
