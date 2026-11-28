@@ -42,6 +42,7 @@ public class QmsController {
     private final DeviationService deviations;
     private final SupplierAuditService audits;
     private final RetainService retains;
+    private final RetainSiteService retainSites;
     private final com.cosmetic.scm.analytics.QualityGovernanceService qualityGov;
     private final SignatureService signature;
 
@@ -142,5 +143,47 @@ public class QmsController {
     @PreAuthorize(QUALITY)
     public SampleView destroyRetain(@PathVariable Long id, @Valid @RequestBody DestroyReq req) {
         return retains.destroy(id, req, signature.verify(req.password()));
+    }
+
+    // ---- 留样地点（检查要点第 15 项） ----
+
+    @GetMapping("/retain-site-kinds")
+    public List<RetainSiteService.Option> retainSiteKinds() {
+        return retainSites.kinds();
+    }
+
+    @GetMapping("/retain-sites")
+    public List<RetainSiteService.SiteView> retainSites() {
+        return retainSites.list();
+    }
+
+    @PostMapping("/retain-sites")
+    @PreAuthorize(QUALITY)
+    public RetainSiteService.SiteView createRetainSite(@Valid @RequestBody RetainSiteService.SiteReq req) {
+        return retainSites.create(req);
+    }
+
+    @org.springframework.web.bind.annotation.PutMapping("/retain-sites/{id}")
+    @PreAuthorize(QUALITY)
+    public RetainSiteService.SiteView updateRetainSite(@PathVariable Long id, @Valid @RequestBody RetainSiteService.SiteReq req) {
+        return retainSites.update(id, req);
+    }
+
+    @PostMapping("/retain-sites/{id}/report")
+    @PreAuthorize(QUALITY)
+    public RetainSiteService.SiteView reportRetainSite(@PathVariable Long id, @Valid @RequestBody RetainSiteService.ReportReq req) {
+        return retainSites.report(id, req);
+    }
+
+    @PostMapping("/retain-sites/{id}/void-report")
+    @PreAuthorize(QUALITY)
+    public RetainSiteService.SiteView voidRetainSiteReport(@PathVariable Long id, @Valid @RequestBody RetainSiteService.VoidReportReq req) {
+        return retainSites.voidReport(id, req);
+    }
+
+    @PostMapping("/retain-sites/{id}/assign")
+    @PreAuthorize(QUALITY)
+    public RetainSiteService.SiteView assignRetainSite(@PathVariable Long id, @Valid @RequestBody RetainSiteService.AssignReq req) {
+        return retainSites.assign(id, req);
     }
 }

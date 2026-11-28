@@ -247,6 +247,7 @@
           <template #header>
             <div class="filters">
               <el-input v-model="rt.keyword.value" placeholder="搜索批号、产品、地点" clearable />
+              <el-button v-if="isQa && unassignedRetains.length && activeSites.length" size="small" type="primary" @click="openAssign">指定留样地点（{{ unassignedRetains.length }} 份没有地点）</el-button>
               <span class="muted small">上市放行时自动入账，保存到有效期满后 6 个月；保存期满前不能销毁。</span>
             </div>
           </template>
@@ -262,7 +263,12 @@
             <el-table-column label="批号" width="170"><template #default="{ row }"><BatchNo :no="row.batchNo" /></template></el-table-column>
             <el-table-column prop="itemName" label="产品" min-width="170" />
             <el-table-column label="数量（剩余 / 留样）" width="150" align="right"><template #default="{ row }"><span class="mono">{{ row.remainingQty }} / {{ row.qty }}</span></template></el-table-column>
-            <el-table-column prop="location" label="存放地点" min-width="140" />
+            <el-table-column label="留样地点 / 存放位置" min-width="170">
+              <template #default="{ row }">
+                <span v-if="row.siteName">{{ row.siteName }}</span><span v-else class="warn small">未指定地点</span>
+                <div class="muted small">{{ row.location }}</div>
+              </template>
+            </el-table-column>
             <el-table-column label="保存至" width="130"><template #default="{ row }"><span class="mono" :class="{ warn: row.expired && row.status === 'HELD' }">{{ row.retainUntil }}</span><div v-if="row.expired && row.status === 'HELD'" class="warn small">可以销毁</div></template></el-table-column>
             <el-table-column label="状态" width="90"><template #default="{ row }"><StatusTag :status="row.status === 'HELD' ? 'RELEASED' : 'CLOSED'" :label="row.statusLabel" /></template></el-table-column>
             <el-table-column v-if="isQa" label="" width="150" fixed="right">
@@ -276,6 +282,10 @@
           </el-table>
           <ListPager v-model:page="rt.page.value" v-model:size="rt.size.value" :total="rt.total.value" />
         </el-card>
+      </el-tab-pane>
+      <!-- ================= 留样地点 ================= -->
+      <el-tab-pane :label="`留样地点${siteAlertCount ? `（${siteAlertCount} 个待报告或不符合）` : `（${retainSites.length}）`}`" name="retainSites">
+        <RetainSitePane :sites="retainSites" @changed="load" />
       </el-tab-pane>
       <!-- ================= 设备 ================= -->
       <el-tab-pane :label="`设备与校准（${equipDueCount} 台待校准）`" name="equipment">
@@ -452,6 +462,27 @@
       </template>
     </el-dialog>
 
+    <!-- 给没有地点的留样指定地点 -->
+    <el-dialog v-model="asg.visible" title="指定留样地点" width="560px">
+      <el-form label-position="top" @submit.prevent>
+        <p class="muted small" style="margin-top:0">这些留样是登记留样地点之前入账的。指定后不能再改；首次留样日按留样入账的日期算，其他经营场所据此算报告截止日。</p>
+        <el-form-item label="留样地点">
+          <el-select id="as-site" v-model="asg.siteId" style="width:100%">
+            <el-option v-for="x in activeSites" :key="x.id" :value="x.id" :label="`${x.name}（${x.kindLabel}）`" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="留样">
+          <el-checkbox-group v-model="asg.picked" class="pick-list">
+            <el-checkbox v-for="r in unassignedRetains" :key="r.id" :value="r.id">{{ r.batchNo }} {{ r.itemName }} · {{ r.location }}</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="asg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="asg.saving" :disabled="!asg.siteId || !asg.picked.length" @click="saveAssign">指定地点</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 销毁留样 -->
     <el-dialog v-model="ds.visible" :title="`销毁留样 ${ds.row?.batchNo || ''}`" width="480px">
       <el-form label-position="top" @submit.prevent>
@@ -477,6 +508,7 @@ import AttachmentList from '../components/AttachmentList.vue'
 import ExportButton from '../components/ExportButton.vue'
 import ListCapHint from '../components/ListCapHint.vue'
 import ListPager from '../components/ListPager.vue'
+import RetainSitePane from '../components/RetainSitePane.vue'
 import LoadError from '../components/LoadError.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useAuth } from '../stores/auth'
@@ -484,7 +516,7 @@ import { daysFromToday, fmtTime, today } from '../utils/format'
 import { useLoader } from '../utils/loader'
 import { textMatch, usePaged } from '../utils/table'
 
-const EXPORTS = { deviations: 'deviations', capas: 'capas', closure: 'qms-closure', audits: 'supplier-audits', retains: 'retains', equipment: 'equipment' }
+const EXPORTS = { deviations: 'deviations', capas: 'capas', closure: 'qms-closure', audits: 'supplier-audits', retains: 'retains', retainSites: 'retain-sites', equipment: 'equipment' }
 const AREA = { PRODUCTION: '生产', QC: '检验', WAREHOUSE: '仓储', SUPPLIER: '供应商 / 受托厂', TRANSPORT: '运输', OTHER: '其他' }
 const LEVEL = { MINOR: '微小偏差', MAJOR: '重大偏差', CRITICAL: '严重偏差' }
 const LEVEL_TAG = { MINOR: 'info', MAJOR: 'warning', CRITICAL: 'danger' }
@@ -536,6 +568,10 @@ const partnerRiskFilter = ref('')
 const filteredPartners = computed(() => !partnerRiskFilter.value ? partners.value : partners.value.filter((p) => p.complianceRisk === partnerRiskFilter.value))
 const riskPartnerCount = computed(() => partners.value.filter((p) => p.complianceRisk !== 'OK').length)
 const retains = ref([])
+const retainSites = ref([])
+const activeSites = computed(() => retainSites.value.filter((x) => x.active))
+const siteAlertCount = computed(() => retainSites.value.filter((x) => x.problem || x.state === 'PENDING').length)
+const unassignedRetains = computed(() => retains.value.filter((r) => !r.siteId && r.status === 'HELD'))
 const equipment = ref([])
 const qmsSum = ref(null)
 const canEquip = computed(() => auth.hasAny('ADMIN', 'PRODUCTION', 'QA', 'QSO'))
@@ -553,9 +589,11 @@ const openCapaCount = computed(() => capas.value.filter((c) => c.status !== 'VER
 const capasOf = (d) => capas.value.filter((c) => c.deviationId === d.id)
 
 const loader = useLoader(async () => {
-  const [a, b, c, d, e, f, s, cb] = await Promise.all([
-    http.get('/qms/deviations'), http.get('/qms/capas'), http.get('/qms/audits'), http.get('/qms/audit-partners'), http.get('/qms/retains'), http.get('/equipment'), http.get('/qms/summary'), http.get('/qms/closure-board')
+  const [a, b, c, d, e, f, s, cb, rs] = await Promise.all([
+    http.get('/qms/deviations'), http.get('/qms/capas'), http.get('/qms/audits'), http.get('/qms/audit-partners'), http.get('/qms/retains'), http.get('/equipment'), http.get('/qms/summary'), http.get('/qms/closure-board'),
+    http.get('/qms/retain-sites')
   ])
+  retainSites.value = rs
   equipment.value = f
   deviations.value = a
   capas.value = b
@@ -697,6 +735,23 @@ async function openUse(row) {
 }
 const ds = reactive({ visible: false, saving: false, row: null, reason: '', password: '' })
 const openDestroy = (row) => Object.assign(ds, { visible: true, row, reason: '', password: '' })
+const asg = reactive({ visible: false, saving: false, siteId: null, picked: [] })
+function openAssign() {
+  const def = activeSites.value.find((x) => x.defaultSite)
+  Object.assign(asg, { visible: true, saving: false, siteId: def ? def.id : activeSites.value.length === 1 ? activeSites.value[0].id : null, picked: unassignedRetains.value.map((r) => r.id) })
+}
+async function saveAssign() {
+  asg.saving = true
+  try {
+    const r = await http.post(`/qms/retain-sites/${asg.siteId}/assign`, { sampleIds: asg.picked })
+    ElMessage.success(`${asg.picked.length} 份留样已指定到${r.name}`)
+    asg.visible = false
+    load()
+  } finally {
+    asg.saving = false
+  }
+}
+
 async function destroyRetain() {
   ds.saving = true
   try {
@@ -758,6 +813,7 @@ onMounted(load)
 </script>
 
 <style scoped>
+.pick-list { display: flex; flex-direction: column; align-items: flex-start; max-height: 280px; overflow-y: auto; }
 .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
 .kpi-card { background: var(--el-bg-color); border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: border-color 0.15s; }
 .kpi-card:hover { border-color: var(--el-color-primary-light-5); }

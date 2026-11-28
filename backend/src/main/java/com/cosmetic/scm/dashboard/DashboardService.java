@@ -107,6 +107,7 @@ public class DashboardService {
     private final com.cosmetic.scm.oemsupervision.OemSupervisionService oemSupervision;
     private final com.cosmetic.scm.storage.StorageMonitorService storageMonitor;
     private final com.cosmetic.scm.transport.TransportService transport;
+    private final com.cosmetic.scm.qms.RetainSiteService retainSites;
     private final com.cosmetic.scm.oemsupply.OemSupplyService oemSupply;
     private final com.cosmetic.scm.recall.RecallDrillService recallDrills;
     private final com.cosmetic.scm.sales.SalesRecordService salesRecords;
@@ -321,6 +322,13 @@ public class DashboardService {
             boolean bad = "NONCONFORM".equals(r.kind());
             todos.add(new Todo(bad ? "TRANSPORT_NONCONFORM" : "TRANSPORT_RECORD_MISSING", bad ? "运输条件不符合" : "运输记录未登记", bad ? "bad" : "warn",
                     r.title(), r.ref(), r.detail(), "/storage-env?tab=transport"));
+        }
+        // 留样地点（检查要点第 15 项）：其他经营场所首次留样后 20 个工作日内要报告；在库留样没有指定地点
+        for (com.cosmetic.scm.qms.RetainSiteService.TodoRow r : retainSites.todos()) {
+            boolean unassigned = "UNASSIGNED".equals(r.kind());
+            todos.add(new Todo(unassigned ? "RETAIN_SITE_UNASSIGNED" : "RETAIN_SITE_REPORT", unassigned ? "留样未指定地点"
+                    : "NOT_ALLOWED".equals(r.kind()) ? "留样地点不符合要求" : r.bad() ? "留样地点逾期未报告" : "留样地点待报告",
+                    r.bad() ? "bad" : "warn", r.title(), r.ref(), r.detail(), unassigned ? "/qms?tab=retains" : "/qms?tab=retainSites"));
         }
         // 召回演练（检查要点第 24 项）：待审核的、超过周期没有审核过的演练
         for (com.cosmetic.scm.recall.RecallDrillService.DrillView d : recallDrills.pendingReview()) {

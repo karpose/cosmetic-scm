@@ -2472,6 +2472,67 @@ test('贮存和运输：成品有运输条件，销售登记发运，途中超�
   expect(bad).toEqual([])
 })
 
+test('留样地点：住所不需要报告，其他经营场所按首次留样算截止日，登记报告后待办消失；放行默认选默认地点', async ({ page }) => {
+  await login(page, 'qa1')
+  await page.goto('/')
+  await expect(page.getByText('留样地点待报告').first()).toBeVisible()
+  await page.goto('/qms?tab=retainSites')
+  const pane = page.locator('#pane-retainSites')
+  const rows = pane.locator('.el-table__row')
+  const hq = rows.filter({ hasText: '品质部留样室' })
+  await expect(hq).toContainText('默认')
+  await expect(hq).toContainText('不需要报告')
+  const ec = rows.filter({ hasText: '华东主仓留样柜' })
+  await expect(ec).toContainText('待报告')
+  await expect(ec).toContainText('截止')
+  // 不在所在地的其他经营场所不能登记
+  await pane.getByRole('button', { name: '登记留样地点' }).click()
+  const sd = dialog(page, '登记留样地点')
+  await sd.locator('#rs-code').fill('RS-E2E')
+  await sd.locator('#rs-name').fill('E2E 外地仓')
+  await sd.getByText('其他经营场所').click()
+  await sd.locator('#rs-address').fill('外省某市某路 1 号')
+  await sd.getByRole('button', { name: '保存留样地点' }).click()
+  await toast(page, '其他经营场所要在住所或主要经营场所所在地')
+  await page.addScriptTag({ path: 'node_modules/axe-core/axe.min.js' })
+  const axe = (loc) => loc.evaluate(async (e) => {
+    const r = await window.axe.run(e, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+    return r.violations.map((v) => `${v.id} ×${v.nodes.length}：${v.nodes[0].target[0]}`)
+  })
+  expect(await axe(sd)).toEqual([])
+  await sd.getByRole('button', { name: '取消' }).click()
+
+  // 登记报告
+  await ec.getByRole('button', { name: '登记报告' }).click()
+  const rp = dialog(page, '登记报告：华东主仓留样柜')
+  await expect(rp).toContainText('首次留样')
+  await rp.locator('#rp-authority').fill('浦东新区市场监督管理局（E2E）')
+  await rp.locator('#rp-ref').fill('E2E-001')
+  expect(await axe(rp)).toEqual([])
+  await rp.getByRole('button', { name: '登记报告' }).click()
+  await toast(page, '华东主仓留样柜：已报告')
+  await expect(ec).toContainText('回执 E2E-001')
+  await expect(ec.getByRole('button', { name: '作废报告' })).toBeVisible()
+  expect(await axe(page.locator('main'))).toEqual([])
+  await page.goto('/')
+  await expect(page.locator('main')).toContainText('总览')
+  await expect(page.getByText('留样地点待报告')).toHaveCount(0)
+
+  // 留样台账显示地点
+  await page.goto('/qms?tab=retains')
+  await expect(page.locator('#pane-retains .el-table__row').first()).toContainText('品质部留样室')
+
+  // 放行弹窗默认选默认地点
+  await login(page, 'qso1')
+  await page.goto('/quality')
+  const fgRow = page.locator('.el-table__row').filter({ has: page.getByRole('button', { name: '上市放行审核' }) }).first()
+  await fgRow.getByRole('button', { name: '上市放行审核' }).click()
+  const rel = dialog(page, '成品上市放行')
+  await expect(rel.locator('.el-form-item').filter({ hasText: '留样地点' }).locator('.el-select')).toContainText('品质部留样室（住所）')
+  await expect(rel.getByText('存放位置')).toBeVisible()
+  await rel.getByRole('button', { name: '取消' }).click()
+})
+
 test('产品销售记录：列出法规要求的内容，缺的标出来，价格只给销售看，能导出', async ({ page }) => {
   await login(page, 'sales1')
   await page.goto('/sales?tab=records')
@@ -2998,7 +3059,7 @@ test('无障碍：所有页面 axe 无违规，侧栏可以用键盘走', async 
   await audit('/login')
   await login(page, 'admin', 'Admin@123456')
   const pages = ['/', '/analytics', '/planning', '/purchase', '/compliance', '/stability', '/specs', '/specs?tab=oem', '/npd', '/docs', '/self-checks', '/qso', '/oem-contracts', '/oem-contracts?tab=orders', '/oem-supervision', '/oem-supervision?tab=factories', '/oem-supervision?tab=orders', '/storage-env', '/storage-env?tab=records', '/storage-env?tab=excursions', '/storage-env?tab=transport', '/changes', '/artworks', '/supplier-returns', '/sourcing', '/settlement', '/production', '/quality', '/stock', '/inventory-ops', '/scan', '/sales', '/sales?tab=records', '/sales?tab=unpriced', '/returns',
-    '/dealer-orders', '/integration', '/trace', '/quality-events', '/quality-events?tab=drills', '/qms', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
+    '/dealer-orders', '/integration', '/trace', '/quality-events', '/quality-events?tab=drills', '/qms', '/qms?tab=retainSites', '/serials', '/audit', '/master', '/formulas', '/golive', '/users', '/notifications']
   for (const p of pages) await audit(p)
   // 深色单独算一遍对比度，抽业务最常用的几页
   await page.emulateMedia({ colorScheme: 'dark' })

@@ -212,8 +212,16 @@
         <div class="form-grid">
           <el-form-item label="出厂检验报告编号"><el-input id="rel-report" v-model="rel.reportNo" /></el-form-item>
           <el-form-item label="留样数量"><el-input-number id="rel-rq" v-model="rel.retainQty" :min="0" :precision="0" :controls="false" style="width:100%" /></el-form-item>
-          <el-form-item label="留样地点"><el-input id="rel-rl" v-model="rel.retainLocation" placeholder="如：品质部留样室 A-03" /></el-form-item>
+          <el-form-item v-if="rel.sites.length" label="留样地点">
+            <el-select id="rel-site" v-model="rel.retainSiteId" style="width:100%">
+              <el-option v-for="x in rel.sites" :key="x.id" :value="x.id" :label="`${x.name}（${x.kindLabel}）`" />
+            </el-select>
+          </el-form-item>
+          <el-form-item :label="rel.sites.length ? '存放位置' : '留样地点'"><el-input id="rel-rl" v-model="rel.retainLocation" :placeholder="rel.sites.length ? '如：B-01 柜第 3 层' : '如：品质部留样室 A-03'" /></el-form-item>
         </div>
+        <p v-if="relSite?.kind === 'OTHER_PREMISES' && !relSite.reportDate" class="warn-text small" style="margin-top:-6px">
+          {{ relSite.name }}不是住所或主要经营场所，要在首次留样之日起 20 个工作日内向所在地药品监督管理部门报告{{ relSite.deadline ? `（截止 ${relSite.deadline}）` : '' }}。
+        </p>
         <p class="muted small" style="margin-top:-6px">留样数量至少为出厂检验需求量的 2 倍，保存至产品有效期届满后 6 个月。</p>
         <el-form-item label="结论">
           <el-radio-group id="rel-decision" v-model="rel.decision">
@@ -303,8 +311,9 @@ async function loadArtwork(batch) {
 const rel = reactive({
   visible: false, saving: false, batch: null, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '',
   oemReleaseReviewed: false, inspectionPassed: false, recordsComplete: false, consistentWithFiling: false,
-  retainQty: null, retainLocation: ''
+  retainQty: null, retainLocation: '', retainSiteId: null, sites: []
 })
+const relSite = computed(() => rel.sites.find((x) => x.id === rel.retainSiteId))
 const unf = reactive({ visible: false, saving: false, batch: null, reason: '', password: '' })
 const ins = reactive({ visible: false, batch: null })
 
@@ -362,15 +371,22 @@ function openRelease(batch) {
   Object.assign(rel, {
     visible: true, batch, panel: null, decision: 'RELEASED', reportNo: '', note: '', password: '',
     oemReleaseReviewed: false, inspectionPassed: false, recordsComplete: false, consistentWithFiling: false,
-    retainQty: null, retainLocation: ''
+    retainQty: null, retainLocation: '', retainSiteId: null, sites: []
   })
+  // 留样地点（检查要点第 15 项）：不选的话后端用默认地点；没有登记地点的只填存放位置
+  http.get('/qms/retain-sites', { silent: true }).then((list) => {
+    if (rel.batch !== batch) return
+    rel.sites = list.filter((x) => x.active)
+    const def = rel.sites.find((x) => x.defaultSite) || (rel.sites.length === 1 ? rel.sites[0] : null)
+    rel.retainSiteId = def ? def.id : null
+  }).catch(() => {})
 }
 
 async function submitRelease() {
   if (!rel.note.trim() || !rel.password) return ElMessage.warning('请填写签批说明和签批密码')
   rel.saving = true
   try {
-    const { visible, saving, batch, panel, ...body } = rel
+    const { visible, saving, batch, panel, sites, ...body } = rel
     await http.post(`/quality/batches/${rel.batch.id}/market-release`, body)
     ElMessage.success(rel.decision === 'RELEASED' ? '已上市放行，可以出库' : '已判定不予放行')
     rel.visible = false
@@ -408,5 +424,6 @@ onMounted(load)
 .checks { display: grid; gap: 4px; }
 .proof-line { flex-basis: 100%; }
 .proof-line .late { color: var(--el-color-danger); }
+.warn-text { color: var(--el-color-warning); }
 .artwork-check { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 12px; padding: 8px 12px; border-radius: 12px; background: var(--lg-tint); }
 </style>

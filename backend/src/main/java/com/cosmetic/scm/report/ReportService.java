@@ -82,6 +82,7 @@ public class ReportService {
     private final com.cosmetic.scm.recall.RecallDrillService recallDrills;
     private final com.cosmetic.scm.oemsupply.OemSupplyService oemSupply;
     private final RetainService retains;
+    private final com.cosmetic.scm.qms.RetainSiteService retainSites;
     private final PurchaseService purchases;
     private final com.cosmetic.scm.settlement.SettlementService settlement;
     private final com.cosmetic.scm.settlement.ArSettlementService arSettlement;
@@ -125,6 +126,7 @@ public class ReportService {
         m.put("transport-records", () -> transportRecordsReport(from, to));
         m.put("partner-compliance", this::partnerComplianceReport);
         m.put("retains", this::retainSamples);
+        m.put("retain-sites", this::retainSitesReport);
         m.put("equipment", this::equipmentList);
         m.put("audit", () -> auditLogs(from, to, q, action));
         m.put("statements", this::statements);
@@ -740,8 +742,17 @@ public class ReportService {
 
     private Table retainSamples() {
         List<List<Object>> rows = new ArrayList<>();
-        retains.listAll().forEach(s -> rows.add(row(s.batchNo(), s.itemName(), s.qty(), s.remainingQty(), s.location(), s.retainUntil(), s.statusLabel())));
-        return new Table("留样台账", List.of("批号", "产品", "留样数量", "剩余数量", "存放地点", "保存至", "状态"), rows);
+        retains.listAll().forEach(s -> rows.add(row(s.batchNo(), s.itemName(), s.qty(), s.remainingQty(), s.siteName(), s.location(), s.retainUntil(), s.statusLabel())));
+        return new Table("留样台账", List.of("批号", "产品", "留样数量", "剩余数量", "留样地点", "存放位置", "保存至", "状态"), rows);
+    }
+
+    private Table retainSitesReport() {
+        List<List<Object>> rows = new ArrayList<>();
+        retainSites.list().forEach(s -> rows.add(row(s.code(), s.name(), s.kindLabel(), s.address(), s.active() ? "在用" : "停用", s.usedSince(), s.firstRetainDate(),
+                s.deadline(), s.stateLabel(), s.reportDate(), s.reportAuthority(), s.reportRef(), s.reportNote(), s.reportedBy(), s.reportedAt(),
+                s.sampleCount(), s.heldCount(), s.note())));
+        return new Table("留样地点", List.of("编码", "名称", "类型", "地址", "状态", "上线前开始使用", "首次留样日", "报告截止日（按周一至周五估算）", "报告情况",
+                "报告日期", "受理部门", "回执编号", "报告说明", "登记人", "登记时间", "留样份数", "在库份数", "备注"), rows);
     }
 
     private Table equipmentList() {

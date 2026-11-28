@@ -82,6 +82,7 @@ public class GmpEvidenceService {
     private final QualityDecisionRepository decisions;
     private final BatchRepository batches;
     private final RetainSampleRepository retains;
+    private final RetainSiteRepository retainSites;
     private final com.cosmetic.scm.sales.SalesRecordService salesRecordService;
     private final StockRepository stocks;
     private final ComplaintRepository complaints;
@@ -667,10 +668,67 @@ public class GmpEvidenceService {
                 : new Evidence(14, "WARN", problems.size() + " 批没有出厂检验报告编号。", limit(problems));
     }
 
+    /**
+     * 第 15 项（GMP 第五十六条）：期间内留样都要有留样地点；用到的其他经营场所要在首次留样之日起 20 个工作日内报告（按期间结束时的情况，
+     * 截止日按周一至周五估算）。列出期间内用到的地点、报告截止日在期间内或之后的地点，以及到期末还逾期没报告的地点。
+     */
     private Evidence retainLocations(Ctx c) {
-        List<String> locations = retains.findByCreatedAtGreaterThanEqualAndCreatedAtLessThan(c.start(), c.end()).stream().map(RetainSample::getLocation)
-                .filter(Objects::nonNull).distinct().sorted().toList();
-        return new Evidence(15, "INFO", locations.isEmpty() ? "期间内没有新的留样。" : "期间内留样用到 " + locations.size() + " 个地点；不在住所或主要经营场所的，请核对是否已按期报告。", limit(locations));
+        List<RetainSample> inPeriod = retains.findByCreatedAtGreaterThanEqualAndCreatedAtLessThan(c.start(), c.end());
+        List<RetainSite> sites = retainSites.findAllByOrderByCodeAsc();
+        String note = "截止日按周一至周五估算，未扣除法定节假日。";
+        if (sites.isEmpty()) {
+            List<String> locations = inPeriod.stream().map(RetainSample::getLocation).filter(Objects::nonNull).distinct().sorted().toList();
+            return inPeriod.isEmpty()
+                    ? new Evidence(15, "INFO", "期间内没有新的留样，系统里还没有登记留样地点（在“质量体系 → 留样地点”登记住所、主要经营场所或其他经营场所）。", List.of())
+                    : new Evidence(15, "WARN", "期间内留样 " + inPeriod.size() + " 份，系统里还没有登记留样地点，地点是否符合要求、是否已按期报告无法核对。", limit(locations));
+        }
+        Map<Long, LocalDate> firstRetain = new HashMap<>();
+        for (Object[] r : retains.siteUsage(com.cosmetic.scm.domain.RetainStatus.HELD)) {
+            firstRetain.put((Long) r[0], ((LocalDateTime) r[1]).toLocalDate());
+        }
+        Map<Long, Long> usedInPeriod = inPeriod.stream().filter(r -> r.getSiteId() != null).collect(Collectors.groupingBy(RetainSample::getSiteId, Collectors.counting()));
+        long noSite = inPeriod.stream().filter(r -> r.getSiteId() == null).count();
+        LocalDate asOf = c.to().isBefore(c.today()) ? c.to() : c.today();
+        List<String> problems = new ArrayList<>();
+        List<String> lines = new ArrayList<>();
+        if (noSite > 0) {
+            problems.add("期间内 " + noSite + " 份留样没有指定留样地点（在“留样台账”里指定）");
+        }
+        int used = 0;
+        int pending = 0;
+        for (RetainSite s : sites) {
+            LocalDate first = com.cosmetic.scm.domain.rules.RetainSiteRule.earliest(s.getUsedSince(), firstRetain.get(s.getId()));
+            if (first == null || first.isAfter(c.to())) {
+                continue;
+            }
+            LocalDate deadline = com.cosmetic.scm.domain.rules.RetainSiteRule.deadline(s.getKind(), first);
+            long n = usedInPeriod.getOrDefault(s.getId(), 0L);
+            com.cosmetic.scm.domain.rules.RetainSiteRule.State st = com.cosmetic.scm.domain.rules.RetainSiteRule.state(s.getKind(), s.isSameLocality(), first, s.getReportDate(), asOf);
+            // 期间内用过的、报告截止日在期间内或之后的、到期末还逾期没报告的、期间内才逾期补报的
+            boolean relevant = n > 0 || (deadline != null && !deadline.isBefore(c.from())) || st == com.cosmetic.scm.domain.rules.RetainSiteRule.State.OVERDUE
+                    || st == com.cosmetic.scm.domain.rules.RetainSiteRule.State.NOT_ALLOWED
+                    || (st == com.cosmetic.scm.domain.rules.RetainSiteRule.State.REPORTED_LATE && c.in(s.getReportDate()));
+            if (!relevant) {
+                continue;
+            }
+            used++;
+            pending += st == com.cosmetic.scm.domain.rules.RetainSiteRule.State.PENDING ? 1 : 0;
+            String line = s.getName() + "（" + s.getKind().getLabel() + "，" + s.getAddress() + "）：" + (n > 0 ? "期间留样 " + n + " 份，" : "") + "首次留样 " + first
+                    + (deadline == null ? "，不需要报告" : "，报告截止 " + deadline + "，" + st.getLabel()
+                    + (s.getReportDate() != null && !s.getReportDate().isAfter(asOf) ? "（" + s.getReportDate() + " 报告" + s.getReportAuthority()
+                    + (s.getReportRef() == null ? "" : "，回执 " + s.getReportRef()) + "）" : ""));
+            (st.problem() ? problems : lines).add(line);
+        }
+        List<String> details = new ArrayList<>(problems);
+        details.addAll(lines);
+        if (!problems.isEmpty()) {
+            return new Evidence(15, "WARN", problems.size() + " 处要注意。" + note, limit(details));
+        }
+        if (used == 0) {
+            return new Evidence(15, "INFO", "期间内没有新的留样，也没有报告到期的留样地点。", List.of());
+        }
+        return new Evidence(15, "OK", "期间内留样用到 " + used + " 个地点，都是住所或主要经营场所，或其他经营场所已按期报告"
+                + (pending > 0 ? "（" + pending + " 个其他经营场所期间结束时还没到报告截止日）" : "") + "。" + note, limit(details));
     }
 
     private Evidence retainPerBatch(Ctx c, List<Batch> released, StorageData storage) {

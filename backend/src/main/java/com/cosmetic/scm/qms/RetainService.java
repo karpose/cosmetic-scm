@@ -37,6 +37,7 @@ public class RetainService {
 
     private final RetainSampleRepository samples;
     private final RetainTxnRepository txns;
+    private final RetainSiteRepository sites;
     private final BatchRepository batches;
     private final MasterLookup lookup;
     private final AuditService audit;
@@ -55,7 +56,8 @@ public class RetainService {
     }
 
     /** expired：保存期已满，可以销毁。 */
-    public record SampleView(Long id, Long batchId, String batchNo, String itemName, int qty, int remainingQty, String location,
+    /** siteId / siteName：留样地点（检查要点第 15 项），V58 以前的留样为空。 */
+    public record SampleView(Long id, Long batchId, String batchNo, String itemName, int qty, int remainingQty, Long siteId, String siteName, String location,
                              LocalDate retainUntil, boolean expired, RetainStatus status, String statusLabel, List<TxnView> txns) {
     }
 
@@ -141,11 +143,13 @@ public class RetainService {
                 .stream().collect(Collectors.toMap(Batch::getId, Function.identity()));
         Map<Long, List<RetainTxn>> tm = txns.findBySampleIdInOrderByIdAsc(list.stream().map(RetainSample::getId).toList())
                 .stream().collect(Collectors.groupingBy(RetainTxn::getSampleId));
+        Map<Long, RetainSite> sm = sites.findAll().stream().collect(Collectors.toMap(RetainSite::getId, Function.identity()));
         LocalDate today = time.today();
         return list.stream().map(s -> {
             Batch b = bm.get(s.getBatchId());
+            RetainSite site = s.getSiteId() == null ? null : sm.get(s.getSiteId());
             return new SampleView(s.getId(), s.getBatchId(), b.getBatchNo(), lookup.item(b.getItemId()).getName(), s.getQty(),
-                    s.getRemainingQty(), s.getLocation(), s.getRetainUntil(), s.getRetainUntil().isBefore(today), s.getStatus(),
+                    s.getRemainingQty(), s.getSiteId(), site == null ? null : site.getName(), s.getLocation(), s.getRetainUntil(), s.getRetainUntil().isBefore(today), s.getStatus(),
                     s.getStatus().getLabel(), tm.getOrDefault(s.getId(), List.of()).stream()
                     .map(t -> new TxnView(t.getId(), t.getTxnType(), t.getTxnType().getLabel(), t.getQty(), t.getReason(), t.getDoneBy(), t.getDoneAt()))
                     .toList());

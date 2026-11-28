@@ -135,6 +135,7 @@ public class DemoDataLoader implements ApplicationRunner {
     private final DeviationService deviations;
     private final StorageMonitorService storageMonitor;
     private final TransportService transport;
+    private final com.cosmetic.scm.qms.RetainSiteService retainSites;
     private final SupplierAuditService supplierAudits;
     private final MesService mes;
     private final EquipmentService equipment;
@@ -226,6 +227,10 @@ public class DemoDataLoader implements ApplicationRunner {
                     "COA-" + no, "外观、含量与内控标准一致（示例）", DEMO_PASSWORD), qa));
         }
 
+        // ---------- 留样地点（检查要点第 15 项）：公司住所的品质部留样室，设为默认地点，放行时不选就用它 ----------
+        as("qa1", () -> retainSites.create(new com.cosmetic.scm.qms.RetainSiteService.SiteReq("RS-HQ", "品质部留样室",
+                "（示例）上海市浦东新区张江路 100 号 3 楼", com.cosmetic.scm.domain.RetainSiteKind.DOMICILE, true, null, null, true, "公司住所（示例），放行时默认存放在这里")));
+
         // ---------- 委托生产精华液：已放行并发货 ----------
         MoView mo1 = as("prod1", () -> production.create(new CreateMoReq(a3.id(), serum.getId(), new BigDecimal("10000"), t.minusDays(16))));
         as("prod1", () -> production.issue(mo1.id()));
@@ -257,6 +262,11 @@ public class DemoDataLoader implements ApplicationRunner {
         Long fg0 = inventory.batchByNo(done0.outBatchNo()).getId();
         as("qso1", () -> quality.marketRelease(fg0, new ReleaseReq(Decision.RELEASED, "QC-" + done0.outBatchNo(),
                 "受托厂放行记录及出厂检验报告已审核（示例）", true, true, true, true, 6, "品质部留样室 B-02", DEMO_PASSWORD), qso));
+
+        // ---------- 第二个留样地点：同城的华东主仓留样柜，6 天前开始存放套盒外包装，还没向药监部门报告（总览待报告） ----------
+        as("qa1", () -> retainSites.create(new com.cosmetic.scm.qms.RetainSiteService.SiteReq("RS-EC", "华东主仓留样柜",
+                "（示例）上海市浦东新区川沙路 200 号 2 号库", com.cosmetic.scm.domain.RetainSiteKind.OTHER_PREMISES, true, t.minusDays(6), null, false,
+                "和公司住所同在浦东新区（示例）")));
 
         // ---------- 天猫退回 20 瓶外箱破损的精华液：在隔离区等质量处置 ----------
         as("sales1", () -> returns.create(new ReturnReq(tm.id(), rtn.id(), null, "物流外箱破损，客户拒收（示例）",
